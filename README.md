@@ -28,6 +28,7 @@ compose.yaml    Local PostgreSQL service
    python3 -m venv .venv
    source .venv/bin/activate
    pip install -e '.[dev]'
+   alembic upgrade head
    uvicorn app.main:app --reload
    ```
 
