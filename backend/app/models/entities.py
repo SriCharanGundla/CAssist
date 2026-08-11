@@ -107,6 +107,36 @@ class WorkspaceMember(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "idle_expires_at <= absolute_expires_at",
+            name="auth_sessions_expiry_ordered",
+        ),
+        Index(
+            "auth_sessions_user_active_idx",
+            "user_id",
+            "absolute_expires_at",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str] = mapped_column(CHAR(64), unique=True)
+    csrf_token_hash: Mapped[str] = mapped_column(CHAR(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    idle_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (

@@ -14,6 +14,17 @@ EXPECTED_COLUMNS = {
     },
     "workspaces": {"id", "name", "created_by_user_id", "created_at"},
     "workspace_members": {"workspace_id", "user_id", "role", "created_at"},
+    "auth_sessions": {
+        "id",
+        "user_id",
+        "token_hash",
+        "csrf_token_hash",
+        "created_at",
+        "last_seen_at",
+        "idle_expires_at",
+        "absolute_expires_at",
+        "revoked_at",
+    },
     "documents": {
         "id",
         "workspace_id",
@@ -114,6 +125,7 @@ EXPECTED_ENUMS = {
 }
 
 EXPECTED_INDEXES = {
+    "auth_sessions_user_active_idx",
     "users_email_lower_idx",
     "documents_workspace_sha256_idx",
     "documents_workspace_created_idx",

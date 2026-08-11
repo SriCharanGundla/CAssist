@@ -248,8 +248,9 @@ CREATE INDEX auth_sessions_user_active_idx
     WHERE revoked_at IS NULL;
 ```
 
-Only SHA-256 hashes of the opaque session and CSRF tokens are stored. Raw tokens exist only in
-short-lived browser cookies and request headers. Deleting a user cascades their application sessions.
+Only SHA-256 hashes of the opaque session and CSRF tokens are stored. The raw session token exists
+only in the HttpOnly API cookie. The raw CSRF token exists only in frontend memory and its request
+header. Deleting a user cascades their application sessions.
 
 ### Storage invariants
 
@@ -270,7 +271,7 @@ short-lived browser cookies and request headers. Deleting a user cascades their 
   `email_verified` is true.
 - `external_auth_id` is derived from the verified issuer and subject claims. Email addresses are
   profile data and are never used as the authentication key or for automatic account linking.
-- Provider credentials, the application-session signing secret, and callback URLs come only from
+- Provider credentials, the OIDC state-cookie signing secret, and callback URLs come only from
   environment variables or deployment secrets.
 - Production has no development login, header-based identity override, or authentication bypass.
 
@@ -303,12 +304,15 @@ the callback and are never stored in local storage, session storage, application
 Unsafe cookie-authenticated requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must pass both checks:
 
 1. `Origin` matches the exact configured frontend origin.
-2. `X-CSRF-Token` matches the readable CSRF cookie and its stored SHA-256 hash using a constant-time
-   comparison.
+2. `X-CSRF-Token` matches the stored SHA-256 hash using a constant-time comparison.
 
-The CSRF token is independently random and contains no session or user data. CORS allows credentials
-only from explicit development and production frontend origins. Login `return_to` values must be
-relative application paths; external redirect targets are rejected.
+The CSRF token is independently random and contains no session or user data. Authenticated React
+clients obtain a freshly rotated token from `GET /api/v1/auth/csrf`; the response is never cached and
+the token is held only in memory. The bootstrap request itself must carry the exact configured
+frontend `Origin`. This synchronizer-token design is required because a host-only API cookie cannot
+be read by the static frontend on a sibling hostname. CORS allows credentials only from explicit
+development and production frontend origins. Login `return_to` values must be relative application
+paths; external redirect targets are rejected.
 
 ### Authorization
 
@@ -329,7 +333,12 @@ Starts OIDC login. Optional `return_to` must be a relative frontend path.
 #### `GET /api/v1/auth/callback`
 
 Validates the OIDC response, creates the local user/workspace/session transaction, sets the session
-and CSRF cookies, and redirects to the validated frontend path.
+cookie, and redirects to the validated frontend path.
+
+#### `GET /api/v1/auth/csrf`
+
+Requires an authenticated session, rotates its CSRF token, and returns the raw token with
+`Cache-Control: no-store`. This is the only endpoint that returns a CSRF token.
 
 #### `GET /api/v1/auth/me`
 
@@ -355,7 +364,7 @@ hashes.
 
 #### `POST /api/v1/auth/logout`
 
-Requires CSRF validation, revokes the application session, clears both cookies, and returns the
+Requires CSRF validation, revokes the application session, clears the session cookie, and returns the
 allowlisted Auth0 logout URL for browser navigation.
 
 ## 5. Deletion semantics

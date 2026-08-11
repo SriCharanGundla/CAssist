@@ -42,3 +42,19 @@ compose.yaml    Local PostgreSQL service
 
 Open `http://localhost:5173`. API documentation is at
 `http://localhost:8000/docs`.
+
+## Configure authentication
+
+CAssist uses Auth0 Universal Login through the FastAPI backend. Create an Auth0
+Regular Web Application and configure these development URLs:
+
+```text
+Allowed Callback URL: http://localhost:8000/api/v1/auth/callback
+Allowed Logout URL:   http://localhost:5173
+```
+
+Set `AUTH_ISSUER_URL`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, and a random
+`AUTH_STATE_SECRET` of at least 32 characters in `backend/.env`. The Vite app
+uses `http://localhost:8000/api/v1` by default; override it with
+`VITE_API_BASE_URL` in `frontend/.env` when needed. Credentials and tokens must
+never be committed.
