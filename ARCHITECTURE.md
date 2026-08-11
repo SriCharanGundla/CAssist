@@ -16,11 +16,15 @@ Production model: `gpt-5.6-luna`
 - PostgreSQL stores file hashes, processing history, structured results, corrections, validations, and export events.
 - ZIP files and direct Tally integration are outside the MVP.
 - Production always uses OpenAI; Gemini selection and dual-model comparison are non-production features.
+- Authentication uses Auth0 Universal Login through an Authlib-based OIDC adapter in FastAPI.
+- CAssist never stores passwords or sends OIDC tokens to frontend JavaScript.
+- Application sessions are opaque, revocable, and stored as hashes in PostgreSQL.
 
 ## 2. Entity relationships
 
 ```mermaid
 erDiagram
+    USERS ||--o{ AUTH_SESSIONS : authenticates_with
     USERS ||--o{ WORKSPACE_MEMBERS : joins
     WORKSPACES ||--o{ WORKSPACE_MEMBERS : contains
     WORKSPACES ||--o{ DOCUMENTS : owns
@@ -221,6 +225,32 @@ CREATE INDEX audit_events_workspace_created_idx
     ON audit_events (workspace_id, created_at DESC);
 ```
 
+### Authentication session migration
+
+Authentication is added after the initial application schema as a separate migration:
+
+```sql
+CREATE TABLE auth_sessions (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash          char(64) NOT NULL UNIQUE,
+    csrf_token_hash     char(64) NOT NULL,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    last_seen_at        timestamptz NOT NULL DEFAULT now(),
+    idle_expires_at     timestamptz NOT NULL,
+    absolute_expires_at timestamptz NOT NULL,
+    revoked_at          timestamptz,
+    CHECK (idle_expires_at <= absolute_expires_at)
+);
+
+CREATE INDEX auth_sessions_user_active_idx
+    ON auth_sessions (user_id, absolute_expires_at)
+    WHERE revoked_at IS NULL;
+```
+
+Only SHA-256 hashes of the opaque session and CSRF tokens are stored. Raw tokens exist only in
+short-lived browser cookies and request headers. Deleting a user cascades their application sessions.
+
 ### Storage invariants
 
 1. `r2_object_key` is an opaque generated key and never contains a filename, client name, GSTIN, PAN, invoice number, or email address.
@@ -229,7 +259,106 @@ CREATE INDEX audit_events_workspace_created_idx
 4. Corrections are append-only. The effective reviewed document is `canonical_data` plus corrections in creation order.
 5. Audit metadata must never contain document text, extracted financial values, hashes, or provider responses.
 
-## 4. Deletion semantics
+## 4. Authentication and authorization
+
+### Locked authentication approach
+
+- Auth0 Universal Login is the initial identity provider.
+- FastAPI is the confidential OIDC client and uses Authlib behind an `IdentityProvider` adapter.
+- Use Authorization Code flow with PKCE (`S256`), `state`, and `nonce` validation.
+- Request only `openid profile email`. A login is accepted only when the ID token is valid and
+  `email_verified` is true.
+- `external_auth_id` is derived from the verified issuer and subject claims. Email addresses are
+  profile data and are never used as the authentication key or for automatic account linking.
+- Provider credentials, the application-session signing secret, and callback URLs come only from
+  environment variables or deployment secrets.
+- Production has no development login, header-based identity override, or authentication bypass.
+
+The provider adapter owns discovery, authorization redirects, callback exchange, ID-token validation,
+and provider logout URL construction. Route dependencies consume only a provider-neutral verified
+identity containing issuer, subject, verified email, and optional display name.
+
+### Backend-owned session
+
+After a successful callback, FastAPI upserts the local user and creates an opaque 256-bit application
+session. On a user's first login, it also creates a private workspace and an `owner` membership in the
+same database transaction. A duplicate verified email belonging to a different external identity is
+rejected for explicit account-linking review; accounts are never merged automatically.
+
+The raw session token is sent only in a host-only `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`
+cookie. Production uses a `__Host-` cookie name. The API stores only its SHA-256 hash and resolves the
+user from PostgreSQL on every authenticated request. Auth0 access and ID tokens are discarded after
+the callback and are never stored in local storage, session storage, application logs, or PostgreSQL.
+
+- Default idle lifetime: 8 hours.
+- Default absolute lifetime: 7 days.
+- `last_seen_at` updates are throttled to at most once every five minutes.
+- Logout revokes the database session before clearing cookies and initiating Auth0 logout.
+- Session rotation creates a new opaque token and revokes the previous session atomically after
+  reauthentication or a security-sensitive identity or privilege change.
+- Expired and revoked rows may be deleted by a periodic PostgreSQL-backed maintenance job.
+
+### CSRF and browser boundary
+
+Unsafe cookie-authenticated requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must pass both checks:
+
+1. `Origin` matches the exact configured frontend origin.
+2. `X-CSRF-Token` matches the readable CSRF cookie and its stored SHA-256 hash using a constant-time
+   comparison.
+
+The CSRF token is independently random and contains no session or user data. CORS allows credentials
+only from explicit development and production frontend origins. Login `return_to` values must be
+relative application paths; external redirect targets are rejected.
+
+### Authorization
+
+Authentication establishes the local user only. Authorization remains application-owned:
+
+1. Every workspace and document query filters through `workspace_members` for the current user.
+2. The server ignores client-supplied user IDs and roles.
+3. Owner/admin-only actions check the current database role at request time.
+4. Auth0 roles, organizations, email domains, and frontend route guards are not authorization sources.
+5. Frontend guards improve navigation only; FastAPI enforces every permission.
+
+### Authentication endpoints
+
+#### `GET /api/v1/auth/login`
+
+Starts OIDC login. Optional `return_to` must be a relative frontend path.
+
+#### `GET /api/v1/auth/callback`
+
+Validates the OIDC response, creates the local user/workspace/session transaction, sets the session
+and CSRF cookies, and redirects to the validated frontend path.
+
+#### `GET /api/v1/auth/me`
+
+Returns the current local user and workspace memberships. It never returns provider tokens or session
+hashes.
+
+```json
+{
+  "user": {
+    "id": "a7cfa4fe-3f67-4b31-bd62-f31cfbaedb65",
+    "email": "user@example.com",
+    "display_name": "Example User"
+  },
+  "workspaces": [
+    {
+      "id": "833a84a7-f906-4223-9506-b7c3c02d545d",
+      "name": "My workspace",
+      "role": "owner"
+    }
+  ]
+}
+```
+
+#### `POST /api/v1/auth/logout`
+
+Requires CSRF validation, revokes the application session, clears both cookies, and returns the
+allowlisted Auth0 logout URL for browser navigation.
+
+## 5. Deletion semantics
 
 ### Delete original only
 
@@ -255,7 +384,7 @@ The document remains usable for copying and exporting extracted information, but
 
 The deletion operation is idempotent. A repeated deletion returns `204 No Content`.
 
-## 5. REST conventions
+## 6. REST conventions
 
 - Requests and responses use JSON except upload/download bodies.
 - Dates use ISO 8601 UTC timestamps.
@@ -275,7 +404,7 @@ The deletion operation is idempotent. A repeated deletion returns `204 No Conten
 }
 ```
 
-## 6. Upload and document endpoints
+## 7. Upload and document endpoints
 
 ### `POST /api/v1/uploads`
 
@@ -357,7 +486,7 @@ Deletes only the R2 original. Response: `204`.
 
 Permanently deletes the complete record. Response: `204`.
 
-## 7. Processing endpoints
+## 8. Processing endpoints
 
 ### `POST /api/v1/documents/{document_id}/runs`
 
@@ -425,7 +554,7 @@ Response:
 
 Best-effort cancellation for queued or active work. Response: `202`.
 
-## 8. Extraction and review endpoints
+## 9. Extraction and review endpoints
 
 ### `GET /api/v1/runs/{run_id}/result`
 
@@ -471,7 +600,7 @@ Use JSON Pointer paths. The backend validates corrected values against the canon
 
 Only `in_review` and `approved` are accepted from clients. The server manages the initial `unreviewed` status.
 
-## 9. Export endpoints
+## 10. Export endpoints
 
 ### `POST /api/v1/results/{result_id}/exports`
 
@@ -497,7 +626,7 @@ Reserved for later:
 
 - `tally_json`
 
-## 10. Development-only comparison endpoint
+## 11. Development-only comparison endpoint
 
 ### `POST /api/v1/documents/{document_id}/comparisons`
 
@@ -514,7 +643,7 @@ Runs the configured Gemini and OpenAI models using the same schema and preproces
 
 The route does not exist in production. Comparison results report field agreement, validation failures, latency, token use, estimated cost, and later human corrections. It does not choose a winner automatically.
 
-## 11. Worker state machine
+## 12. Worker state machine
 
 ```mermaid
 stateDiagram-v2
@@ -534,7 +663,7 @@ stateDiagram-v2
 
 The worker claims jobs using `SELECT ... FOR UPDATE SKIP LOCKED`. A crashed job may be reclaimed after a configured lease expires. Provider calls require bounded timeouts and retry only rate limits, transient network failures, and provider 5xx responses. Schema-validation failures should trigger at most one repair attempt before failing visibly.
 
-## 12. Frontend route map
+## 13. Frontend route map
 
 ```text
 /                         Dashboard and recent documents
@@ -552,17 +681,17 @@ Suggested frontend data layer:
 - React Hook Form for corrections.
 - shadcn/ui for upload, table, dialog, tabs, form, badge, progress, and alert components.
 
-## 13. MVP implementation order
+## 14. MVP implementation order
 
-1. Create users, workspaces, document uploads, private R2 access, and deletion.
-2. Add PostgreSQL job claiming and one PDF/image preprocessing path.
-3. Add the provider adapter with Gemini development mode and OpenAI production lock.
-4. Add canonical invoice extraction, deterministic validation, and review corrections.
-5. Add JSON/CSV/XLSX exports, history, audit events, and provider comparison.
+1. Add OIDC authentication, PostgreSQL sessions, users, workspaces, and authorization dependencies.
+2. Add document uploads, private R2 access, and deletion.
+3. Add PostgreSQL job claiming and one PDF/image preprocessing path.
+4. Add provider adapters, canonical invoice extraction, validation, and review corrections.
+5. Add exports, history, audit events, and development-only provider comparison.
 
 The first end-to-end slice is complete when one authenticated user can upload an invoice, receive a cached structured result, correct a field, download JSON, reopen the original through a five-minute signed URL, and permanently delete the entire record.
 
-## 14. Development and deployment topology
+## 15. Development and deployment topology
 
 ### Locked rollout decision
 
@@ -576,6 +705,8 @@ The first end-to-end slice is complete when one authenticated user can upload an
 ```mermaid
 flowchart TD
     USER["Browser"] --> PAGES["Cloudflare Pages<br/>Vite/React static frontend"]
+    USER --> AUTH0["Auth0 Universal Login"]
+    AUTH0 --> API
     USER --> APIHOST["api.cassist domain"]
     APIHOST --> EDGE["Cloudflare edge"]
     EDGE --> TUNNEL["Outbound Cloudflare Tunnel"]
