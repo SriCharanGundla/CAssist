@@ -49,7 +49,7 @@ def test_opaque_tokens_are_random_and_hash_to_fixed_length() -> None:
 
 def test_csrf_requires_origin_header_and_stored_hash() -> None:
     token = create_opaque_token()
-    settings = Settings(app_env="test")
+    settings = Settings(app_env="test", _env_file=None)
     current_auth = CurrentAuth(
         session_id=uuid4(),
         user=User(
@@ -81,7 +81,7 @@ def test_csrf_requires_origin_header_and_stored_hash() -> None:
 
 
 def test_csrf_bootstrap_requires_the_frontend_origin() -> None:
-    settings = Settings(app_env="test")
+    settings = Settings(app_env="test", _env_file=None)
     verify_request_origin(
         make_request(origin="http://localhost:5173", csrf_header="unused"),
         settings,
@@ -96,10 +96,11 @@ def test_csrf_bootstrap_requires_the_frontend_origin() -> None:
 
 def test_production_authentication_configuration_fails_closed() -> None:
     with pytest.raises(ValueError, match="authentication settings are missing"):
-        Settings(app_env="production")
+        Settings(app_env="production", _env_file=None)
 
     production = Settings(
         app_env="production",
+        _env_file=None,
         auth_issuer_url="https://tenant.example/",
         auth_client_id="client-id",
         auth_client_secret="client-secret",

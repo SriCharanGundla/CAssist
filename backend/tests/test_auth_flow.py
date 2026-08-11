@@ -67,6 +67,7 @@ async def test_callback_me_and_csrf_protected_logout(
 ) -> None:
     test_settings = Settings(
         app_env="test",
+        _env_file=None,
         auth_issuer_url="https://identity.example/",
         auth_client_id="client-id",
         auth_client_secret="client-secret",

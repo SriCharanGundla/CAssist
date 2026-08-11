@@ -5,8 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.router import api_router
+from app.core.access_logging import configure_safe_access_logging
 from app.core.config import settings
 from app.core.database import engine
+
+configure_safe_access_logging()
 
 
 @asynccontextmanager

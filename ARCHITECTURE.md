@@ -19,6 +19,7 @@ Production model: `gpt-5.6-luna`
 - Authentication uses Auth0 Universal Login through an Authlib-based OIDC adapter in FastAPI.
 - CAssist never stores passwords or sends OIDC tokens to frontend JavaScript.
 - Application sessions are opaque, revocable, and stored as hashes in PostgreSQL.
+- HTTP access logs never include query strings because callbacks and signed URLs can contain secrets.
 
 ## 2. Entity relationships
 
@@ -412,6 +413,14 @@ The deletion operation is idempotent. A repeated deletion returns `204 No Conten
   }
 }
 ```
+
+### Logging boundary
+
+Uvicorn access logs retain the client address, HTTP method, path, protocol, and status code but remove
+the entire query string before formatting. This applies globally, not only to authentication routes,
+because OAuth callbacks and future signed URLs can both carry temporary credentials. Application
+logs must not contain authorization codes, OIDC state, session or CSRF tokens, signed URLs, document
+contents, extracted financial values, hashes, or provider output.
 
 ## 7. Upload and document endpoints
 
