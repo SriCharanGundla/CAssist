@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
@@ -73,8 +74,8 @@ function AuthenticatedApp({ auth }) {
                 <ThemeIcon className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuLabel>Theme</DropdownMenuLabel>
                 <DropdownMenuRadioGroup onValueChange={setTheme} value={theme}>
+                  <DropdownMenuLabel>Theme</DropdownMenuLabel>
                   <DropdownMenuRadioItem value="light">
                     <RiSunLine /> Light
                   </DropdownMenuRadioItem>
@@ -95,14 +96,16 @@ function AuthenticatedApp({ auth }) {
                 {initials}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel className="space-y-0.5 py-2">
-                  <span className="block truncate font-medium text-foreground">
-                    {displayName}
-                  </span>
-                  <span className="block truncate font-normal">
-                    {auth.user.email}
-                  </span>
-                </DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="space-y-0.5 py-2">
+                    <span className="block truncate font-medium text-foreground">
+                      {displayName}
+                    </span>
+                    <span className="block truncate font-normal">
+                      {auth.user.email}
+                    </span>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   disabled={isLoggingOut}
