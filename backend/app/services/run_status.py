@@ -14,7 +14,7 @@ _ALL_PAGES_COMPLETE = {
 _TERMINAL_PROGRESS = {
     RunStatus.SUCCEEDED: ProcessingStage.COMPLETE,
     RunStatus.FAILED: ProcessingStage.FAILED,
-    RunStatus.CANCELLED: ProcessingStage.FAILED,
+    RunStatus.CANCELLED: ProcessingStage.CANCELLED,
 }
 
 
@@ -30,6 +30,7 @@ def run_summary(
         queued_at=run.queued_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
+        cancellation_requested_at=run.cancellation_requested_at,
         result_id=result.id if result is not None else None,
         review_status=result.review_status if result is not None else None,
     )

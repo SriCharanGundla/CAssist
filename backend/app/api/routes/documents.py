@@ -50,6 +50,28 @@ from app.services.processing_runs import find_configured_run, queue_processing_r
 from app.services.run_status import run_summary
 
 router = APIRouter(prefix="/documents")
+_ACTIVE_RUN_STATUSES = {
+    RunStatus.QUEUED,
+    RunStatus.PREPROCESSING,
+    RunStatus.EXTRACTING,
+    RunStatus.VALIDATING,
+}
+
+
+async def _require_no_active_run(session: AsyncSession, document_id: UUID) -> None:
+    active_run = await session.scalar(
+        select(ProcessingRun.id)
+        .where(
+            ProcessingRun.document_id == document_id,
+            ProcessingRun.status.in_(_ACTIVE_RUN_STATUSES),
+        )
+        .limit(1)
+    )
+    if active_run is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Stop document processing before deleting it",
+        )
 
 
 def _encode_cursor(document: Document) -> str:
@@ -614,6 +636,7 @@ async def delete_original(
     if row is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     document, _ = row
+    await _require_no_active_run(session, document.id)
     if document.r2_object_key is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     if document.sha256 is None or document.original_deleted_at is not None:
@@ -661,6 +684,7 @@ async def permanently_delete_document(
     if row is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     document, role = row
+    await _require_no_active_run(session, document.id)
     if role not in {MemberRole.OWNER, MemberRole.ADMIN} and (
         document.uploaded_by_user_id != current_auth.user.id
     ):

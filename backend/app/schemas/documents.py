@@ -21,6 +21,7 @@ class RunSummaryResponse(BaseModel):
     queued_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    cancellation_requested_at: datetime | None
     result_id: UUID | None
     review_status: ReviewStatus | None
 
@@ -92,7 +93,7 @@ class CreateRunResponse(BaseModel):
 
 class CancelRunResponse(BaseModel):
     run_id: UUID
-    status: Literal["cancelled"] = "cancelled"
+    status: Literal["stopping", "cancelled"]
 
 
 class ComparisonRunResponse(BaseModel):

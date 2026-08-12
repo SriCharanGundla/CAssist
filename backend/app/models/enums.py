@@ -33,7 +33,9 @@ class ProcessingStage(StrEnum):
     ORGANIZING = "organizing"
     QUALITY_CHECK = "quality_check"
     SAVING = "saving"
+    STOPPING = "stopping"
     COMPLETE = "complete"
+    CANCELLED = "cancelled"
     FAILED = "failed"
 
 

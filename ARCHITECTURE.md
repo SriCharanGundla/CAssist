@@ -135,7 +135,8 @@ CREATE TABLE processing_runs (
     progress_stage          text NOT NULL DEFAULT 'queued' CHECK (
                                 progress_stage IN (
                                     'queued', 'preparing', 'classifying', 'extracting',
-                                    'organizing', 'quality_check', 'saving', 'complete', 'failed'
+                                    'organizing', 'quality_check', 'saving', 'stopping',
+                                    'complete', 'cancelled', 'failed'
                                 )
                             ),
     attempt_count           integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
@@ -148,6 +149,7 @@ CREATE TABLE processing_runs (
     error_message_safe      text,
     worker_id               text,
     lease_expires_at        timestamptz,
+    cancellation_requested_at timestamptz,
     queued_at               timestamptz NOT NULL DEFAULT now(),
     started_at              timestamptz,
     completed_at            timestamptz,
@@ -716,7 +718,12 @@ schema versions, worker identity, and lease timestamps remain internal.
 
 ### `POST /api/v1/runs/{run_id}/cancel`
 
-Best-effort cancellation for queued or active work. Response: `202`.
+Queued work becomes `cancelled` immediately. Active work records a durable cancellation request,
+keeps its worker lease, and returns `{"status":"stopping"}` until that worker acknowledges it. The
+worker calls Strands `Agent.cancel()` on the executing graph node and prevents later graph nodes from
+starting. Partial output is discarded. File/data deletion returns `409` while a run remains queued
+or active, so deletion cannot race a worker that still owns the document. Response: `202`.
+Official cancellation behavior: https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/#cancellation
 
 ## 9. Extraction and review endpoints
 
@@ -885,6 +892,9 @@ stateDiagram-v2
     extracting --> validating
     validating --> succeeded
     queued --> cancelled
+    preprocessing --> cancelled: cancellation acknowledged
+    extracting --> cancelled: cancellation acknowledged
+    validating --> cancelled: cancellation acknowledged
     preprocessing --> failed
     extracting --> failed
     validating --> failed
@@ -1058,7 +1068,8 @@ upload is excluded because large file transfers require their own progress-aware
 dashboard displays structural row placeholders while its initial document query is pending.
 The upload drop zone highlights while files are dragged over it.
 Filename links open originals with fresh short-lived URLs; row actions provide review, development
-comparison, and deletion without an intermediate document page. The legacy
+comparison, stop-processing, and deletion without an intermediate document page. An active stop
+shows `Stopping…`; deletion remains disabled until the worker reports `cancelled`. The legacy
 `/documents/:documentId` URL redirects to the dashboard.
 
 The `/results/:resultId/review` route retrieves the authorized generic result and dynamically shows

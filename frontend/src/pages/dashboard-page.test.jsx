@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -12,6 +12,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const original = await importOriginal()
   return {
     ...original,
+    cancelProcessingRun: vi.fn(),
     createOriginalViewUrl: vi.fn(),
     deleteDocumentOriginal: vi.fn(),
     getRun: vi.fn(),
@@ -188,6 +189,46 @@ describe("DashboardPage", () => {
       "run-1",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  it("requests cancellation for an active extraction", async () => {
+    const user = userEvent.setup()
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-1",
+          original_filename: "invoice.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "processing",
+          created_at: "2026-08-12T12:00:00Z",
+          latest_run: {
+            id: "run-1",
+            status: "extracting",
+            result_id: null,
+            cancellation_requested_at: null,
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    api.getRun.mockReturnValue(new Promise(() => {}))
+    api.cancelProcessingRun.mockResolvedValue({
+      run_id: "run-1",
+      status: "stopping",
+    })
+    renderDashboard()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Stop processing" })
+    )
+
+    await waitFor(() =>
+      expect(api.cancelProcessingRun).toHaveBeenCalledWith("run-1")
+    )
+    expect(
+      screen.getByRole("button", { name: "Delete document" })
+    ).toBeDisabled()
   })
 
   it("shows an explicit empty state", async () => {

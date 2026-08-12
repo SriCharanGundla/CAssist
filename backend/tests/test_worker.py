@@ -1,4 +1,6 @@
+import asyncio
 import hashlib
+import threading
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -37,6 +39,7 @@ from app.schemas.extraction import (
     QualityIssue,
 )
 from app.services.model_provider import (
+    ProviderCancellationError,
     ProviderExtraction,
     ProviderExtractionError,
     ProviderRateLimitError,
@@ -154,6 +157,22 @@ class FakeExtractionProvider:
             input_tokens=120,
             output_tokens=80,
         )
+
+
+class CancellableExtractionProvider(FakeExtractionProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+
+    def extract_document(self, page_paths, page_text, on_stage=None) -> ProviderExtraction:
+        self.started.set()
+        if not self.cancelled.wait(timeout=5):
+            raise AssertionError("Cancellation was not forwarded to the provider")
+        raise ProviderCancellationError("cancelled")
 
 
 @pytest_asyncio.fixture
@@ -398,6 +417,58 @@ async def test_processes_one_image_to_result_and_removes_temporary_pages(
         assert result.presentation_data["sections"][0]["title"] == "Invoice details"
         assert result.raw_provider_output == {"provider_response": "structured"}
         assert [issue["code"] for issue in result.validation_issues] == ["possible_ocr_error"]
+
+
+@pytest.mark.asyncio
+async def test_worker_forwards_cancellation_to_provider_and_acknowledges_stop(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+) -> None:
+    factory, user_id, workspace_id, settings = worker_database
+    content = _png_bytes()
+    object_key = "originals/cancel-active"
+    document_id, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        content,
+        "image/png",
+        object_key,
+    )
+    storage = WorkerObjectStorage()
+    storage.objects[object_key] = (content, "image/png")
+    provider = CancellableExtractionProvider()
+
+    processing = asyncio.create_task(
+        process_next_document(
+            session_factory=factory,
+            app_settings=settings,
+            storage=storage,
+            extraction_provider=provider,
+            worker_id="worker-cancel",
+        )
+    )
+    assert await asyncio.to_thread(provider.started.wait, 5)
+    async with factory() as session:
+        run = await session.get(ProcessingRun, run_id)
+        assert run is not None and run.status == RunStatus.EXTRACTING
+        run.cancellation_requested_at = datetime.now(UTC)
+        run.progress_stage = ProcessingStage.STOPPING.value
+        await session.commit()
+
+    assert await processing is True
+    assert provider.cancelled.is_set()
+    async with factory() as session:
+        document = await session.get(Document, document_id)
+        run = await session.get(ProcessingRun, run_id)
+        result = await session.scalar(
+            select(ExtractionResult).where(ExtractionResult.processing_run_id == run_id)
+        )
+        assert run is not None and run.status == RunStatus.CANCELLED
+        assert run.progress_stage == ProcessingStage.CANCELLED.value
+        assert run.worker_id is None
+        assert run.completed_at is not None
+        assert document is not None and document.status == DocumentStatus.FAILED
+        assert result is None
 
 
 @pytest.mark.asyncio

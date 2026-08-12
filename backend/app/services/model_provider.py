@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,12 +87,18 @@ class ExtractionProvider(Protocol):
         on_stage: Callable[[ProcessingStage], None] | None = None,
     ) -> ProviderExtraction: ...
 
+    def cancel(self) -> None: ...
+
 
 class ProviderConfigurationError(Exception):
     pass
 
 
 class ProviderExtractionError(Exception):
+    pass
+
+
+class ProviderCancellationError(ProviderExtractionError):
     pass
 
 
@@ -118,6 +125,16 @@ class StrandsExtractionProvider:
         self._configure_content_safe_dependency_logging()
         self.model = model
         self.node_timeout_seconds = node_timeout_seconds
+        self._cancel_requested = threading.Event()
+        self._agents_lock = threading.Lock()
+        self._active_agents: tuple[Agent, ...] = ()
+
+    def cancel(self) -> None:
+        self._cancel_requested.set()
+        with self._agents_lock:
+            agents = self._active_agents
+        for agent in agents:
+            agent.cancel()
 
     @staticmethod
     def _configure_content_safe_dependency_logging() -> None:
@@ -169,6 +186,13 @@ class StrandsExtractionProvider:
             tools=[text_tools.read_document_text, text_tools.search_document_text],
             retry_strategy=None,
         )
+        with self._agents_lock:
+            self._active_agents = (
+                classifier,
+                extractor,
+                organizer,
+                quality_reviewer,
+            )
 
         def should_review(state) -> bool:
             node = state.results.get("extract")
@@ -192,20 +216,22 @@ class StrandsExtractionProvider:
             .set_graph_id("cassist_generic_document_extraction")
             .build()
         )
-        if on_stage is not None:
-            node_stages = {
-                "classify": ProcessingStage.CLASSIFYING,
-                "extract": ProcessingStage.EXTRACTING,
-                "organize": ProcessingStage.ORGANIZING,
-                "quality": ProcessingStage.QUALITY_CHECK,
-            }
+        node_stages = {
+            "classify": ProcessingStage.CLASSIFYING,
+            "extract": ProcessingStage.EXTRACTING,
+            "organize": ProcessingStage.ORGANIZING,
+            "quality": ProcessingStage.QUALITY_CHECK,
+        }
 
-            def report_node_stage(event: BeforeNodeCallEvent) -> None:
-                stage = node_stages.get(event.node_id)
-                if stage is not None:
-                    on_stage(stage)
+        def report_node_stage(event: BeforeNodeCallEvent) -> None:
+            if self._cancel_requested.is_set():
+                event.cancel_node = "Document processing was cancelled"
+                return
+            stage = node_stages.get(event.node_id)
+            if stage is not None and on_stage is not None:
+                on_stage(stage)
 
-            built_graph.add_hook(report_node_stage, BeforeNodeCallEvent)
+        built_graph.add_hook(report_node_stage, BeforeNodeCallEvent)
         return built_graph
 
     def extract_document(
@@ -241,6 +267,8 @@ class StrandsExtractionProvider:
 
         try:
             graph_result = graph(content)
+            if self._cancel_requested.is_set():
+                raise ProviderCancellationError("Document processing was cancelled")
             classification_result = graph_result.results["classify"].result
             extraction_result = graph_result.results["extract"].result
             organizer_result = graph_result.results["organize"].result
@@ -272,10 +300,18 @@ class StrandsExtractionProvider:
             )
         except ModelThrottledException as exc:
             raise ProviderRateLimitError("The model provider rate limit was reached") from exc
+        except ProviderCancellationError:
+            raise
         except ProviderExtractionError:
             raise
         except Exception as exc:
+            if self._cancel_requested.is_set():
+                raise ProviderCancellationError("Document processing was cancelled") from exc
             raise ProviderExtractionError("The agentic document workflow failed") from exc
+        finally:
+            with self._agents_lock:
+                self._active_agents = ()
+            self._cancel_requested.clear()
 
         usage = graph_result.accumulated_usage
         return ProviderExtraction(

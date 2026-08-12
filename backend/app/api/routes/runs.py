@@ -75,7 +75,7 @@ async def cancel_run(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     run, document = row
     if run.status == RunStatus.CANCELLED:
-        return CancelRunResponse(run_id=run.id)
+        return CancelRunResponse(run_id=run.id, status="cancelled")
     if run.status not in {
         RunStatus.QUEUED,
         RunStatus.PREPROCESSING,
@@ -87,12 +87,31 @@ async def cancel_run(
             detail="Only queued or active processing can be cancelled",
         )
 
-    cancelled_at = datetime.now(UTC)
+    requested_at = datetime.now(UTC)
+    if run.status != RunStatus.QUEUED:
+        if run.cancellation_requested_at is None:
+            run.cancellation_requested_at = requested_at
+            run.progress_stage = ProcessingStage.STOPPING.value
+            document.updated_at = requested_at
+            session.add(
+                AuditEvent(
+                    workspace_id=document.workspace_id,
+                    actor_user_id=current_auth.user.id,
+                    action="document.processing_cancellation_requested",
+                    entity_type="processing_run",
+                    entity_id=run.id,
+                    metadata_={},
+                )
+            )
+            await session.commit()
+        return CancelRunResponse(run_id=run.id, status="stopping")
+
     run.status = RunStatus.CANCELLED
-    run.progress_stage = ProcessingStage.FAILED.value
+    run.progress_stage = ProcessingStage.CANCELLED.value
+    run.cancellation_requested_at = requested_at
     run.worker_id = None
     run.lease_expires_at = None
-    run.completed_at = cancelled_at
+    run.completed_at = requested_at
     prior_success = await session.scalar(
         select(ProcessingRun.id)
         .where(
@@ -103,7 +122,7 @@ async def cancel_run(
         .limit(1)
     )
     document.status = DocumentStatus.READY if prior_success else DocumentStatus.FAILED
-    document.updated_at = cancelled_at
+    document.updated_at = requested_at
     session.add(
         AuditEvent(
             workspace_id=document.workspace_id,
@@ -115,4 +134,4 @@ async def cancel_run(
         )
     )
     await session.commit()
-    return CancelRunResponse(run_id=run.id)
+    return CancelRunResponse(run_id=run.id, status="cancelled")

@@ -62,7 +62,8 @@ Open `http://localhost:5173`. API documentation is at
 `http://localhost:8000/docs`.
 
 The dashboard is the document hub: it shows processing state and provides original viewing, review,
-development model comparison, and deletion actions without an intermediate document page. Review
+development model comparison, cancellation, and deletion actions without an intermediate document
+page. Active cancellation is acknowledged by the worker before deletion is enabled. Review
 uses an embedded PDF.js viewer for PDFs. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
 The review screen presents dynamic sections rather than storage-oriented field/table buckets. Tally

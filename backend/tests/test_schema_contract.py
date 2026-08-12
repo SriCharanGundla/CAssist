@@ -61,6 +61,7 @@ EXPECTED_COLUMNS = {
         "error_message_safe",
         "worker_id",
         "lease_expires_at",
+        "cancellation_requested_at",
         "queued_at",
         "started_at",
         "completed_at",

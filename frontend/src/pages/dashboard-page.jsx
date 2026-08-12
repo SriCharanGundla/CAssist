@@ -5,6 +5,7 @@ import {
   RiEditLine,
   RiExternalLinkLine,
   RiRestartLine,
+  RiStopCircleLine,
   RiTestTubeLine,
 } from "@remixicon/react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
@@ -35,6 +36,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
+  cancelProcessingRun,
   createOriginalViewUrl,
   deleteDocumentOriginal,
   getRun,
@@ -61,9 +63,10 @@ const STATUS_LABELS = {
   quality_check: "Checking quality",
   validating: "Saving",
   saving: "Saving",
+  stopping: "Stopping",
   complete: "Extraction complete",
   succeeded: "Extraction complete",
-  cancelled: "Processing failed",
+  cancelled: "Cancelled",
 }
 
 function statusBadgeClass(status) {
@@ -137,6 +140,7 @@ function DocumentRow({ document }) {
   })
   const run = runQuery.data || initialRun
   const isRunning = Boolean(run && !TERMINAL_RUN_STATUSES.has(run.status))
+  const isStopping = Boolean(isRunning && run?.cancellation_requested_at)
   const deleteDisabled = run
     ? isRunning
     : ["upload_pending", "uploaded", "processing"].includes(document.status)
@@ -155,6 +159,11 @@ function DocumentRow({ document }) {
     mutationFn: () => retryDocumentProcessing(document.id),
     onSuccess: refreshDocuments,
   })
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelProcessingRun(runId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["run", runId] }),
+  })
   const originalDeleteMutation = useMutation({
     mutationFn: () => deleteDocumentOriginal(document.id),
     onSuccess: async () => {
@@ -172,6 +181,7 @@ function DocumentRow({ document }) {
   const actionError =
     viewMutation.error ||
     retryMutation.error ||
+    cancelMutation.error ||
     originalDeleteMutation.error ||
     permanentDeleteMutation.error
   const deleting =
@@ -253,6 +263,16 @@ function DocumentRow({ document }) {
             variant="ghost"
           >
             <RiRestartLine />
+          </IconAction>
+        ) : null}
+        {isRunning ? (
+          <IconAction
+            disabled={cancelMutation.isPending || isStopping}
+            label={isStopping ? "Stopping processing" : "Stop processing"}
+            onClick={() => cancelMutation.mutate()}
+            variant="ghost"
+          >
+            <RiStopCircleLine />
           </IconAction>
         ) : null}
         <IconAction

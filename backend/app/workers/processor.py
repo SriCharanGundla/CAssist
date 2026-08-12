@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from app.models import (
 from app.services.model_provider import (
     ExtractionProvider,
     ModelSelection,
+    ProviderCancellationError,
     ProviderConfigurationError,
     ProviderExtraction,
     ProviderExtractionError,
@@ -144,6 +146,7 @@ async def _advance_stage(
                     ProcessingRun.id == claim.run_id,
                     ProcessingRun.status == expected_status,
                     ProcessingRun.worker_id == worker_id,
+                    ProcessingRun.cancellation_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -179,6 +182,7 @@ async def _set_progress_stage(
                 ProcessingRun.id == claim.run_id,
                 ProcessingRun.status == RunStatus.EXTRACTING,
                 ProcessingRun.worker_id == worker_id,
+                ProcessingRun.cancellation_requested_at.is_(None),
             )
             .with_for_update()
         )
@@ -205,6 +209,7 @@ async def _complete_run(
                     ProcessingRun.id == claim.run_id,
                     ProcessingRun.status == RunStatus.VALIDATING,
                     ProcessingRun.worker_id == worker_id,
+                    ProcessingRun.cancellation_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -257,6 +262,7 @@ async def _fail_run(
                     ProcessingRun.id == claim.run_id,
                     ProcessingRun.status.in_(_ACTIVE_STATUSES),
                     ProcessingRun.worker_id == worker_id,
+                    ProcessingRun.cancellation_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -279,6 +285,70 @@ async def _fail_run(
         await session.commit()
 
 
+async def _acknowledge_cancellation(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ClaimedRun,
+    worker_id: str,
+) -> bool:
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                select(ProcessingRun, Document)
+                .join(Document, Document.id == ProcessingRun.document_id)
+                .where(
+                    ProcessingRun.id == claim.run_id,
+                    ProcessingRun.status.in_(_ACTIVE_STATUSES),
+                    ProcessingRun.worker_id == worker_id,
+                    ProcessingRun.cancellation_requested_at.is_not(None),
+                )
+                .with_for_update()
+            )
+        ).first()
+        if row is None:
+            await session.rollback()
+            return False
+        completed_at = datetime.now(UTC)
+        run, document = row
+        run.status = RunStatus.CANCELLED
+        run.progress_stage = ProcessingStage.CANCELLED.value
+        run.worker_id = None
+        run.lease_expires_at = None
+        run.completed_at = completed_at
+        prior_success = await session.scalar(
+            select(ProcessingRun.id)
+            .where(
+                ProcessingRun.document_id == document.id,
+                ProcessingRun.id != run.id,
+                ProcessingRun.status == RunStatus.SUCCEEDED,
+            )
+            .limit(1)
+        )
+        document.status = DocumentStatus.READY if prior_success else DocumentStatus.FAILED
+        document.updated_at = completed_at
+        await session.commit()
+        return True
+
+
+async def _watch_for_cancellation(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ClaimedRun,
+    provider: ExtractionProvider,
+) -> None:
+    while True:
+        async with session_factory() as session:
+            requested_at = await session.scalar(
+                select(ProcessingRun.cancellation_requested_at).where(
+                    ProcessingRun.id == claim.run_id
+                )
+            )
+        if requested_at is not None:
+            cancel = getattr(provider, "cancel", None)
+            if cancel is not None:
+                cancel()
+            return
+        await asyncio.sleep(0.25)
+
+
 async def _requeue_rate_limited_run(
     session_factory: async_sessionmaker[AsyncSession],
     claim: ClaimedRun,
@@ -294,6 +364,7 @@ async def _requeue_rate_limited_run(
                     ProcessingRun.id == claim.run_id,
                     ProcessingRun.status.in_(_ACTIVE_STATUSES),
                     ProcessingRun.worker_id == worker_id,
+                    ProcessingRun.cancellation_requested_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -362,6 +433,7 @@ async def process_next_document(
             page_count=preprocessed.page_count,
             progress_stage=ProcessingStage.CLASSIFYING,
         ):
+            await _acknowledge_cancellation(session_factory, claim, worker_id)
             return False
 
         provider = extraction_provider or create_extraction_provider(
@@ -386,12 +458,20 @@ async def process_next_document(
             except Exception:
                 future.cancel()
 
-        extraction = await asyncio.to_thread(
-            provider.extract_document,
-            preprocessed.page_paths,
-            preprocessed.page_text,
-            report_stage,
+        cancellation_watcher = asyncio.create_task(
+            _watch_for_cancellation(session_factory, claim, provider)
         )
+        try:
+            extraction = await asyncio.to_thread(
+                provider.extract_document,
+                preprocessed.page_paths,
+                preprocessed.page_text,
+                report_stage,
+            )
+        finally:
+            cancellation_watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await cancellation_watcher
         if not await _advance_stage(
             session_factory,
             claim,
@@ -401,8 +481,15 @@ async def process_next_document(
             app_settings.worker_lease_seconds,
             progress_stage=ProcessingStage.SAVING,
         ):
+            await _acknowledge_cancellation(session_factory, claim, worker_id)
             return False
-        return await _complete_run(session_factory, claim, worker_id, extraction)
+        completed = await _complete_run(session_factory, claim, worker_id, extraction)
+        if not completed:
+            await _acknowledge_cancellation(session_factory, claim, worker_id)
+        return completed
+    except ProviderCancellationError:
+        await _acknowledge_cancellation(session_factory, claim, worker_id)
+        return True
     except ProviderConfigurationError:
         await _fail_run(
             session_factory,

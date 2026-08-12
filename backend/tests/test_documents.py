@@ -718,6 +718,85 @@ async def test_active_run_can_be_cancelled_idempotently(
 
 
 @pytest.mark.asyncio
+async def test_running_cancellation_waits_for_worker_acknowledgement(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, _, document_id, _ = document_client
+    run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="cancel-model",
+        prompt_version="cancel-prompt",
+        schema_version="cancel-schema",
+        preprocessing_version="cancel-preprocessing",
+        status=RunStatus.EXTRACTING,
+        progress_stage="extracting",
+        attempt_count=1,
+        worker_id="worker-1",
+        lease_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    session.add(run)
+    await session.commit()
+
+    response = await client.post(f"/api/v1/runs/{run.id}/cancel")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "stopping"
+    await session.refresh(run)
+    assert run.status == RunStatus.EXTRACTING
+    assert run.progress_stage == "stopping"
+    assert run.cancellation_requested_at is not None
+    assert run.worker_id == "worker-1"
+
+
+@pytest.mark.asyncio
+async def test_document_cannot_be_deleted_until_processing_stops(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, storage, _, owner_id, _, document_id, _ = document_client
+    run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="active-model",
+        prompt_version="active-prompt",
+        schema_version="active-schema",
+        preprocessing_version="active-preprocessing",
+        status=RunStatus.QUEUED,
+        attempt_count=0,
+    )
+    session.add(run)
+    await session.commit()
+
+    response = await client.delete(f"/api/v1/documents/{document_id}")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["message"] == (
+        "Stop document processing before deleting it"
+    )
+    assert storage.deleted_keys == []
+
+
+@pytest.mark.asyncio
 async def test_development_comparison_queues_each_provider_once(
     document_client: tuple[
         AsyncClient,
