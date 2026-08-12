@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { SourcePreview } from "@/components/source-preview"
 
@@ -36,16 +36,20 @@ describe("SourcePreview PDF viewer", () => {
       promise: Promise.resolve({
         destroy: destroyDocument,
         getPage: vi.fn(async (pageNumber) => ({
-          getViewport: ({ scale }) => ({
-            height: 800 * scale,
-            width: 600 * scale,
-          }),
+          getViewport: ({ rotation = 0, scale }) =>
+            rotation % 180 === 0
+              ? { height: 800 * scale, width: 600 * scale }
+              : { height: 600 * scale, width: 800 * scale },
           pageNumber,
           render: renderPage,
         })),
         numPages: 2,
       }),
     })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it("loads pages through PDF.js and rerenders visible pages after zooming", async () => {
@@ -57,7 +61,7 @@ describe("SourcePreview PDF viewer", () => {
       />
     )
 
-    expect(await screen.findByText("2 pages")).toBeInTheDocument()
+    expect(await screen.findByText("1 / 2")).toBeInTheDocument()
     expect(getDocument).toHaveBeenCalledWith({
       url: "https://download.invalid/original.pdf",
     })
@@ -69,6 +73,80 @@ describe("SourcePreview PDF viewer", () => {
 
     expect(screen.getByText("125%")).toBeInTheDocument()
     await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(4))
+  })
+
+  it("navigates and rotates pages with compact viewer controls", async () => {
+    const user = userEvent.setup()
+    render(
+      <SourcePreview
+        mimeType="application/pdf"
+        sourceUrl="https://download.invalid/original.pdf"
+      />
+    )
+
+    const viewer = await screen.findByLabelText("PDF document viewer")
+    viewer.scrollTo = vi.fn()
+    expect(await screen.findByText("1 / 2")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Next page" }))
+
+    expect(screen.getByText("2 / 2")).toBeInTheDocument()
+    expect(viewer.scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 0 })
+
+    await user.click(screen.getByRole("button", { name: "Rotate clockwise" }))
+
+    expect(screen.getByLabelText("Page 1")).toHaveStyle({
+      height: "600px",
+      width: "800px",
+    })
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(4))
+    expect(screen.getByRole("button", { name: "Fit page" })).toBeEnabled()
+  })
+
+  it("coalesces pointer movement without starving the pan frame", async () => {
+    const frames = []
+    const requestAnimationFrame = vi.fn((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const cancelAnimationFrame = vi.fn()
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(
+      requestAnimationFrame
+    )
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(
+      cancelAnimationFrame
+    )
+    render(
+      <SourcePreview
+        mimeType="application/pdf"
+        sourceUrl="https://download.invalid/original.pdf"
+      />
+    )
+
+    const viewer = await screen.findByLabelText("PDF document viewer")
+    viewer.setPointerCapture = vi.fn()
+    viewer.hasPointerCapture = vi.fn(() => true)
+    viewer.releasePointerCapture = vi.fn()
+    Object.defineProperty(viewer, "scrollLeft", { value: 40, writable: true })
+    Object.defineProperty(viewer, "scrollTop", { value: 30, writable: true })
+
+    fireEvent.pointerDown(viewer, {
+      button: 0,
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(viewer, { clientX: 80, clientY: 80, pointerId: 1 })
+    fireEvent.pointerMove(viewer, { clientX: 70, clientY: 60, pointerId: 1 })
+
+    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
+    expect(cancelAnimationFrame).not.toHaveBeenCalled()
+    frames.shift()(16)
+    expect(viewer.scrollLeft).toBe(70)
+    expect(viewer.scrollTop).toBe(70)
+
+    fireEvent.pointerUp(viewer, { pointerId: 1 })
+    expect(viewer.releasePointerCapture).toHaveBeenCalledWith(1)
   })
 
   it("offers the signed original for spreadsheet review", () => {

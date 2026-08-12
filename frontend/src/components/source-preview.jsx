@@ -1,5 +1,9 @@
 import * as React from "react"
 import {
+  RiArrowDownSLine,
+  RiArrowUpSLine,
+  RiAspectRatioLine,
+  RiClockwise2Line,
   RiDragMove2Line,
   RiExternalLinkLine,
   RiRestartLine,
@@ -13,6 +17,7 @@ import { Button } from "@/components/ui/button"
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const ZOOM_STEP = 0.25
+const SHARP_RENDER_DELAY_MS = 180
 const SPREADSHEET_MIME_TYPES = new Set([
   "text/csv",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -129,7 +134,14 @@ function ImagePreview({ sourceUrl }) {
   )
 }
 
-function PdfPage({ descriptor, scrollRoot, zoom }) {
+function PdfPage({
+  descriptor,
+  registerPage,
+  renderView,
+  rotation,
+  scrollRoot,
+  zoom,
+}) {
   const canvasRef = React.useRef(null)
   const wrapperRef = React.useRef(null)
   const [nearViewport, setNearViewport] = React.useState(false)
@@ -153,15 +165,13 @@ function PdfPage({ descriptor, scrollRoot, zoom }) {
 
     let active = true
     const outputScale = Math.min(window.devicePixelRatio || 1, 2)
-    const displayViewport = descriptor.page.getViewport({ scale: zoom })
     const renderViewport = descriptor.page.getViewport({
-      scale: zoom * outputScale,
+      rotation: renderView.rotation,
+      scale: renderView.zoom * outputScale,
     })
     const canvas = canvasRef.current
     canvas.width = Math.ceil(renderViewport.width)
     canvas.height = Math.ceil(renderViewport.height)
-    canvas.style.width = `${displayViewport.width}px`
-    canvas.style.height = `${displayViewport.height}px`
     setRenderError(false)
     setRendering(true)
 
@@ -183,23 +193,32 @@ function PdfPage({ descriptor, scrollRoot, zoom }) {
       active = false
       renderTask.cancel()
     }
-  }, [descriptor.page, nearViewport, zoom])
+  }, [descriptor.page, nearViewport, renderView])
 
-  const width = descriptor.width * zoom
-  const height = descriptor.height * zoom
+  const displayViewport = descriptor.page.getViewport({
+    rotation,
+    scale: zoom,
+  })
 
   return (
     <div
       aria-label={`Page ${descriptor.pageNumber}`}
       className="relative shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-black/10"
-      ref={wrapperRef}
-      style={{ height, width }}
+      ref={(element) => {
+        wrapperRef.current = element
+        registerPage(descriptor.pageNumber, element)
+      }}
+      style={{
+        contain: "layout paint",
+        height: displayViewport.height,
+        width: displayViewport.width,
+      }}
     >
       {nearViewport ? (
         <>
           <canvas
             aria-hidden="true"
-            className={`block transition-opacity duration-150 ${rendering ? "opacity-70" : "opacity-100"}`}
+            className={`block size-full transition-opacity duration-150 ${rendering ? "opacity-70" : "opacity-100"}`}
             ref={canvasRef}
           />
           {renderError ? (
@@ -220,9 +239,13 @@ function PdfPreview({ sourceUrl }) {
   const [pages, setPages] = React.useState([])
   const [error, setError] = React.useState(null)
   const [zoom, setZoom] = React.useState(1)
+  const [rotation, setRotation] = React.useState(0)
+  const [renderView, setRenderView] = React.useState({ rotation: 0, zoom: 1 })
+  const [currentPage, setCurrentPage] = React.useState(1)
   const [scrollRoot, setScrollRoot] = React.useState(null)
   const drag = React.useRef(null)
   const frame = React.useRef(null)
+  const pageElements = React.useRef(new Map())
 
   React.useEffect(() => {
     let active = true
@@ -263,6 +286,17 @@ function PdfPreview({ sourceUrl }) {
   }, [sourceUrl])
 
   React.useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setRenderView((current) =>
+        current.rotation === rotation && current.zoom === zoom
+          ? current
+          : { rotation, zoom }
+      )
+    }, SHARP_RENDER_DELAY_MS)
+    return () => window.clearTimeout(timeout)
+  }, [rotation, zoom])
+
+  React.useEffect(() => {
     return () => {
       if (frame.current) window.cancelAnimationFrame(frame.current)
     }
@@ -272,7 +306,48 @@ function PdfPreview({ sourceUrl }) {
     setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom)))
   }
 
+  const registerPage = React.useCallback((pageNumber, element) => {
+    if (element) pageElements.current.set(pageNumber, element)
+    else pageElements.current.delete(pageNumber)
+  }, [])
+
+  const goToPage = (pageNumber, behavior = "smooth") => {
+    const boundedPage = Math.min(pages.length, Math.max(1, pageNumber))
+    const pageElement = pageElements.current.get(boundedPage)
+    setCurrentPage(boundedPage)
+    if (!scrollRoot || !pageElement) return
+    const top = Math.max(0, pageElement.offsetTop - 16)
+    scrollRoot.scrollTo({ behavior, top })
+  }
+
+  const fitCurrentPage = () => {
+    const descriptor = pages[currentPage - 1]
+    if (!descriptor || !scrollRoot) return
+    const viewport = descriptor.page.getViewport({ rotation, scale: 1 })
+    const availableWidth = Math.max(1, scrollRoot.clientWidth - 32)
+    const availableHeight = Math.max(1, scrollRoot.clientHeight - 32)
+    const fittedZoom = Math.min(
+      availableWidth / viewport.width,
+      availableHeight / viewport.height
+    )
+    changeZoom(fittedZoom)
+    window.requestAnimationFrame(() => goToPage(currentPage, "auto"))
+  }
+
+  const applyPendingPan = React.useCallback(() => {
+    frame.current = null
+    const activeDrag = drag.current
+    if (!activeDrag) return
+    activeDrag.scrollElement.scrollLeft = activeDrag.nextLeft
+    activeDrag.scrollElement.scrollTop = activeDrag.nextTop
+  }, [])
+
   const stopDragging = (event) => {
+    if (frame.current) {
+      window.cancelAnimationFrame(frame.current)
+      frame.current = null
+      applyPendingPan()
+    }
     drag.current = null
     if (event?.currentTarget?.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -305,17 +380,57 @@ function PdfPreview({ sourceUrl }) {
         </Button>
         <Button
           aria-label="Reset view"
-          onClick={() => setZoom(1)}
+          onClick={() => {
+            setZoom(1)
+            setRotation(0)
+            goToPage(1)
+          }}
           size="icon"
           variant="ghost"
         >
           <RiRestartLine />
         </Button>
-        <span className="ml-2 text-xs text-muted-foreground">
-          {pages.length
-            ? `${pages.length} page${pages.length === 1 ? "" : "s"}`
-            : "Loading…"}
-        </span>
+        <Button
+          aria-label="Fit page"
+          disabled={!pages.length}
+          onClick={fitCurrentPage}
+          size="icon"
+          variant="ghost"
+        >
+          <RiAspectRatioLine />
+        </Button>
+        <Button
+          aria-label="Rotate clockwise"
+          disabled={!pages.length}
+          onClick={() => setRotation((current) => (current + 90) % 360)}
+          size="icon"
+          variant="ghost"
+        >
+          <RiClockwise2Line />
+        </Button>
+        <div className="ml-1 flex items-center gap-0.5 border-l pl-2">
+          <Button
+            aria-label="Previous page"
+            disabled={!pages.length || currentPage <= 1}
+            onClick={() => goToPage(currentPage - 1)}
+            size="icon"
+            variant="ghost"
+          >
+            <RiArrowUpSLine />
+          </Button>
+          <span className="min-w-12 text-center text-xs text-muted-foreground">
+            {pages.length ? `${currentPage} / ${pages.length}` : "…"}
+          </span>
+          <Button
+            aria-label="Next page"
+            disabled={!pages.length || currentPage >= pages.length}
+            onClick={() => goToPage(currentPage + 1)}
+            size="icon"
+            variant="ghost"
+          >
+            <RiArrowDownSLine />
+          </Button>
+        </div>
         <span className="ml-auto hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
           <RiDragMove2Line /> Drag to pan
         </span>
@@ -328,6 +443,21 @@ function PdfPreview({ sourceUrl }) {
         <div
           aria-label="PDF document viewer"
           className="min-h-96 flex-1 cursor-grab overflow-auto bg-muted/50 p-4 select-none active:cursor-grabbing"
+          onScroll={(event) => {
+            const viewportMiddle =
+              event.currentTarget.scrollTop + event.currentTarget.clientHeight / 2
+            let closestPage = currentPage
+            let closestDistance = Number.POSITIVE_INFINITY
+            for (const [pageNumber, element] of pageElements.current) {
+              const pageMiddle = element.offsetTop + element.offsetHeight / 2
+              const distance = Math.abs(pageMiddle - viewportMiddle)
+              if (distance < closestDistance) {
+                closestDistance = distance
+                closestPage = pageNumber
+              }
+            }
+            setCurrentPage(closestPage)
+          }}
           onPointerCancel={stopDragging}
           onPointerDown={(event) => {
             if (event.button !== 0) return
@@ -338,20 +468,19 @@ function PdfPreview({ sourceUrl }) {
               pointerY: event.clientY,
               scrollElement: event.currentTarget,
               top: event.currentTarget.scrollTop,
+              nextLeft: event.currentTarget.scrollLeft,
+              nextTop: event.currentTarget.scrollTop,
             }
           }}
           onPointerMove={(event) => {
             if (!drag.current) return
-            const nextLeft =
+            drag.current.nextLeft =
               drag.current.left + drag.current.pointerX - event.clientX
-            const nextTop =
+            drag.current.nextTop =
               drag.current.top + drag.current.pointerY - event.clientY
-            if (frame.current) window.cancelAnimationFrame(frame.current)
-            frame.current = window.requestAnimationFrame(() => {
-              if (!drag.current) return
-              drag.current.scrollElement.scrollLeft = nextLeft
-              drag.current.scrollElement.scrollTop = nextTop
-            })
+            if (!frame.current) {
+              frame.current = window.requestAnimationFrame(applyPendingPan)
+            }
           }}
           onPointerUp={stopDragging}
           ref={setScrollRoot}
@@ -362,6 +491,9 @@ function PdfPreview({ sourceUrl }) {
               <PdfPage
                 descriptor={descriptor}
                 key={descriptor.pageNumber}
+                registerPage={registerPage}
+                renderView={renderView}
+                rotation={rotation}
                 scrollRoot={scrollRoot}
                 zoom={zoom}
               />
