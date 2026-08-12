@@ -6,7 +6,7 @@ from strands.models.gemini import GeminiModel
 from strands.models.openai_responses import OpenAIResponsesModel
 
 from app.core.config import Settings
-from app.schemas.extraction import CanonicalInvoice, InvoiceTotals, Party
+from app.schemas.extraction import DocumentClassification, ExtractionCompletion
 from app.services.model_provider import (
     ModelSelection,
     ProviderConfigurationError,
@@ -49,8 +49,8 @@ def test_factory_uses_strands_responses_api_for_openai_and_gemini_only_outside_p
         _production_settings(),
         ModelSelection(provider="openai", model_id="gpt-5.6-luna"),
     )
-    assert isinstance(production_provider.agent.model, OpenAIResponsesModel)
-    assert production_provider.agent.model.get_config()["stateful"] is False
+    assert isinstance(production_provider.model, OpenAIResponsesModel)
+    assert production_provider.model.get_config()["stateful"] is False
 
     development = Settings(
         app_env="test",
@@ -61,7 +61,7 @@ def test_factory_uses_strands_responses_api_for_openai_and_gemini_only_outside_p
         development,
         ModelSelection(provider="gemini", model_id="gemini-3.5-flash"),
     )
-    assert isinstance(gemini_provider.agent.model, GeminiModel)
+    assert isinstance(gemini_provider.model, GeminiModel)
     with pytest.raises(ProviderConfigurationError):
         create_extraction_provider(
             _production_settings(),
@@ -106,34 +106,67 @@ def test_provider_attempts_must_fit_inside_worker_lease() -> None:
 def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> None:
     page_path = tmp_path / "page-0001.png"
     page_path.write_bytes(b"synthetic-image")
-    invoice = CanonicalInvoice(
-        invoice_number="INV-1",
-        invoice_date="2026-08-12",
-        supplier=Party(name="Supplier"),
-        buyer=Party(name="Buyer"),
-        totals=InvoiceTotals(grand_total="100.00"),
-    )
 
-    class FakeAgent:
-        def __init__(self) -> None:
+    class FakeGraph:
+        def __init__(self, workspace) -> None:
+            self.workspace = workspace
             self.prompt = None
 
-        def __call__(self, prompt, **kwargs):
+        def __call__(self, prompt):
             self.prompt = prompt
-            assert kwargs["structured_output_model"] is CanonicalInvoice
+            self.workspace.record_field("/invoice_number", "INV-1", 1)
+            self.workspace.record_field("/invoice_date", "2026-08-12", 1)
+            self.workspace.record_field("/supplier/name", "Supplier", 1)
+            self.workspace.record_field("/buyer/name", "Buyer", 1)
+            self.workspace.record_field("/totals/grand_total", "100.00", 1)
+            self.workspace.validate_draft()
             return SimpleNamespace(
-                structured_output=invoice,
-                message={"role": "assistant", "content": [{"text": "structured"}]},
-                stop_reason="end_turn",
-                metrics=SimpleNamespace(accumulated_usage={"inputTokens": 12, "outputTokens": 8}),
+                results={
+                    "classify": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=DocumentClassification(
+                                document_type="invoice",
+                                confidence=0.99,
+                            ),
+                            stop_reason="end_turn",
+                        )
+                    ),
+                    "extract": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=ExtractionCompletion(validated=True),
+                            stop_reason="end_turn",
+                        )
+                    ),
+                },
+                accumulated_usage={"inputTokens": 12, "outputTokens": 8},
+                execution_order=[
+                    SimpleNamespace(node_id="classify"),
+                    SimpleNamespace(node_id="extract"),
+                ],
             )
 
-    agent = FakeAgent()
-    provider = StrandsExtractionProvider(agent)  # type: ignore[arg-type]
+    provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
+    graph = None
+
+    def build_graph(workspace):
+        nonlocal graph
+        graph = FakeGraph(workspace)
+        return graph
+
+    provider._build_graph = build_graph  # type: ignore[method-assign]
     extraction = provider.extract_invoice([page_path])
 
-    assert extraction.invoice == invoice
+    assert extraction.invoice.invoice_number == "INV-1"
+    assert extraction.invoice.document_type == "invoice"
+    assert {item.field_path for item in extraction.evidence} == {
+        "/invoice_number",
+        "/invoice_date",
+        "/supplier/name",
+        "/buyer/name",
+        "/totals/grand_total",
+    }
     assert extraction.input_tokens == 12
     assert extraction.output_tokens == 8
-    assert extraction.raw_provider_output["stop_reason"] == "end_turn"
-    assert agent.prompt[1]["image"]["source"]["bytes"] == b"synthetic-image"
+    assert extraction.raw_provider_output["extraction_stop_reason"] == "end_turn"
+    assert graph is not None
+    assert graph.prompt[1]["image"]["source"]["bytes"] == b"synthetic-image"

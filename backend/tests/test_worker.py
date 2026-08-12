@@ -350,7 +350,7 @@ async def test_processes_one_image_to_result_and_removes_temporary_pages(
             select(ExtractionResult).where(ExtractionResult.processing_run_id == run.id)
         )
         assert result is not None
-        assert result.document_type == "tax_invoice"
+        assert result.document_type == "invoice"
         assert result.canonical_data["totals"]["grand_total"] == "118.00"
         assert result.raw_provider_output == {"provider_response": "structured"}
         assert [issue["code"] for issue in result.validation_issues] == ["MISSING_PARTY_NAME"]

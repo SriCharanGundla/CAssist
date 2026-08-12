@@ -1,21 +1,38 @@
+import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
 from strands import Agent
 from strands.models.gemini import GeminiModel
+from strands.models.model import Model
 from strands.models.openai_responses import OpenAIResponsesModel
+from strands.multiagent import GraphBuilder
 
 from app.core.config import Settings
-from app.schemas.extraction import CanonicalInvoice
+from app.schemas.extraction import (
+    CanonicalInvoice,
+    DocumentClassification,
+    ExtractionCompletion,
+    FieldEvidence,
+)
+from app.services.extraction_tools import InvoiceExtractionWorkspace
 
-_SYSTEM_PROMPT = """You extract Indian tax invoices for human accounting review.
-Return only facts visible in the supplied page images. Never infer missing identifiers or amounts.
-Use ISO dates (YYYY-MM-DD) when the date is unambiguous. Every monetary, quantity, price, and rate
-value must be a base-10 decimal string without currency symbols or grouping separators. Preserve
-invoice text in names, descriptions, addresses, units, and notes. Use null for absent scalar fields
-and empty lists for absent collections. This output is not accounting-ready until human review."""
+_CLASSIFIER_PROMPT = """Classify the supplied accounting document by visible content only.
+Use tax_invoice only when the document visibly identifies itself as a tax invoice or contains
+clear GST tax-invoice characteristics. Use invoice for other invoices. Do not infer a type from
+filename."""
+
+_EXTRACTION_PROMPT = """Extract the supplied invoice for human accounting review.
+Use the document tools to record only facts visibly supported by a supplied page. Never invent,
+default, calculate, or copy a value merely because the contract supports it. Use inspect_page only
+when a targeted reinspection is useful. Record line items with record_table. Call validate_draft
+after recording. If validation reports a problem that targeted page evidence can resolve, perform at
+most one repair pass and call validate_draft once more. Use replace_existing=true when repairing a
+line-item table. Then return validated=true. Missing optional fields are normal. Monetary values,
+quantities, rates, and prices must be base-10 strings without currency symbols or grouping
+separators. Use ISO dates only when unambiguous."""
 
 
 @dataclass(frozen=True)
@@ -30,6 +47,7 @@ class ProviderExtraction:
     raw_provider_output: dict[str, object]
     input_tokens: int
     output_tokens: int
+    evidence: list[FieldEvidence] = field(default_factory=list)
 
 
 class ExtractionProvider(Protocol):
@@ -59,18 +77,68 @@ def resolve_model_selection(
 
 
 class StrandsExtractionProvider:
-    def __init__(self, agent: Agent) -> None:
-        self.agent = agent
+    def __init__(self, model: Model, node_timeout_seconds: float) -> None:
+        self._configure_content_safe_dependency_logging()
+        self.model = model
+        self.node_timeout_seconds = node_timeout_seconds
+
+    @staticmethod
+    def _configure_content_safe_dependency_logging() -> None:
+        for logger_name in ("strands", "google.genai"):
+            dependency_logger = logging.getLogger(logger_name)
+            dependency_logger.handlers.clear()
+            dependency_logger.addHandler(logging.NullHandler())
+            dependency_logger.propagate = False
+            dependency_logger.setLevel(logging.CRITICAL + 1)
+
+    def _build_graph(self, workspace: InvoiceExtractionWorkspace):
+        classifier = Agent(
+            model=self.model,
+            name="document_classifier",
+            system_prompt=_CLASSIFIER_PROMPT,
+            structured_output_model=DocumentClassification,
+            callback_handler=None,
+            tools=[],
+            retry_strategy=None,
+        )
+        extractor = Agent(
+            model=self.model,
+            name="invoice_extractor",
+            system_prompt=_EXTRACTION_PROMPT,
+            structured_output_model=ExtractionCompletion,
+            callback_handler=None,
+            tools=[
+                workspace.inspect_page,
+                workspace.record_field,
+                workspace.record_table,
+                workspace.validate_draft,
+            ],
+            retry_strategy=None,
+        )
+        graph = GraphBuilder()
+        graph.add_node(classifier, "classify")
+        graph.add_node(extractor, "extract")
+        graph.add_edge("classify", "extract")
+        return (
+            graph.set_entry_point("classify")
+            .set_max_node_executions(2)
+            .set_node_timeout(self.node_timeout_seconds)
+            .set_execution_timeout(self.node_timeout_seconds * 2)
+            .set_graph_id("cassist_document_extraction")
+            .build()
+        )
 
     def extract_invoice(self, page_paths: Sequence[Path]) -> ProviderExtraction:
         if not page_paths:
             raise ProviderExtractionError("No preprocessed pages were supplied")
 
+        workspace = InvoiceExtractionWorkspace(tuple(page_paths))
+        graph = self._build_graph(workspace)
         content: list[dict[str, object]] = [
             {
                 "text": (
-                    "Extract this invoice across all supplied pages. Preserve line-item order and "
-                    "use source_pages to identify the 1-based pages supporting each line item."
+                    "Classify and extract this accounting document across all supplied pages. "
+                    "Page images follow in 1-based order."
                 )
             }
         ]
@@ -85,18 +153,34 @@ class StrandsExtractionProvider:
             )
 
         try:
-            result = self.agent(content, structured_output_model=CanonicalInvoice)
+            graph_result = graph(content)
+            classification_result = graph_result.results["classify"].result
+            extraction_result = graph_result.results["extract"].result
+            classification = classification_result.structured_output
+            completion = extraction_result.structured_output
+            if not isinstance(classification, DocumentClassification):
+                raise ProviderExtractionError("The classification agent returned no classification")
+            if classification.document_type not in {"invoice", "tax_invoice"}:
+                raise ProviderExtractionError(
+                    "The first extraction contract supports invoices only"
+                )
+            if not isinstance(completion, ExtractionCompletion) or not completion.validated:
+                raise ProviderExtractionError("The extraction agent did not complete validation")
+            invoice, evidence = workspace.result(classification.document_type)
+        except ProviderExtractionError:
+            raise
         except Exception as exc:
-            raise ProviderExtractionError("The model provider request failed") from exc
-        if not isinstance(result.structured_output, CanonicalInvoice):
-            raise ProviderExtractionError("The model provider returned no structured invoice")
+            raise ProviderExtractionError("The agentic document workflow failed") from exc
 
-        usage = result.metrics.accumulated_usage
+        usage = graph_result.accumulated_usage
         return ProviderExtraction(
-            invoice=result.structured_output,
+            invoice=invoice,
+            evidence=evidence,
             raw_provider_output={
-                "message": result.message,
-                "stop_reason": result.stop_reason,
+                "classification": classification.model_dump(mode="json"),
+                "classification_stop_reason": classification_result.stop_reason,
+                "extraction_stop_reason": extraction_result.stop_reason,
+                "graph_execution_order": [node.node_id for node in graph_result.execution_order],
             },
             input_tokens=usage.get("inputTokens", 0),
             output_tokens=usage.get("outputTokens", 0),
@@ -112,7 +196,7 @@ def create_extraction_provider(
             raise ProviderConfigurationError("Gemini is unavailable in production")
         if not settings.gemini_api_key:
             raise ProviderConfigurationError("Gemini API key is not configured")
-        model = GeminiModel(
+        model: Model = GeminiModel(
             client_args={
                 "api_key": settings.gemini_api_key,
                 "http_options": {
@@ -135,12 +219,5 @@ def create_extraction_provider(
             stateful=False,
         )
 
-    return StrandsExtractionProvider(
-        Agent(
-            model=model,
-            system_prompt=_SYSTEM_PROMPT,
-            callback_handler=None,
-            tools=[],
-            retry_strategy=None,
-        )
-    )
+    node_timeout = (settings.worker_lease_seconds - 30) / 2
+    return StrandsExtractionProvider(model=model, node_timeout_seconds=node_timeout)

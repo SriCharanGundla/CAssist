@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.extraction import ValidationIssue
+from app.schemas.extraction import FieldEvidence, ValidationIssue
 
 
 class CorrectionChange(BaseModel):
@@ -58,5 +58,6 @@ class ResultResponse(BaseModel):
     reviewed_at: datetime | None
     canonical_data: dict[str, Any]
     effective_data: dict[str, Any]
+    evidence: list[FieldEvidence]
     validation_issues: list[ValidationIssue]
     corrections: list[CorrectionResponse]

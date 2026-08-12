@@ -71,6 +71,7 @@ EXPECTED_COLUMNS = {
         "document_type",
         "raw_provider_output",
         "canonical_data",
+        "evidence_data",
         "validation_issues",
         "review_status",
         "version",

@@ -867,14 +867,16 @@ flowchart LR
 The initial graph implements the invoice family. Later document families add a classifier label,
 contract, deterministic validators, and review renderer without widening the invoice contract. The
 registry starts with `tax_invoice` and `invoice`; planned independent contracts include receipt,
-credit note, debit note, cheque, bank statement, and generic financial document. An unsupported or
-low-confidence classification is routed to the generic sparse-evidence contract and must not be
-coerced into invoice semantics.
+credit note, debit note, cheque, bank statement, and generic financial document. Until the generic
+sparse-evidence contract is registered, an unsupported classification fails visibly and is not
+coerced into invoice semantics. Afterwards, unsupported or low-confidence classifications route to
+that generic contract.
 
 The extraction agent has no shell, arbitrary filesystem, network, database, R2, or general-purpose
 code-execution tool. Its per-document tools are:
 
-1. `inspect_page(page_number, region, scale)` returns only the requested temporary page or crop.
+1. `inspect_page(page_number, region, scale)` returns only a bounded targeted crop; the initial full
+   pages are already in the agent context.
 2. `read_document_text(page_number)` and `search_document_text(query)` expose only temporary,
    position-aware PDF text/OCR when available.
 3. `record_field(field_path, value, page_number, region)` accepts only paths registered by the

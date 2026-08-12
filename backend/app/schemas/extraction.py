@@ -53,11 +53,11 @@ class InvoiceTotals(CanonicalModel):
 
 
 class CanonicalInvoice(CanonicalModel):
-    document_type: Literal["tax_invoice"] = "tax_invoice"
+    document_type: Literal["tax_invoice", "invoice"] = "invoice"
     invoice_number: str | None = None
     invoice_date: str | None = None
     due_date: str | None = None
-    currency: str = "INR"
+    currency: str | None = None
     supplier: Party = Field(default_factory=Party)
     buyer: Party = Field(default_factory=Party)
     place_of_supply: str | None = None
@@ -72,3 +72,34 @@ class ValidationIssue(CanonicalModel):
     code: str
     field_path: str
     message: str
+
+
+class EvidenceRegion(CanonicalModel):
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
+class FieldEvidence(CanonicalModel):
+    field_path: str
+    page_number: int = Field(ge=1)
+    region: EvidenceRegion | None = None
+
+
+class DocumentClassification(CanonicalModel):
+    document_type: Literal[
+        "tax_invoice",
+        "invoice",
+        "receipt",
+        "credit_note",
+        "debit_note",
+        "cheque",
+        "bank_statement",
+        "other_financial_document",
+    ]
+    confidence: float = Field(ge=0, le=1)
+
+
+class ExtractionCompletion(CanonicalModel):
+    validated: Literal[True]

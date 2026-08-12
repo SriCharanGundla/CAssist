@@ -189,6 +189,7 @@ async def _complete_run(
                 document_type=extraction.invoice.document_type,
                 raw_provider_output=extraction.raw_provider_output,
                 canonical_data=extraction.invoice.model_dump(mode="json"),
+                evidence_data=[item.model_dump(mode="json") for item in extraction.evidence],
                 validation_issues=[issue.model_dump(mode="json") for issue in issues],
             )
         )

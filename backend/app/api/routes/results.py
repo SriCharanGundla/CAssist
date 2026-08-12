@@ -104,6 +104,7 @@ def _response(
         reviewed_at=result.reviewed_at,
         canonical_data=result.canonical_data,
         effective_data=invoice.model_dump(mode="json"),
+        evidence=result.evidence_data,
         validation_issues=validate_invoice(invoice),
         corrections=[
             CorrectionResponse(

@@ -10,7 +10,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.core.config import Settings
 from app.services.invoice_validation import validate_invoice
-from app.services.model_provider import create_extraction_provider, resolve_model_selection
+from app.services.model_provider import (
+    ProviderExtractionError,
+    create_extraction_provider,
+    resolve_model_selection,
+)
 
 FONT_CANDIDATES = (
     "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -108,7 +112,13 @@ def main() -> int:
     with TemporaryDirectory(prefix="cassist-live-model-") as directory:
         invoice_path = Path(directory) / "synthetic-invoice.png"
         _synthetic_invoice(invoice_path)
-        extraction = create_extraction_provider(settings, selection).extract_invoice([invoice_path])
+        try:
+            extraction = create_extraction_provider(settings, selection).extract_invoice(
+                [invoice_path]
+            )
+        except ProviderExtractionError:
+            print("FAILED: live agentic extraction did not complete")
+            return 1
 
     invoice = extraction.invoice
     expected = {

@@ -117,7 +117,7 @@ def _validate_required_fields(invoice: CanonicalInvoice) -> list[ValidationIssue
                     "Due date must use ISO 8601 format YYYY-MM-DD",
                 )
             )
-    if invoice.currency.upper() != "INR":
+    if invoice.currency and invoice.currency.upper() != "INR":
         issues.append(
             _issue(
                 "NON_INR_CURRENCY",
