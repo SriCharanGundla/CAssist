@@ -213,6 +213,11 @@ class ProcessingRun(Base):
             "queued_at",
             postgresql_where=text("status = 'queued'"),
         ),
+        Index(
+            "processing_runs_reclaim_idx",
+            "lease_expires_at",
+            postgresql_where=text("status = 'preprocessing'"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -234,6 +239,8 @@ class ProcessingRun(Base):
     estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     error_code: Mapped[str | None] = mapped_column(Text)
     error_message_safe: Mapped[str | None] = mapped_column(Text)
+    worker_id: Mapped[str | None] = mapped_column(Text)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -138,6 +138,8 @@ CREATE TABLE processing_runs (
                             ),
     error_code              text,
     error_message_safe      text,
+    worker_id               text,
+    lease_expires_at        timestamptz,
     queued_at               timestamptz NOT NULL DEFAULT now(),
     started_at              timestamptz,
     completed_at            timestamptz,
@@ -159,6 +161,10 @@ CREATE UNIQUE INDEX processing_runs_success_cache_idx
 CREATE INDEX processing_runs_queue_idx
     ON processing_runs (queued_at)
     WHERE status = 'queued';
+
+CREATE INDEX processing_runs_reclaim_idx
+    ON processing_runs (lease_expires_at)
+    WHERE status = 'preprocessing';
 
 CREATE TABLE extraction_results (
     id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -704,7 +710,14 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
-The worker claims jobs using `SELECT ... FOR UPDATE SKIP LOCKED`. A crashed job may be reclaimed after a configured lease expires. Provider calls require bounded timeouts and retry only rate limits, transient network failures, and provider 5xx responses. Schema-validation failures should trigger at most one repair attempt before failing visibly.
+The worker claims jobs using `SELECT ... FOR UPDATE SKIP LOCKED`. A crashed job may be reclaimed after
+a configured lease expires. Preprocessing rechecks the permanent object's size, type, and trusted
+SHA-256, enforces page-count plus per-page and aggregate pixel limits, renders PDF pages to PNG with
+PDFium, normalizes JPEG/PNG input with Pillow, and deletes its opaque temporary directory at the end
+of the attempt. Provider calls require bounded timeouts and retry only rate limits, transient network
+failures, and provider 5xx responses. Schema-validation failures should trigger at most one repair
+attempt before failing visibly. This milestone stops after successful preprocessing with the run in
+`extracting`; no provider request is made until the extraction adapter slice is implemented.
 
 ## 13. Frontend route map
 

@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     r2_bucket_name: str = "cassist-documents"
     r2_presigned_url_ttl_seconds: int = 300
     upload_max_bytes: int = 25 * 1024 * 1024
+    worker_lease_seconds: int = 5 * 60
+    preprocessing_max_pages: int = 50
+    preprocessing_render_dpi: int = 144
+    preprocessing_max_pixels: int = 40_000_000
+    preprocessing_max_total_pixels: int = 200_000_000
 
     @model_validator(mode="after")
     def enforce_production_model(self) -> "Settings":
@@ -56,6 +61,18 @@ class Settings(BaseSettings):
             raise ValueError("R2_PRESIGNED_URL_TTL_SECONDS must be between 60 and 900")
         if self.upload_max_bytes <= 0:
             raise ValueError("UPLOAD_MAX_BYTES must be positive")
+        if self.worker_lease_seconds <= 0:
+            raise ValueError("WORKER_LEASE_SECONDS must be positive")
+        if self.preprocessing_max_pages <= 0:
+            raise ValueError("PREPROCESSING_MAX_PAGES must be positive")
+        if self.preprocessing_render_dpi <= 0:
+            raise ValueError("PREPROCESSING_RENDER_DPI must be positive")
+        if self.preprocessing_max_pixels <= 0:
+            raise ValueError("PREPROCESSING_MAX_PIXELS must be positive")
+        if self.preprocessing_max_total_pixels < self.preprocessing_max_pixels:
+            raise ValueError(
+                "PREPROCESSING_MAX_TOTAL_PIXELS must be at least PREPROCESSING_MAX_PIXELS"
+            )
 
         if self.app_env == "production":
             self.model_provider = "openai"
