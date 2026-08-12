@@ -9,49 +9,11 @@ import {
   getResult,
   updateResultReview,
 } from "@/lib/api"
-import {
-  INVOICE_FIELDS,
-  LINE_ITEM_FIELDS,
-  LINE_TAX_FIELDS,
-  PARTY_FIELDS,
-  TOTAL_FIELDS,
-  valueAtPointer,
-} from "@/pages/review-fields"
 
 const REVIEW_LABELS = {
   unreviewed: "Not reviewed",
   in_review: "In review",
   approved: "Approved",
-}
-
-function displayValue(value) {
-  if (value === null || value === undefined || value === "") {
-    return "Not extracted"
-  }
-  if (typeof value === "boolean") {
-    return value ? "Yes" : "No"
-  }
-  return String(value)
-}
-
-function inputValue(value, type) {
-  if (type === "boolean") {
-    return value === null || value === undefined ? "" : String(value)
-  }
-  return value ?? ""
-}
-
-function correctedValue(draft, type) {
-  if (type === "boolean") {
-    if (draft === "") return null
-    return draft === "true"
-  }
-  return draft === "" ? null : draft
-}
-
-function hasValue(value) {
-  if (Array.isArray(value)) return value.length > 0
-  return value !== null && value !== undefined && value !== ""
 }
 
 function documentTypeLabel(value) {
@@ -61,30 +23,63 @@ function documentTypeLabel(value) {
     .join(" ")
 }
 
-function FieldIssues({ issues }) {
+function CopyValue({ label, onCopied, value }) {
+  return (
+    <button
+      aria-label={`Copy ${label}: ${value}`}
+      className="cursor-pointer text-left text-sm font-medium break-words transition-colors hover:text-muted-foreground"
+      onClick={() => onCopied(value)}
+      title="Click to copy"
+      type="button"
+    >
+      {value}
+    </button>
+  )
+}
+
+function QualityIssues({ issues, onUseSuggestion, saving }) {
   if (!issues.length) return null
   return (
-    <ul className="mt-2 space-y-1">
+    <ul className="mt-2 space-y-2">
       {issues.map((issue) => (
         <li
-          className="text-xs text-destructive"
-          key={`${issue.code}-${issue.field_path}`}
+          className="rounded-lg bg-destructive/10 px-3 py-2 text-xs"
+          key={issue.code}
         >
-          {issue.message}
+          <p className="text-destructive">{issue.message}</p>
+          {issue.suggested_value !== null ? (
+            <Button
+              className="mt-2 h-7 px-2 text-xs"
+              disabled={saving}
+              onClick={() => onUseSuggestion(issue.suggested_value)}
+              variant="outline"
+            >
+              Use “{issue.suggested_value}”
+            </Button>
+          ) : null}
         </li>
       ))}
     </ul>
   )
 }
 
-function EditableField({ evidence, field, issues, onSave, saving, value }) {
+function EditableValue({
+  issues,
+  label,
+  onCopied,
+  onSave,
+  pageNumber,
+  saving,
+  targetId,
+  value,
+}) {
   const [editing, setEditing] = React.useState(false)
-  const [draft, setDraft] = React.useState(() => inputValue(value, field.type))
+  const [draft, setDraft] = React.useState(value)
   const [reason, setReason] = React.useState("")
 
-  const save = async () => {
+  const save = async (nextValue = draft, nextReason = reason) => {
     try {
-      await onSave(field.path, correctedValue(draft, field.type), reason)
+      await onSave(targetId, nextValue, nextReason)
       setEditing(false)
       setReason("")
     } catch {
@@ -97,74 +92,49 @@ function EditableField({ evidence, field, issues, onSave, saving, value }) {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-medium text-muted-foreground">
-              {field.label}
-            </p>
-            {evidence ? (
+            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            {pageNumber ? (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                Source page {evidence.page_number}
+                Page {pageNumber}
               </span>
             ) : null}
           </div>
-          {!editing ? (
-            <p className="mt-1 text-sm font-medium break-words">
-              {displayValue(value)}
-            </p>
-          ) : field.type === "boolean" ? (
-            <select
-              aria-label={field.label}
-              className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm"
-              disabled={saving}
-              onChange={(event) => setDraft(event.target.value)}
-              value={draft}
-            >
-              <option value="">Not extracted</option>
-              <option value="true">Yes</option>
-              <option value="false">No</option>
-            </select>
-          ) : field.multiline ? (
-            <textarea
-              aria-label={field.label}
-              className="mt-2 min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
-              disabled={saving}
-              onChange={(event) => setDraft(event.target.value)}
-              value={draft}
-            />
-          ) : (
-            <input
-              aria-label={field.label}
-              className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm"
-              disabled={saving}
-              onChange={(event) => setDraft(event.target.value)}
-              value={draft}
-            />
-          )}
-          <FieldIssues issues={issues} />
           {editing ? (
-            <input
-              aria-label={`Reason for changing ${field.label}`}
-              className="mt-3 h-9 w-full rounded-md border bg-background px-3 text-sm"
-              disabled={saving}
-              maxLength={1000}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="Reason for correction (optional)"
-              value={reason}
-            />
-          ) : null}
+            <>
+              <textarea
+                aria-label={label}
+                className="mt-2 min-h-10 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                disabled={saving}
+                maxLength={20000}
+                onChange={(event) => setDraft(event.target.value)}
+                value={draft}
+              />
+              <input
+                aria-label={`Reason for changing ${label}`}
+                className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                disabled={saving}
+                maxLength={1000}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Reason for correction (optional)"
+                value={reason}
+              />
+            </>
+          ) : (
+            <div className="mt-1">
+              <CopyValue label={label} onCopied={onCopied} value={value} />
+            </div>
+          )}
+          <QualityIssues
+            issues={issues}
+            onUseSuggestion={(suggestion) =>
+              save(suggestion, "Accepted quality-review suggestion")
+            }
+            saving={saving}
+          />
         </div>
-        {!editing ? (
-          <Button
-            onClick={() => {
-              setDraft(inputValue(value, field.type))
-              setEditing(true)
-            }}
-            variant="outline"
-          >
-            Edit
-          </Button>
-        ) : (
+        {editing ? (
           <div className="flex gap-2">
-            <Button disabled={saving} onClick={save}>
+            <Button disabled={saving || !draft} onClick={() => save()}>
               {saving ? "Saving…" : "Save"}
             </Button>
             <Button
@@ -175,20 +145,28 @@ function EditableField({ evidence, field, issues, onSave, saving, value }) {
               Cancel
             </Button>
           </div>
+        ) : (
+          <Button
+            onClick={() => {
+              setDraft(value)
+              setEditing(true)
+            }}
+            variant="outline"
+          >
+            Edit
+          </Button>
         )}
       </div>
     </div>
   )
 }
 
-function FieldSection({ children, description, title }) {
+function Card({ children, description, title }) {
   return (
     <section className="rounded-2xl border bg-card p-5 shadow-sm">
       <h2 className="font-semibold">{title}</h2>
       {description ? (
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {description}
-        </p>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       ) : null}
       <div className="mt-3">{children}</div>
     </section>
@@ -196,22 +174,21 @@ function FieldSection({ children, description, title }) {
 }
 
 function CorrectionHistory({ corrections }) {
-  if (!corrections.length) {
+  if (!corrections.length)
     return (
       <p className="mt-3 text-sm text-muted-foreground">No corrections yet.</p>
     )
-  }
   return (
     <ol className="mt-3 space-y-3">
       {corrections.map((correction) => (
         <li className="rounded-lg border p-3 text-xs" key={correction.id}>
           <p className="font-mono text-muted-foreground">
-            {correction.field_path}
+            {correction.target_id}
           </p>
           <p className="mt-1 break-words">
-            {displayValue(correction.previous_value)} →{" "}
+            {String(correction.previous_value)} →{" "}
             <span className="font-medium">
-              {displayValue(correction.corrected_value)}
+              {String(correction.corrected_value)}
             </span>
           </p>
           {correction.reason ? (
@@ -226,23 +203,24 @@ function CorrectionHistory({ corrections }) {
 export function ReviewPage() {
   const { resultId } = useParams()
   const queryClient = useQueryClient()
+  const [copyStatus, setCopyStatus] = React.useState("")
+  const copyTimer = React.useRef(null)
+  React.useEffect(() => () => window.clearTimeout(copyTimer.current), [])
+
   const resultQuery = useQuery({
     queryKey: ["result", resultId],
     queryFn: ({ signal }) => getResult(resultId, { signal }),
   })
-
-  const updateCachedResult = (result) => {
+  const updateCachedResult = (result) =>
     queryClient.setQueryData(["result", resultId], result)
-  }
   const handleMutationError = (error) => {
-    if (error.status === 409) {
+    if (error.status === 409)
       queryClient.invalidateQueries({ queryKey: ["result", resultId] })
-    }
   }
   const correctionMutation = useMutation({
-    mutationFn: ({ expectedVersion, path, reason, value }) =>
+    mutationFn: ({ expectedVersion, reason, targetId, value }) =>
       correctResult(resultId, expectedVersion, [
-        { field_path: path, value, reason: reason.trim() || null },
+        { target_id: targetId, value, reason: reason.trim() || null },
       ]),
     onSuccess: updateCachedResult,
     onError: handleMutationError,
@@ -258,126 +236,82 @@ export function ReviewPage() {
       downloadTallyExport(resultId, expectedVersion),
     onError: handleMutationError,
   })
-  const [showOptionalFields, setShowOptionalFields] = React.useState(false)
 
-  if (resultQuery.isPending) {
+  if (resultQuery.isPending)
     return <p className="text-sm text-muted-foreground">Loading extraction…</p>
-  }
-  if (resultQuery.error) {
+  if (resultQuery.error)
     return (
       <p className="text-sm text-destructive" role="alert">
         {resultQuery.error.message}
       </p>
     )
-  }
 
   const result = resultQuery.data
   const data = result.effective_data
-  const issuesByPath = result.validation_issues.reduce((grouped, issue) => {
-    const pathIssues = grouped.get(issue.field_path) || []
-    grouped.set(issue.field_path, [...pathIssues, issue])
+  const issuesByTarget = result.quality_issues.reduce((grouped, issue) => {
+    grouped.set(issue.target_id, [
+      ...(grouped.get(issue.target_id) || []),
+      issue,
+    ])
     return grouped
   }, new Map())
-  const mutationError = correctionMutation.error || reviewMutation.error
-  const evidenceByPath = new Map(
-    (result.evidence || []).map((evidence) => [evidence.field_path, evidence])
+  const knownTargets = new Set([
+    ...data.fields.map((field) => field.id),
+    ...data.tables.flatMap((table) =>
+      table.rows.flatMap((row) => row.cells.map((cell) => cell.id))
+    ),
+    ...data.text_blocks.map((block) => block.id),
+  ])
+  const unmappedIssues = result.quality_issues.filter(
+    (issue) => !knownTargets.has(issue.target_id)
   )
-  const saveCorrection = (path, value, reason) => {
+  const mutationError =
+    correctionMutation.error || reviewMutation.error || exportMutation.error
+  const saveCorrection = (targetId, value, reason) => {
     correctionMutation.reset()
     return correctionMutation.mutateAsync({
       expectedVersion: result.version,
-      path,
+      targetId,
       value,
       reason,
     })
   }
-  const renderField = (field) => (
-    <EditableField
-      evidence={
-        evidenceByPath.get(field.path) ||
-        [...evidenceByPath.entries()].find(([path]) =>
-          field.path.startsWith(`${path}/`)
-        )?.[1]
-      }
-      field={field}
-      issues={issuesByPath.get(field.path) || []}
-      key={field.path}
-      onSave={saveCorrection}
-      saving={correctionMutation.isPending}
-      value={valueAtPointer(data, field.path)}
-    />
-  )
-  const invoiceFields = INVOICE_FIELDS
-  const partyFields = [
-    ...PARTY_FIELDS.map((field) => ({
-      ...field,
-      group: "Supplier",
-      path: `/supplier/${field.key}`,
-    })),
-    ...PARTY_FIELDS.map((field) => ({
-      ...field,
-      group: "Buyer",
-      path: `/buyer/${field.key}`,
-    })),
-  ]
-  const totalFields = TOTAL_FIELDS.map((field) => ({
-    ...field,
-    path: `/totals/${field.key}`,
-  }))
-  const scalarFields = [
-    ...invoiceFields.map((field) => ({ ...field, group: "Invoice details" })),
-    ...partyFields,
-    ...totalFields.map((field) => ({ ...field, group: "Invoice totals" })),
-  ]
-  const isPrimaryField = (field) =>
-    hasValue(valueAtPointer(data, field.path)) || issuesByPath.has(field.path)
-  const optionalFields = scalarFields.filter((field) => !isPrimaryField(field))
-  const extractedFieldCount =
-    scalarFields.filter((field) => hasValue(valueAtPointer(data, field.path)))
-      .length +
-    data.line_items.reduce(
-      (count, item) =>
+  const copyValue = async (value) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopyStatus("Copied")
+    } catch {
+      setCopyStatus("Could not copy")
+    }
+    window.clearTimeout(copyTimer.current)
+    copyTimer.current = window.setTimeout(() => setCopyStatus(""), 1500)
+  }
+  const extractedCount =
+    data.fields.length +
+    data.text_blocks.length +
+    data.tables.reduce(
+      (count, table) =>
         count +
-        LINE_ITEM_FIELDS.filter((field) => hasValue(item[field.key])).length +
-        LINE_TAX_FIELDS.filter((field) =>
-          hasValue(item.tax_amounts[field.key])
-        ).length,
+        table.rows.reduce((rowCount, row) => rowCount + row.cells.length, 0),
       0
     )
-  const mappedIssuePaths = new Set([
-    ...scalarFields.map((field) => field.path),
-    ...data.line_items.flatMap((_, index) => [
-      ...LINE_ITEM_FIELDS.map(
-        (field) => `/line_items/${index}/${field.key}`
-      ),
-      ...LINE_TAX_FIELDS.map(
-        (field) => `/line_items/${index}/tax_amounts/${field.key}`
-      ),
-    ]),
-  ])
-  const unmappedIssues = result.validation_issues.filter(
-    (issue) => !mappedIssuePaths.has(issue.field_path)
-  )
-
-  const renderSparseSection = (title, fields) => {
-    const primaryFields = fields.filter(isPrimaryField)
-    if (!primaryFields.length) return null
-    return (
-      <FieldSection key={title} title={title}>
-        {primaryFields.map(renderField)}
-      </FieldSection>
-    )
-  }
+  const editableProps = (targetId) => ({
+    issues: issuesByTarget.get(targetId) || [],
+    onCopied: copyValue,
+    onSave: saveCorrection,
+    saving: correctionMutation.isPending,
+    targetId,
+  })
 
   return (
-    <section className="mx-auto max-w-5xl">
+    <section className="mx-auto max-w-6xl">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
             Human review required
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-            Review extracted invoice
+            Review extracted document
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Version {result.version} · {REVIEW_LABELS[result.review_status]}
@@ -387,10 +321,10 @@ export function ReviewPage() {
               {documentTypeLabel(result.document_type)}
             </span>
             <span className="rounded-full border bg-card px-3 py-1">
-              {extractedFieldCount} extracted fields
+              {extractedCount} extracted values
             </span>
             <span className="rounded-full border bg-card px-3 py-1">
-              {result.validation_issues.length} need attention
+              {result.quality_issues.length} need attention
             </span>
           </div>
         </div>
@@ -403,13 +337,13 @@ export function ReviewPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="font-semibold">
-              {result.validation_issues.length
+              {result.quality_issues.length
                 ? "Needs attention"
                 : "Ready for your review"}
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Approval records your review; it does not submit bookkeeping or
-              tax filings.
+              Click any extracted value to copy it. Approval records your review
+              only.
             </p>
           </div>
           {result.review_status === "approved" ? (
@@ -453,119 +387,113 @@ export function ReviewPage() {
             </Button>
           )}
         </div>
-        {unmappedIssues.length ? (
-          <ul className="mt-4 space-y-2">
-            {unmappedIssues.map((issue) => (
-              <li
-                className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                key={`${issue.code}-${issue.field_path}`}
-              >
-                {issue.message}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {mutationError || exportMutation.error ? (
-          <p className="mt-4 text-sm text-destructive" role="alert">
-            {(mutationError || exportMutation.error).message}
+        <p
+          aria-live="polite"
+          className="mt-3 h-4 text-xs text-muted-foreground"
+        >
+          {copyStatus}
+        </p>
+        {unmappedIssues.map((issue) => (
+          <p
+            className="mt-2 text-sm text-destructive"
+            key={`${issue.target_id}-${issue.code}`}
+          >
+            {issue.message}
+          </p>
+        ))}
+        {mutationError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {mutationError.message}
           </p>
         ) : null}
       </section>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <div className="space-y-5">
-          {renderSparseSection("Invoice details", invoiceFields)}
-          {renderSparseSection(
-            "Supplier",
-            partyFields.filter((field) => field.group === "Supplier")
-          )}
-          {renderSparseSection(
-            "Buyer",
-            partyFields.filter((field) => field.group === "Buyer")
-          )}
+          {data.fields.length ? (
+            <Card title="Fields">
+              {data.fields.map((field) => (
+                <EditableValue
+                  key={field.id}
+                  label={field.label}
+                  pageNumber={field.page_number}
+                  value={field.value}
+                  {...editableProps(field.id)}
+                />
+              ))}
+            </Card>
+          ) : null}
+          {data.text_blocks.length ? (
+            <Card
+              description="Useful visible text that was not presented as a labelled field."
+              title="Other text"
+            >
+              {data.text_blocks.map((block, index) => (
+                <EditableValue
+                  key={block.id}
+                  label={`Text block ${index + 1}`}
+                  pageNumber={block.page_number}
+                  value={block.text}
+                  {...editableProps(block.id)}
+                />
+              ))}
+            </Card>
+          ) : null}
         </div>
 
         <div className="space-y-5">
-          {renderSparseSection("Invoice totals", totalFields)}
-          <FieldSection
-            description="Descriptions and financial values are editable. Source pages remain extraction provenance."
-            title={`Line items (${data.line_items.length})`}
-          >
-            {data.line_items.length ? (
-              data.line_items.map((item, index) => (
-                <div className="border-b py-4 last:border-b-0" key={index}>
-                  <h3 className="text-sm font-semibold">Line {index + 1}</h3>
-                  {LINE_ITEM_FIELDS.map((field) => ({
-                    ...field,
-                    path: `/line_items/${index}/${field.key}`,
-                  }))
-                    .filter(isPrimaryField)
-                    .map(renderField)}
-                  {LINE_TAX_FIELDS.some((field) =>
-                    isPrimaryField({
-                      ...field,
-                      path: `/line_items/${index}/tax_amounts/${field.key}`,
-                    })
-                  ) ? (
-                    <p className="mt-3 text-xs font-medium text-muted-foreground">
-                      Tax amounts
-                    </p>
-                  ) : null}
-                  {LINE_TAX_FIELDS.map((field) => ({
-                    ...field,
-                    path: `/line_items/${index}/tax_amounts/${field.key}`,
-                  }))
-                    .filter(isPrimaryField)
-                    .map(renderField)}
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Source pages: {item.source_pages.join(", ") || "None"}
-                  </p>
-                </div>
-              ))
-            ) : (
-              <p className="mt-3 text-sm text-muted-foreground">
-                No line items were extracted.
-              </p>
-            )}
-          </FieldSection>
-          {optionalFields.length ? (
-            <section className="rounded-2xl border border-dashed bg-card p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">Optional details</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Absent fields stay out of the review unless you need them.
-                  </p>
-                </div>
-                <Button
-                  onClick={() => setShowOptionalFields((shown) => !shown)}
-                  variant="outline"
-                >
-                  {showOptionalFields
-                    ? "Hide optional details"
-                    : `Add optional details (${optionalFields.length})`}
-                </Button>
+          {data.tables.map((table, tableIndex) => (
+            <Card
+              key={table.id}
+              description={`Source pages: ${table.page_numbers.join(", ")}`}
+              title={table.title || `Table ${tableIndex + 1}`}
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-max text-left text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      {table.headers.map((header, index) => (
+                        <th
+                          className="px-2 py-2 text-xs font-medium text-muted-foreground"
+                          key={`${header}-${index}`}
+                        >
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {table.rows.map((row) => (
+                      <tr className="border-b last:border-b-0" key={row.id}>
+                        {row.cells.map((cell, cellIndex) => (
+                          <td className="min-w-36 px-2 align-top" key={cell.id}>
+                            <EditableValue
+                              label={`${table.headers[cellIndex]}, row ${table.rows.indexOf(row) + 1}`}
+                              value={cell.value}
+                              {...editableProps(cell.id)}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              {showOptionalFields ? (
-                <div className="mt-4">
-                  {optionalFields.map((field, index) => (
-                    <React.Fragment key={field.path}>
-                      {index === 0 ||
-                      optionalFields[index - 1].group !== field.group ? (
-                        <p className="mt-4 text-xs font-semibold text-muted-foreground first:mt-0">
-                          {field.group}
-                        </p>
-                      ) : null}
-                      {renderField(field)}
-                    </React.Fragment>
-                  ))}
-                </div>
-              ) : null}
-            </section>
+            </Card>
+          ))}
+          {!data.fields.length &&
+          !data.tables.length &&
+          !data.text_blocks.length ? (
+            <Card title="No visible values extracted">
+              <p className="text-sm text-muted-foreground">
+                Review the original and retry processing if this document
+                contains readable information.
+              </p>
+            </Card>
           ) : null}
-          <FieldSection title="Correction history">
+          <Card title="Correction history">
             <CorrectionHistory corrections={result.corrections} />
-          </FieldSection>
+          </Card>
         </div>
       </div>
     </section>

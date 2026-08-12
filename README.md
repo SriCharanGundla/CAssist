@@ -15,8 +15,9 @@ compose.yaml    Local PostgreSQL service
 
 ## Run locally
 
-Prerequisites: Docker, `uv`, Node.js, and `pnpm`. The backend Python version and environment are
-managed by `uv`; do not create or activate a virtual environment manually.
+Prerequisites: Docker, `uv`, nvm, and `pnpm`. Node 24 LTS is pinned in `.nvmrc`; run `nvm use` before
+frontend commands. The backend Python version and environment are managed by `uv`; do not create or
+activate a virtual environment manually.
 
 1. Start PostgreSQL:
 
@@ -45,6 +46,7 @@ managed by `uv`; do not create or activate a virtual environment manually.
 
    ```bash
    cd frontend
+   nvm use
    pnpm install
    pnpm dev
    ```

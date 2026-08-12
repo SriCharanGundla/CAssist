@@ -139,7 +139,7 @@ describe("correctResult", () => {
 
     await correctResult("result-1", 1, [
       {
-        field_path: "/totals/grand_total",
+        target_id: "field-0001",
         value: "1180.00",
         reason: "Checked against invoice",
       },
@@ -154,7 +154,7 @@ describe("correctResult", () => {
           expected_version: 1,
           changes: [
             {
-              field_path: "/totals/grand_total",
+              target_id: "field-0001",
               value: "1180.00",
               reason: "Checked against invoice",
             },
@@ -177,24 +177,27 @@ describe("document deletion", () => {
   it.each([
     [deleteDocumentOriginal, "/documents/document-1/original"],
     [permanentlyDeleteDocument, "/documents/document-1"],
-  ])("sends a CSRF-protected DELETE to the intended endpoint", async (remove, path) => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(jsonResponse({ csrf_token: "delete-csrf" }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+  ])(
+    "sends a CSRF-protected DELETE to the intended endpoint",
+    async (remove, path) => {
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(jsonResponse({ csrf_token: "delete-csrf" }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }))
 
-    await remove("document-1")
+      await remove("document-1")
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      `${API_BASE_URL}${path}`,
-      expect.objectContaining({
-        credentials: "include",
-        method: "DELETE",
-        headers: expect.objectContaining({
-          "X-CSRF-Token": "delete-csrf",
-        }),
-      })
-    )
-  })
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        `${API_BASE_URL}${path}`,
+        expect.objectContaining({
+          credentials: "include",
+          method: "DELETE",
+          headers: expect.objectContaining({
+            "X-CSRF-Token": "delete-csrf",
+          }),
+        })
+      )
+    }
+  )
 })

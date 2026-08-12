@@ -7,16 +7,53 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import * as api from "@/lib/api"
 import { ReviewPage } from "@/pages/review-page"
 
-vi.mock("@/lib/api", async (importOriginal) => {
-  const original = await importOriginal()
-  return {
-    ...original,
-    getResult: vi.fn(),
-    correctResult: vi.fn(),
-    downloadTallyExport: vi.fn(),
-    updateResultReview: vi.fn(),
-  }
-})
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal()),
+  getResult: vi.fn(),
+  correctResult: vi.fn(),
+  downloadTallyExport: vi.fn(),
+  updateResultReview: vi.fn(),
+}))
+
+const extraction = {
+  document_type: "tax_invoice",
+  fields: [
+    {
+      id: "field-0001",
+      label: "Bill No.",
+      value: "INV-1",
+      page_number: 1,
+      region: null,
+    },
+    {
+      id: "field-0002",
+      label: "Grand Total",
+      value: "118.00",
+      page_number: 1,
+      region: null,
+    },
+  ],
+  tables: [
+    {
+      id: "table-0001",
+      title: "Items",
+      headers: ["Description", "Amount"],
+      page_numbers: [1],
+      rows: [
+        {
+          id: "table-0001-row-0001",
+          cells: [
+            { id: "table-0001-r0001-c0001", value: "Professional services" },
+            { id: "table-0001-r0001-c0002", value: "118.00" },
+          ],
+        },
+      ],
+    },
+  ],
+  text_blocks: [
+    { id: "text-0001", text: "Thank you", page_number: 1, region: null },
+  ],
+}
 
 const initialResult = {
   result_id: "result-1",
@@ -26,69 +63,14 @@ const initialResult = {
   review_status: "unreviewed",
   reviewed_by_user_id: null,
   reviewed_at: null,
-  canonical_data: {},
-  evidence: [
+  extracted_data: structuredClone(extraction),
+  effective_data: structuredClone(extraction),
+  quality_issues: [
     {
-      field_path: "/invoice_number",
-      page_number: 1,
-      region: { x: 10, y: 10, width: 40, height: 20 },
-    },
-  ],
-  effective_data: {
-    document_type: "tax_invoice",
-    invoice_number: "INV-1",
-    invoice_date: "2026-08-12",
-    due_date: null,
-    currency: "INR",
-    supplier: {
-      name: "Supplier Ltd",
-      gstin: "27ABCDE1234F1Z0",
-      pan: "ABCDE1234F",
-      address: null,
-      state_code: "27",
-    },
-    buyer: {
-      name: null,
-      gstin: null,
-      pan: null,
-      address: null,
-      state_code: null,
-    },
-    place_of_supply: "27",
-    reverse_charge: false,
-    line_items: [
-      {
-        description: "Professional services",
-        hsn_sac: "9983",
-        quantity: "1",
-        unit: "NOS",
-        unit_price: "100.00",
-        discount: null,
-        taxable_value: "100.00",
-        gst_rate: "18",
-        tax_amounts: { cgst: "9.00", sgst: "9.00", igst: null, cess: null },
-        total: "118.00",
-        source_pages: [1],
-      },
-    ],
-    totals: {
-      taxable_amount: "100.00",
-      discount_amount: null,
-      cgst_amount: "9.00",
-      sgst_amount: "9.00",
-      igst_amount: null,
-      cess_amount: null,
-      round_off: null,
-      grand_total: "118.00",
-    },
-    notes: [],
-  },
-  validation_issues: [
-    {
-      severity: "warning",
-      code: "MISSING_PARTY_NAME",
-      field_path: "/buyer/name",
-      message: "Buyer name was not extracted",
+      target_id: "field-0001",
+      code: "possible_ocr_error",
+      message: "Possible character confusion",
+      suggested_value: "INV-7",
     },
   ],
   corrections: [],
@@ -115,90 +97,71 @@ describe("ReviewPage", () => {
     api.getResult.mockResolvedValue(structuredClone(initialResult))
   })
 
-  it("shows sourced values and attention fields without empty optional rows", async () => {
+  it("renders only extracted generic fields, tables, and text", async () => {
     renderReviewPage()
 
     expect(
-      await screen.findByText("Review extracted invoice")
+      await screen.findByText("Review extracted document")
     ).toBeInTheDocument()
-    expect(screen.getByText("Needs attention")).toBeInTheDocument()
-    expect(screen.getByText("1 need attention")).toBeInTheDocument()
-    expect(screen.getByText("Buyer name was not extracted")).toBeInTheDocument()
-    expect(screen.getByText("Source page 1")).toBeInTheDocument()
-    expect(screen.getAllByText("118.00")).toHaveLength(2)
-    expect(screen.getByText("Line items (1)")).toBeInTheDocument()
-    expect(screen.getByText("Source pages: 1")).toBeInTheDocument()
-    expect(screen.queryByText("Due date")).not.toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /Add optional details/ })
-    ).toBeEnabled()
+    expect(screen.getByText("Bill No.")).toBeInTheDocument()
+    expect(screen.getByText("Items")).toBeInTheDocument()
+    expect(screen.getByText("Professional services")).toBeInTheDocument()
+    expect(screen.getByText("Thank you")).toBeInTheDocument()
+    expect(screen.getByText("Possible character confusion")).toBeInTheDocument()
+    expect(screen.queryByText("Supplier GSTIN")).not.toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Approve extraction" })
     ).toBeEnabled()
   })
 
-  it("saves an append-only field correction with the current version", async () => {
+  it("copies a value by clicking it and shows brief feedback", async () => {
+    const user = userEvent.setup()
+    const writeText = vi.spyOn(navigator.clipboard, "writeText")
+    renderReviewPage()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy Bill No.: INV-1" })
+    )
+
+    expect(writeText).toHaveBeenCalledWith("INV-1")
+    expect(screen.getByText("Copied")).toBeInTheDocument()
+  })
+
+  it("saves an append-only correction by stable target id", async () => {
     const user = userEvent.setup()
     const corrected = structuredClone(initialResult)
     corrected.version = 2
     corrected.review_status = "in_review"
-    corrected.effective_data.buyer.name = "Buyer Ltd"
-    corrected.validation_issues = []
+    corrected.effective_data.fields[0].value = "INV-7"
+    corrected.quality_issues = []
     corrected.corrections = [
       {
         id: "correction-1",
-        field_path: "/buyer/name",
-        previous_value: null,
-        corrected_value: "Buyer Ltd",
-        reason: "Checked against original",
+        target_id: "field-0001",
+        previous_value: "INV-1",
+        corrected_value: "INV-7",
+        reason: "Accepted quality-review suggestion",
       },
     ]
     api.correctResult.mockResolvedValue(corrected)
     renderReviewPage()
-    await screen.findByText("Review extracted invoice")
 
-    const buyerNameField = screen
-      .getByText("Buyer name was not extracted")
-      .closest(".border-b")
+    const issue = await screen.findByText("Possible character confusion")
     await user.click(
-      within(buyerNameField).getByRole("button", { name: "Edit" })
-    )
-    await user.type(within(buyerNameField).getByLabelText("Name"), "Buyer Ltd")
-    await user.type(
-      within(buyerNameField).getByLabelText("Reason for changing Name"),
-      "Checked against original"
-    )
-    await user.click(
-      within(buyerNameField).getByRole("button", { name: "Save" })
+      within(issue.closest("li")).getByRole("button", { name: "Use “INV-7”" })
     )
 
     expect(api.correctResult).toHaveBeenCalledWith("result-1", 1, [
       {
-        field_path: "/buyer/name",
-        value: "Buyer Ltd",
-        reason: "Checked against original",
+        target_id: "field-0001",
+        value: "INV-7",
+        reason: "Accepted quality-review suggestion",
       },
     ])
     expect(await screen.findByText("Version 2 · In review")).toBeInTheDocument()
-    expect(screen.getByText("Ready for your review")).toBeInTheDocument()
   })
 
-  it("reveals absent optional contract fields only when requested", async () => {
-    const user = userEvent.setup()
-    renderReviewPage()
-    await screen.findByText("Review extracted invoice")
-
-    await user.click(
-      screen.getByRole("button", { name: /Add optional details/ })
-    )
-
-    expect(screen.getByText("Due date")).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Hide optional details" })
-    ).toBeEnabled()
-  })
-
-  it("records explicit human approval against the current version", async () => {
+  it("records approval and exports only an approved result", async () => {
     const user = userEvent.setup()
     api.updateResultReview.mockResolvedValue({
       ...structuredClone(initialResult),
@@ -207,10 +170,14 @@ describe("ReviewPage", () => {
       reviewed_by_user_id: "user-1",
       reviewed_at: "2026-08-12T12:00:00Z",
     })
+    api.downloadTallyExport.mockResolvedValue(undefined)
     renderReviewPage()
 
     await user.click(
       await screen.findByRole("button", { name: "Approve extraction" })
+    )
+    await user.click(
+      await screen.findByRole("button", { name: "Download Tally JSON" })
     )
 
     expect(api.updateResultReview).toHaveBeenCalledWith(
@@ -218,28 +185,6 @@ describe("ReviewPage", () => {
       1,
       "approved"
     )
-    expect(await screen.findByText("Version 2 · Approved")).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Return to review" })
-    ).toBeEnabled()
-  })
-
-  it("downloads Tally JSON only from an approved current result", async () => {
-    const user = userEvent.setup()
-    api.getResult.mockResolvedValue({
-      ...structuredClone(initialResult),
-      version: 4,
-      review_status: "approved",
-      reviewed_by_user_id: "user-1",
-      reviewed_at: "2026-08-12T12:00:00Z",
-    })
-    api.downloadTallyExport.mockResolvedValue(undefined)
-    renderReviewPage()
-
-    await user.click(
-      await screen.findByRole("button", { name: "Download Tally JSON" })
-    )
-
-    expect(api.downloadTallyExport).toHaveBeenCalledWith("result-1", 4)
+    expect(api.downloadTallyExport).toHaveBeenCalledWith("result-1", 2)
   })
 })

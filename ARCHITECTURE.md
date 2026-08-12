@@ -236,6 +236,11 @@ CREATE INDEX audit_events_workspace_created_idx
     ON audit_events (workspace_id, created_at DESC);
 ```
 
+The initial physical column names `canonical_data`, `validation_issues`, and `field_path` remain to
+avoid a cosmetic data migration. They now store the generic extraction, quality issues, and an
+internal value pointer respectively. The public API uses `extracted_data`, `quality_issues`, and
+stable `target_id` values; clients do not depend on those legacy storage names.
+
 ### Authentication session migration
 
 Authentication is added after the initial application schema as a separate migration:
@@ -877,10 +882,11 @@ stage order and an auditable failure boundary.
 flowchart LR
     PRE["Render page images and extract native PDF text"] --> CLASSIFY["Classification agent"]
     CLASSIFY --> EXTRACT["Generic extraction agent"]
-    EXTRACT --> STRUCTURE["Deterministic structural validation"]
-    STRUCTURE -->|"suspicious output only"| QUALITY["Quality-review agent"]
-    STRUCTURE -->|"clean output"| PERSIST["Persist immutable extraction"]
-    QUALITY --> PERSIST
+    EXTRACT --> CHECK["Deterministic suspicion checks"]
+    CHECK -->|"suspicious output only"| QUALITY["Quality-review agent"]
+    CHECK -->|"clean output"| STRUCTURE["Structural validation and stable IDs"]
+    QUALITY --> STRUCTURE
+    STRUCTURE --> PERSIST["Persist immutable extraction"]
 ```
 
 Classification is descriptive metadata and never selects a fixed extraction schema. The classifier
