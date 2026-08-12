@@ -73,6 +73,7 @@ EXPECTED_COLUMNS = {
         "canonical_data",
         "validation_issues",
         "review_status",
+        "version",
         "reviewed_by_user_id",
         "reviewed_at",
         "created_at",

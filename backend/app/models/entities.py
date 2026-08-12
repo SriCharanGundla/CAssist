@@ -274,6 +274,7 @@ class ExtractionResult(Base):
     review_status: Mapped[ReviewStatus] = mapped_column(
         review_status_type, server_default=ReviewStatus.UNREVIEWED.value
     )
+    version: Mapped[int] = mapped_column(server_default=text("1"))
     reviewed_by_user_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

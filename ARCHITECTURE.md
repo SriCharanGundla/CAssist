@@ -175,6 +175,7 @@ CREATE TABLE extraction_results (
     canonical_data          jsonb NOT NULL,
     validation_issues       jsonb NOT NULL DEFAULT '[]'::jsonb,
     review_status           review_status NOT NULL DEFAULT 'unreviewed',
+    version                 integer NOT NULL DEFAULT 1,
     reviewed_by_user_id     uuid REFERENCES users(id),
     reviewed_at             timestamptz,
     created_at              timestamptz NOT NULL DEFAULT now(),
@@ -613,6 +614,7 @@ Returns the raw canonical data, validation issues, corrections, and effective co
 {
   "result_id": "e3951e79-d334-46fb-91ed-56c42ff619bb",
   "document_type": "tax_invoice",
+  "version": 1,
   "review_status": "unreviewed",
   "canonical_data": {},
   "effective_data": {},
@@ -627,6 +629,7 @@ Appends one or more field corrections.
 
 ```json
 {
+  "expected_version": 1,
   "changes": [
     {
       "field_path": "/document/number",
@@ -638,11 +641,23 @@ Appends one or more field corrections.
 ```
 
 Use JSON Pointer paths. The backend validates corrected values against the canonical Pydantic schema and reruns deterministic validators.
+Corrections never replace `canonical_data`: each accepted field change appends a `corrections` row
+with its previous value, corrected value, actor, reason, and timestamp. The effective document is
+rebuilt by applying those rows in creation order. A correction moves the result to `in_review`,
+including when it was previously approved, and clears the prior approval identity and timestamp.
+The updated validation warnings are persisted on the result in the same transaction.
+
+`expected_version` provides optimistic concurrency for correction and review mutations. Each
+successful mutation increments the result version. A stale version returns `409` so two tabs cannot
+silently submit against different effective documents. Audit events contain only action, actor,
+result/workspace identifiers, version, counts, and status; correction values and document data are
+never copied into audit metadata.
 
 ### `POST /api/v1/results/{result_id}/review`
 
 ```json
 {
+  "expected_version": 2,
   "status": "approved"
 }
 ```
