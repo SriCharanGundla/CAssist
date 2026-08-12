@@ -17,15 +17,18 @@ async function apiRequest(path, options = {}) {
 }
 
 async function responseError(response, fallbackMessage) {
+  let message = fallbackMessage
   try {
     const payload = await response.json()
     if (typeof payload.detail === "string") {
-      return new Error(payload.detail)
+      message = payload.detail
     }
   } catch {
     // The fallback is intentionally safe for non-JSON upstream responses.
   }
-  return new Error(fallbackMessage)
+  const error = new Error(message)
+  error.status = response.status
+  return error
 }
 
 async function getCsrfToken() {
@@ -138,6 +141,38 @@ export async function getRun(runId, { signal } = {}) {
   const response = await apiRequest(`/runs/${runId}`, { signal })
   if (!response.ok) {
     throw await responseError(response, "Unable to load processing status.")
+  }
+  return response.json()
+}
+
+export async function getResult(resultId, { signal } = {}) {
+  const response = await apiRequest(`/results/${resultId}`, { signal })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load the extraction result.")
+  }
+  return response.json()
+}
+
+export async function correctResult(resultId, expectedVersion, changes) {
+  const response = await csrfRequest(`/results/${resultId}/fields`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_version: expectedVersion, changes }),
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to save the correction.")
+  }
+  return response.json()
+}
+
+export async function updateResultReview(resultId, expectedVersion, status) {
+  const response = await csrfRequest(`/results/${resultId}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_version: expectedVersion, status }),
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to update the review status.")
   }
   return response.json()
 }

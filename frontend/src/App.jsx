@@ -5,6 +5,7 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
 import { DocumentPage } from "@/pages/document-page"
+import { ReviewPage } from "@/pages/review-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function HomePage() {
@@ -77,6 +78,7 @@ function AuthenticatedApp({ auth }) {
           <Route element={<HomePage />} path="/" />
           <Route element={<UploadPage />} path="/upload" />
           <Route element={<DocumentPage />} path="/documents/:documentId" />
+          <Route element={<ReviewPage />} path="/results/:resultId/review" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

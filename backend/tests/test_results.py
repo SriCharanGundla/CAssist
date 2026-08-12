@@ -166,6 +166,22 @@ async def test_get_result_returns_effective_data_without_provider_output(
     ]
     assert "raw_provider_output" not in payload
     assert "provider output" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_get_result_by_id_supports_reloadable_review_route(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, _, _, _, run_id, result_id = result_client
+
+    response = await client.get(f"/api/v1/results/{result_id}")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["result_id"] == str(result_id)
+    assert response.json()["run_id"] == str(run_id)
+    assert "raw_provider_output" not in response.json()
 
 
 @pytest.mark.asyncio
@@ -364,6 +380,7 @@ async def test_result_operations_hide_other_workspaces(
     client.headers["X-CSRF-Token"] = csrf_response.json()["csrf_token"]
 
     assert (await client.get(f"/api/v1/runs/{run_id}/result")).status_code == 404
+    assert (await client.get(f"/api/v1/results/{result_id}")).status_code == 404
     assert (
         await client.patch(
             f"/api/v1/results/{result_id}/fields",

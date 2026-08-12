@@ -131,7 +131,10 @@ export function DocumentPage() {
 
       <div className="mt-6 flex gap-3">
         {isComplete && run.result_id ? (
-          <Button disabled title="Review UI is the next milestone">
+          <Button
+            nativeButton={false}
+            render={<Link to={`/results/${run.result_id}/review`} />}
+          >
             Review extraction
           </Button>
         ) : null}

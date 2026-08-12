@@ -55,7 +55,7 @@ describe("DocumentPage", () => {
     expect(await screen.findByText("2 of 2 pages complete")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Review extraction" })
-    ).toBeDisabled()
+    ).toHaveAttribute("href", "/results/result-1/review")
   })
 
   it("shows only the backend-safe failure message", async () => {

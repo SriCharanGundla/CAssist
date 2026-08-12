@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,6 +123,7 @@ def _response(
 @router.get("/runs/{run_id}/result", response_model=ResultResponse)
 async def get_result(
     run_id: UUID,
+    response: Response,
     current_auth: Annotated[CurrentAuth, Depends(get_current_auth)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
 ) -> ResultResponse:
@@ -131,6 +132,23 @@ async def get_result(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
     result, run, _ = result_row
     corrections = await _corrections_for_result(session, result.id)
+    response.headers["Cache-Control"] = "no-store"
+    return _response(result, run, corrections)
+
+
+@router.get("/results/{result_id}", response_model=ResultResponse)
+async def get_result_by_id(
+    result_id: UUID,
+    response: Response,
+    current_auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> ResultResponse:
+    result_row = await _authorized_result_by_id(session, result_id, current_auth.user.id)
+    if result_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
+    result, run, _ = result_row
+    corrections = await _corrections_for_result(session, result.id)
+    response.headers["Cache-Control"] = "no-store"
     return _response(result, run, corrections)
 
 

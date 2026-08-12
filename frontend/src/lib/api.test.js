@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { API_BASE_URL, uploadDocument } from "@/lib/api"
+import { API_BASE_URL, correctResult, uploadDocument } from "@/lib/api"
 
 function jsonResponse(payload, init = {}) {
   return new Response(JSON.stringify(payload), {
@@ -115,5 +115,50 @@ describe("uploadDocument", () => {
       )
     ).rejects.toThrow("The file could not be uploaded to private storage.")
     expect(fetch).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe("correctResult", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("uses a fresh CSRF token and preserves decimal values as strings", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "correction-csrf" }))
+      .mockResolvedValueOnce(
+        jsonResponse({ result_id: "result-1", version: 2 })
+      )
+
+    await correctResult("result-1", 1, [
+      {
+        field_path: "/totals/grand_total",
+        value: "1180.00",
+        reason: "Checked against invoice",
+      },
+    ])
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${API_BASE_URL}/results/result-1/fields`,
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          expected_version: 1,
+          changes: [
+            {
+              field_path: "/totals/grand_total",
+              value: "1180.00",
+              reason: "Checked against invoice",
+            },
+          ],
+        }),
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "X-CSRF-Token": "correction-csrf",
+        }),
+      })
+    )
   })
 })

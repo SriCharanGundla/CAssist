@@ -678,6 +678,7 @@ Returns the raw canonical data, validation issues, corrections, and effective co
 ```json
 {
   "result_id": "e3951e79-d334-46fb-91ed-56c42ff619bb",
+  "run_id": "56168db1-4ef1-4d56-9572-7f9ea26bf01e",
   "document_type": "tax_invoice",
   "version": 1,
   "review_status": "unreviewed",
@@ -687,6 +688,13 @@ Returns the raw canonical data, validation issues, corrections, and effective co
   "corrections": []
 }
 ```
+
+### `GET /api/v1/results/{result_id}`
+
+Returns the same frontend-safe result representation by result ID so
+`/results/:resultId/review` remains reloadable and shareable inside an authenticated workspace.
+Both result retrieval endpoints return `Cache-Control: no-store`, enforce workspace membership, and
+exclude raw provider output.
 
 ### `PATCH /api/v1/results/{result_id}/fields`
 
@@ -852,6 +860,15 @@ only after R2 succeeds. It then redirects to `/documents/:documentId`, including
 document ID returned by deduplication. The document screen polls document and run status every two
 seconds until a terminal state, reports only backend-safe errors, and explicitly keeps successful
 extraction review-required. It does not invent page-level progress while extraction is active.
+
+The implemented `/results/:resultId/review` route retrieves the result directly by its authorized
+result ID, shows effective invoice data and deterministic warnings, and supports corrections to
+existing scalar invoice, party, total, tax, and line-item fields. Optional blank values are submitted
+as JSON `null`; decimal values remain JSON strings. Each save submits one append-only JSON Pointer
+correction with the current result version and an optional reason. Source-page provenance remains
+read-only. The screen shows correction history and requires an explicit approval action; approval
+does not imply bookkeeping, filing, or downstream submission. Conflicts trigger a result refresh
+instead of silently overwriting another tab's changes.
 
 ## 14. MVP implementation order
 
