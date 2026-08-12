@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -15,14 +15,14 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   logout: vi.fn(),
 }))
 
-function renderApp() {
+function renderApp(initialEntries = ["/"]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   return render(
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>
           <App />
         </MemoryRouter>
       </QueryClientProvider>
@@ -83,5 +83,30 @@ describe("authenticated app header", () => {
     fireEvent.keyDown(accountButton, { key: "ArrowDown" })
     expect(await screen.findByText("Alex Morgan")).toBeInTheDocument()
     expect(screen.getByText("owner@example.test")).toBeInTheDocument()
+  })
+
+  it("provides skip navigation and route-aware browser titles", async () => {
+    renderApp(["/upload"])
+
+    const skipLink = await screen.findByRole("link", {
+      name: "Skip to content",
+    })
+    expect(skipLink).toHaveAttribute("href", "#main-content")
+    expect(document.getElementById("main-content")).toHaveAttribute(
+      "tabindex",
+      "-1"
+    )
+    await waitFor(() => expect(document.title).toBe("Upload — CAssist"))
+  })
+
+  it("expands shared button and account targets on coarse pointers", async () => {
+    renderApp()
+
+    expect(
+      await screen.findByRole("button", { name: "Toggle color theme" })
+    ).toHaveClass("[@media(pointer:coarse)]:min-h-11")
+    expect(
+      screen.getByRole("button", { name: "Open account menu" })
+    ).toHaveClass("[@media(pointer:coarse)]:size-11")
   })
 })

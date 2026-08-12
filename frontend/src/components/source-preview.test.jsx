@@ -122,6 +122,19 @@ describe("SourcePreview PDF viewer", () => {
     expect(screen.getByRole("button", { name: "Fit page" })).toBeEnabled()
   })
 
+  it("explains viewer icons with visible tooltips", async () => {
+    render(
+      <SourcePreview
+        mimeType="application/pdf"
+        sourceUrl="https://download.invalid/original.pdf"
+      />
+    )
+
+    const zoomIn = await screen.findByRole("button", { name: "Zoom in" })
+    fireEvent.focus(zoomIn)
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Zoom in")
+  })
+
   it("tracks pointer movement directly without a delayed pan frame", async () => {
     render(
       <SourcePreview

@@ -71,6 +71,7 @@ const initialResult = {
   result_id: "result-1",
   run_id: "run-1",
   document_id: "document-1",
+  original_filename: "invoice.png",
   original_mime_type: "image/png",
   original_available: true,
   document_type: "tax_invoice",
@@ -141,6 +142,9 @@ describe("ReviewPage", () => {
     expect(
       await screen.findByText("Review extracted document")
     ).toBeInTheDocument()
+    await waitFor(() =>
+      expect(document.title).toBe("Review — invoice.png — CAssist")
+    )
     expect(screen.getByText("Bill No.")).toBeInTheDocument()
     expect(screen.getByText("Invoice details")).toBeInTheDocument()
     expect(screen.getByText("Items")).toBeInTheDocument()

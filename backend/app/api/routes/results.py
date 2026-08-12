@@ -116,6 +116,7 @@ def _response(
         result_id=result.id,
         run_id=run.id,
         document_id=document.id,
+        original_filename=document.original_filename,
         original_mime_type=document.mime_type,
         original_available=(
             document.r2_object_key is not None and document.original_deleted_at is None

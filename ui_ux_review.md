@@ -1,38 +1,6 @@
 # CAssist Frontend — Remaining UI/UX Findings
 
-Verified against the current frontend on 2026-08-12. The first five findings were implemented in the first enhancement batch. This file now tracks the ten remaining fully supported findings.
-
-## P2 — Accessibility and operational polish
-
-### 6. The authenticated shell has no skip-to-content link
-
-Keyboard users must traverse the header controls on every route before reaching the page content. Add a focus-visible skip link targeting the main content region.
-
-**Where:** [`frontend/src/App.jsx`](frontend/src/App.jsx)
-
-### 7. Frequently used controls have small touch targets
-
-Dashboard actions, preview toolbar buttons, the upload remove action, the account trigger, and the dialog close action are roughly 24–28 CSS pixels. Keep the compact visual icons if desired, but enlarge their interactive hit areas for touch use.
-
-**Where:** [`frontend/src/components/ui/button.jsx`](frontend/src/components/ui/button.jsx), [`frontend/src/App.jsx`](frontend/src/App.jsx), [`frontend/src/components/ui/dialog.jsx`](frontend/src/components/ui/dialog.jsx)
-
-### 8. Browser titles do not identify the current route or document
-
-Every route leaves the document title as `CAssist`, so tabs and browser history do not distinguish dashboard, upload, settings, comparison, or a specific review. Set a route-aware title and include the source filename on review when available.
-
-**Where:** [`frontend/index.html`](frontend/index.html), [`frontend/src/App.jsx`](frontend/src/App.jsx)
-
-### 9. Source-preview icon controls have no visible tooltips
-
-The image and PDF toolbars correctly provide accessible names, but sighted users must infer zoom, reset, fit, rotate, and page-navigation actions from icons alone. Add the existing tooltip component around these controls.
-
-**Where:** [`frontend/src/components/source-preview.jsx`](frontend/src/components/source-preview.jsx)
-
-### 10. Active processing uses fixed two-second polling
-
-Dashboard rows and the development comparison page poll every two seconds until completion. Use a modest adaptive interval that stays responsive initially and backs off for longer runs.
-
-**Where:** [`frontend/src/pages/dashboard-page.jsx`](frontend/src/pages/dashboard-page.jsx), [`frontend/src/pages/compare-page.jsx`](frontend/src/pages/compare-page.jsx)
+Verified against the current frontend on 2026-08-12. The first ten findings were implemented in two enhancement batches. This file now tracks the five remaining fully supported findings.
 
 ## P3 — Low-risk polish
 

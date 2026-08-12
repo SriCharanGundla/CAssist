@@ -736,6 +736,7 @@ data. Raw provider output is excluded from ordinary frontend responses.
 {
   "result_id": "e3951e79-d334-46fb-91ed-56c42ff619bb",
   "run_id": "56168db1-4ef1-4d56-9572-7f9ea26bf01e",
+  "original_filename": "invoice.pdf",
   "document_type": "invoice",
   "version": 1,
   "review_status": "unreviewed",
@@ -1059,7 +1060,8 @@ uploads concurrently. It obtains a fresh CSRF token for each mutating
 API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
 only after R2 succeeds. It then returns to the dashboard, including when completion reports an
 existing document from deduplication, after invalidating the cached document list. The dashboard list itself does not poll. Each active document
-row independently polls only its processing run every two seconds until terminal state, then updates
+row independently polls only its processing run until terminal state, starting at two-second
+intervals and backing off to five and then ten seconds for longer runs, then updates
 its own status and actions without refreshing the table. It reports only backend-safe errors and does
 not invent page-level progress. Standard API requests use a 30-second client timeout; the direct R2
 upload is excluded because large file transfers require their own progress-aware lifecycle. The
@@ -1093,6 +1095,10 @@ action. Conflicts refresh the result instead of silently
 overwriting another tab and show concise user-facing feedback without exposing concurrency details.
 Approved results are read-only: copying and export remain available, but
 correction controls and quality suggestions return only after an explicit `Return to review` action.
+Authenticated pages expose a focus-visible skip-to-content link and route-aware browser titles; the
+review title includes the authorized original filename. Compact controls retain their visual size but
+meet larger touch targets on coarse-pointer devices. Image and PDF viewer icon controls expose both
+accessible names and visible tooltips.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. Dashboard row

@@ -42,6 +42,7 @@ import {
   permanentlyDeleteDocument,
   retryDocumentProcessing,
 } from "@/lib/api"
+import { adaptivePollingInterval } from "@/lib/polling"
 
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"])
 
@@ -135,9 +136,7 @@ function DocumentRow({ document }) {
     queryFn: ({ signal }) => getRun(runId, { signal }),
     enabled: Boolean(runId && !TERMINAL_RUN_STATUSES.has(initialRun.status)),
     refetchInterval: (query) =>
-      query.state.data && TERMINAL_RUN_STATUSES.has(query.state.data.status)
-        ? false
-        : 2_000,
+      adaptivePollingInterval(query, TERMINAL_RUN_STATUSES),
   })
   const run = runQuery.data || initialRun
   const isRunning = Boolean(run && !TERMINAL_RUN_STATUSES.has(run.status))

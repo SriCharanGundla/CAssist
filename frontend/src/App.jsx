@@ -27,6 +27,7 @@ import { SettingsPage } from "@/pages/settings-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function AuthenticatedApp({ auth }) {
+  const location = useLocation()
   const { resolvedTheme, setTheme } = useTheme()
   const [logoutError, setLogoutError] = React.useState(null)
   const [isLoggingOut, setIsLoggingOut] = React.useState(false)
@@ -56,9 +57,27 @@ function AuthenticatedApp({ auth }) {
       : "dark"
     setTheme(nextTheme)
   }
+  React.useEffect(() => {
+    if (location.pathname.startsWith("/results/")) return
+    const routeTitle =
+      location.pathname === "/upload"
+        ? "Upload"
+        : location.pathname === "/settings"
+          ? "Settings"
+          : location.pathname.startsWith("/dev/compare/")
+            ? "Compare models"
+            : "Documents"
+    document.title = `${routeTitle} — CAssist`
+  }, [location.pathname])
 
   return (
     <div className="min-h-svh bg-muted/30">
+      <a
+        className="fixed top-2 left-2 z-[100] -translate-y-16 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground shadow focus:translate-y-0"
+        href="#main-content"
+      >
+        Skip to content
+      </a>
       <header className="border-b bg-background">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4">
           <Link className="text-lg font-semibold tracking-tight" to="/">
@@ -80,7 +99,7 @@ function AuthenticatedApp({ auth }) {
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Open account menu"
-                className="grid size-7 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="grid size-7 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [@media(pointer:coarse)]:size-11"
               >
                 {initials}
               </DropdownMenuTrigger>
@@ -113,7 +132,11 @@ function AuthenticatedApp({ auth }) {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-5 py-8">
+      <main
+        className="mx-auto max-w-7xl px-5 py-8"
+        id="main-content"
+        tabIndex={-1}
+      >
         {logoutError ? (
           <p className="mb-4 text-sm text-destructive" role="alert">
             {logoutError}

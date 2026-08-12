@@ -5,8 +5,10 @@ import { Link, useParams } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { compareDocument, getDocument } from "@/lib/api"
+import { adaptivePollingInterval } from "@/lib/polling"
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"])
+const COMPARISON_COMPLETE = new Set(["succeeded"])
 
 function RunCard({ run }) {
   return (
@@ -117,10 +119,20 @@ export function ComparePage() {
     enabled: started,
     refetchInterval: (query) => {
       const runs = query.state.data?.runs || []
-      return runs.length === 2 &&
+      const comparisonStatus =
+        runs.length === 2 &&
         runs.every((run) => TERMINAL_STATUSES.has(run.status))
-        ? false
-        : 2_000
+          ? "succeeded"
+          : "processing"
+      return adaptivePollingInterval(
+        {
+          state: {
+            ...query.state,
+            data: query.state.data ? { status: comparisonStatus } : undefined,
+          },
+        },
+        COMPARISON_COMPLETE
+      )
     },
   })
 

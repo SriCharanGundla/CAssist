@@ -368,6 +368,11 @@ export function ReviewPage() {
     queryKey: ["result", resultId],
     queryFn: ({ signal }) => getResult(resultId, { signal }),
   })
+  React.useEffect(() => {
+    document.title = resultQuery.data?.original_filename
+      ? `Review — ${resultQuery.data.original_filename} — CAssist`
+      : "Review — CAssist"
+  }, [resultQuery.data?.original_filename])
   const updateCachedResult = (result) =>
     queryClient.setQueryData(["result", resultId], result)
   const handleMutationError = (error) => {

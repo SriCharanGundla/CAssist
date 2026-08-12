@@ -14,6 +14,12 @@ import {
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 
 import { Button } from "@/components/ui/button"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { getSpreadsheetPreview } from "@/lib/api"
 
 const MIN_ZOOM = 0.5
@@ -25,6 +31,15 @@ const SPREADSHEET_MIME_TYPES = new Set([
   "text/csv",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ])
+
+function ViewerButton({ label, ...buttonProps }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Button aria-label={label} {...buttonProps} />} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
 
 function PreviewError({ message, onRetry }) {
   return (
@@ -172,35 +187,35 @@ function ImagePreview({ sourceUrl }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b p-2">
-        <Button
-          aria-label="Zoom out"
+        <ViewerButton
+          label="Zoom out"
           disabled={zoom <= MIN_ZOOM}
           onClick={() => changeZoom(zoom - ZOOM_STEP)}
           size="icon"
           variant="ghost"
         >
           <RiZoomOutLine />
-        </Button>
+        </ViewerButton>
         <span className="min-w-12 text-center text-xs text-muted-foreground">
           {Math.round(zoom * 100)}%
         </span>
-        <Button
-          aria-label="Zoom in"
+        <ViewerButton
+          label="Zoom in"
           disabled={zoom >= MAX_ZOOM}
           onClick={() => changeZoom(zoom + ZOOM_STEP)}
           size="icon"
           variant="ghost"
         >
           <RiZoomInLine />
-        </Button>
-        <Button
-          aria-label="Reset view"
+        </ViewerButton>
+        <ViewerButton
+          label="Reset view"
           onClick={reset}
           size="icon"
           variant="ghost"
         >
           <RiRestartLine />
-        </Button>
+        </ViewerButton>
         <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
           <RiDragMove2Line /> Drag to pan
         </span>
@@ -493,29 +508,29 @@ function PdfPreview({ sourceUrl }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b p-2">
-        <Button
-          aria-label="Zoom out"
+        <ViewerButton
+          label="Zoom out"
           disabled={zoom <= MIN_ZOOM}
           onClick={() => changeZoom(zoom - ZOOM_STEP)}
           size="icon"
           variant="ghost"
         >
           <RiZoomOutLine />
-        </Button>
+        </ViewerButton>
         <span className="min-w-12 text-center text-xs text-muted-foreground">
           {Math.round(zoom * 100)}%
         </span>
-        <Button
-          aria-label="Zoom in"
+        <ViewerButton
+          label="Zoom in"
           disabled={zoom >= MAX_ZOOM}
           onClick={() => changeZoom(zoom + ZOOM_STEP)}
           size="icon"
           variant="ghost"
         >
           <RiZoomInLine />
-        </Button>
-        <Button
-          aria-label="Reset view"
+        </ViewerButton>
+        <ViewerButton
+          label="Reset view"
           onClick={() => {
             setZoom(1)
             setRotation(0)
@@ -525,47 +540,47 @@ function PdfPreview({ sourceUrl }) {
           variant="ghost"
         >
           <RiRestartLine />
-        </Button>
-        <Button
-          aria-label="Fit page"
+        </ViewerButton>
+        <ViewerButton
+          label="Fit page"
           disabled={!pages.length}
           onClick={fitCurrentPage}
           size="icon"
           variant="ghost"
         >
           <RiAspectRatioLine />
-        </Button>
-        <Button
-          aria-label="Rotate clockwise"
+        </ViewerButton>
+        <ViewerButton
+          label="Rotate clockwise"
           disabled={!pages.length}
           onClick={() => setRotation((current) => (current + 90) % 360)}
           size="icon"
           variant="ghost"
         >
           <RiClockwise2Line />
-        </Button>
+        </ViewerButton>
         <div className="ml-1 flex items-center gap-0.5 border-l pl-2">
-          <Button
-            aria-label="Previous page"
+          <ViewerButton
+            label="Previous page"
             disabled={!pages.length || currentPage <= 1}
             onClick={() => goToPage(currentPage - 1)}
             size="icon"
             variant="ghost"
           >
             <RiArrowUpSLine />
-          </Button>
+          </ViewerButton>
           <span className="min-w-12 text-center text-xs text-muted-foreground">
             {pages.length ? `${currentPage} / ${pages.length}` : "…"}
           </span>
-          <Button
-            aria-label="Next page"
+          <ViewerButton
+            label="Next page"
             disabled={!pages.length || currentPage >= pages.length}
             onClick={() => goToPage(currentPage + 1)}
             size="icon"
             variant="ghost"
           >
             <RiArrowDownSLine />
-          </Button>
+          </ViewerButton>
         </div>
         <span className="ml-auto hidden items-center gap-1 text-xs text-muted-foreground sm:flex">
           <RiDragMove2Line /> Drag to pan
@@ -647,23 +662,25 @@ export function SourcePreview({
   sourceUrl,
 }) {
   return (
-    <section className="sticky top-5 flex h-[calc(100svh-7rem)] min-h-[32rem] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
-      <div className="border-b px-4 py-3">
-        <h2 className="font-semibold">Original document</h2>
-      </div>
-      {loading ? (
-        <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
-          Loading original…
+    <TooltipProvider>
+      <section className="sticky top-5 flex h-[calc(100svh-7rem)] min-h-[32rem] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+        <div className="border-b px-4 py-3">
+          <h2 className="font-semibold">Original document</h2>
         </div>
-      ) : error ? (
-        <PreviewError message={error.message} onRetry={onRetry} />
-      ) : sourceUrl && mimeType === "application/pdf" ? (
-        <PdfPreview sourceUrl={sourceUrl} />
-      ) : sourceUrl && SPREADSHEET_MIME_TYPES.has(mimeType) ? (
-        <SpreadsheetPreview documentId={documentId} sourceUrl={sourceUrl} />
-      ) : sourceUrl ? (
-        <ImagePreview sourceUrl={sourceUrl} />
-      ) : null}
-    </section>
+        {loading ? (
+          <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
+            Loading original…
+          </div>
+        ) : error ? (
+          <PreviewError message={error.message} onRetry={onRetry} />
+        ) : sourceUrl && mimeType === "application/pdf" ? (
+          <PdfPreview sourceUrl={sourceUrl} />
+        ) : sourceUrl && SPREADSHEET_MIME_TYPES.has(mimeType) ? (
+          <SpreadsheetPreview documentId={documentId} sourceUrl={sourceUrl} />
+        ) : sourceUrl ? (
+          <ImagePreview sourceUrl={sourceUrl} />
+        ) : null}
+      </section>
+    </TooltipProvider>
   )
 }

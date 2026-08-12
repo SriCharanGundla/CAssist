@@ -68,6 +68,8 @@ CSV and XLSX review includes a bounded inline cell preview while preserving an a
 complete private original.
 The review screen presents dynamic sections rather than storage-oriented field/table buckets. Tally
 handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
+Authenticated routes use descriptive browser titles and keyboard skip navigation; compact controls
+expand their touch targets on coarse-pointer devices.
 
 ## Configure authentication
 
