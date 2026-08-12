@@ -5,7 +5,7 @@ import {
   RiEditLine,
   RiExternalLinkLine,
   RiRestartLine,
-  RiStopCircleLine,
+  RiStopFill,
   RiTestTubeLine,
 } from "@remixicon/react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
@@ -270,9 +270,9 @@ function DocumentRow({ document }) {
             disabled={cancelMutation.isPending || isStopping}
             label={isStopping ? "Stopping processing" : "Stop processing"}
             onClick={() => cancelMutation.mutate()}
-            variant="ghost"
+            variant="destructive"
           >
-            <RiStopCircleLine />
+            <RiStopFill />
           </IconAction>
         ) : null}
         <IconAction

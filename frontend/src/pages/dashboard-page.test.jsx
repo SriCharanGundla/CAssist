@@ -219,9 +219,11 @@ describe("DashboardPage", () => {
     })
     renderDashboard()
 
-    await user.click(
-      await screen.findByRole("button", { name: "Stop processing" })
-    )
+    const stopButton = await screen.findByRole("button", {
+      name: "Stop processing",
+    })
+    expect(stopButton).toHaveClass("text-destructive")
+    await user.click(stopButton)
 
     await waitFor(() =>
       expect(api.cancelProcessingRun).toHaveBeenCalledWith("run-1")
