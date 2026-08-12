@@ -132,6 +132,12 @@ CREATE TABLE processing_runs (
     schema_version          text NOT NULL,
     preprocessing_version   text NOT NULL,
     status                  run_status NOT NULL DEFAULT 'queued',
+    progress_stage          text NOT NULL DEFAULT 'queued' CHECK (
+                                progress_stage IN (
+                                    'queued', 'preparing', 'classifying', 'extracting',
+                                    'quality_check', 'saving', 'complete', 'failed'
+                                )
+                            ),
     attempt_count           integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
     input_tokens            integer CHECK (input_tokens IS NULL OR input_tokens >= 0),
     output_tokens           integer CHECK (output_tokens IS NULL OR output_tokens >= 0),
@@ -945,9 +951,15 @@ The generic result is document-led rather than contract-led:
 
 There are no required field names, document-family templates, accounting defaults, decimal
 coercions, or missing-field warnings. Deterministic checks enforce only safe structure: bounded text
-and collection sizes, page ranges, evidence-region bounds, unique server IDs, valid UTF-8 strings,
+and collection sizes, page ranges, unique server IDs, valid UTF-8 strings,
 and consistent table widths. The extraction, evidence, provider response, token counts, and quality
 issues are persisted atomically before the document is marked `ready`.
+
+`processing_runs.progress_stage` exposes the real bounded workflow stage to the authenticated UI:
+queued, preparing pages, classifying, extracting, conditional quality check, saving, and the terminal
+complete/failed stage. Strands `BeforeNodeCallEvent` hooks update agent stages without exposing event
+payloads or document content. An optional evidence region outside the rendered page is discarded;
+it must never cause an otherwise valid extracted label/value to fail.
 
 The review UI renders exactly the extracted fields, tables, and text blocks. Hovering a value uses a
 pointer cursor and subtle text-color change; clicking copies the value and briefly confirms

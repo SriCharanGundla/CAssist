@@ -16,6 +16,7 @@ from app.models.enums import (
     ExportFormat,
     MemberRole,
     ModelProvider,
+    ProcessingStage,
     ReviewStatus,
     RunStatus,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "MemberRole",
     "ModelProvider",
     "ProcessingRun",
+    "ProcessingStage",
     "ReviewStatus",
     "RunStatus",
     "User",

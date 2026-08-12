@@ -21,6 +21,7 @@ from app.models import (
     MemberRole,
     ModelProvider,
     ProcessingRun,
+    ProcessingStage,
     RunStatus,
     User,
     Workspace,
@@ -85,10 +86,13 @@ class FakeExtractionProvider:
         self.rate_limited = rate_limited
         self.observed_paths: tuple[Path, ...] = ()
 
-    def extract_document(self, page_paths, page_text) -> ProviderExtraction:
+    def extract_document(self, page_paths, page_text, on_stage=None) -> ProviderExtraction:
         self.observed_paths = tuple(page_paths)
         assert all(path.exists() for path in self.observed_paths)
         assert tuple(page_text) == (None,)
+        if on_stage is not None:
+            on_stage(ProcessingStage.CLASSIFYING)
+            on_stage(ProcessingStage.EXTRACTING)
         if self.rate_limited:
             raise ProviderRateLimitError("simulated provider rate limit")
         if self.should_fail:
@@ -367,6 +371,7 @@ async def test_processes_one_image_to_result_and_removes_temporary_pages(
         assert document is not None and document.page_count == 1
         assert document.status == DocumentStatus.READY
         assert run is not None and run.status == RunStatus.SUCCEEDED
+        assert run.progress_stage == ProcessingStage.COMPLETE.value
         assert run.worker_id is None
         assert run.lease_expires_at is None
         assert run.attempt_count == 1

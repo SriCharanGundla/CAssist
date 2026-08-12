@@ -1,4 +1,4 @@
-from app.models import Document, ExtractionResult, ProcessingRun, RunStatus
+from app.models import Document, ExtractionResult, ProcessingRun, ProcessingStage, RunStatus
 from app.schemas.documents import (
     RunDetailResponse,
     RunErrorResponse,
@@ -9,6 +9,12 @@ from app.schemas.documents import (
 _ALL_PAGES_COMPLETE = {
     RunStatus.VALIDATING,
     RunStatus.SUCCEEDED,
+}
+
+_TERMINAL_PROGRESS = {
+    RunStatus.SUCCEEDED: ProcessingStage.COMPLETE,
+    RunStatus.FAILED: ProcessingStage.FAILED,
+    RunStatus.CANCELLED: ProcessingStage.FAILED,
 }
 
 
@@ -39,12 +45,15 @@ def run_detail(
     error = None
     if run.error_code and run.error_message_safe:
         error = RunErrorResponse(code=run.error_code, message=run.error_message_safe)
+    progress_stage = _TERMINAL_PROGRESS.get(run.status)
+    if progress_stage is None:
+        progress_stage = ProcessingStage(run.progress_stage)
     return RunDetailResponse(
         **summary.model_dump(),
         document_id=document.id,
         attempt_count=run.attempt_count,
         progress=RunProgressResponse(
-            stage=run.status,
+            stage=progress_stage,
             completed_pages=completed_pages,
             total_pages=document.page_count,
         ),

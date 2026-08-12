@@ -135,6 +135,37 @@ describe("DocumentPage", () => {
     expect(api.retryDocumentProcessing).toHaveBeenCalledWith("document-1")
   })
 
+  it("shows a spinner and the current agent stage while processing", async () => {
+    api.getDocument.mockResolvedValue({
+      id: "document-1",
+      original_filename: "invoice.png",
+      mime_type: "image/png",
+      status: "processing",
+      original_available: true,
+      latest_run: { id: "run-1", status: "extracting" },
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "extracting",
+      result_id: null,
+      error: null,
+      progress: {
+        stage: "quality_check",
+        completed_pages: null,
+        total_pages: 1,
+      },
+    })
+
+    renderDocumentPage()
+
+    expect(
+      await screen.findByText("Checking extraction quality")
+    ).toBeInTheDocument()
+    expect(screen.getByRole("status", { name: "Processing" })).toHaveClass(
+      "animate-spin"
+    )
+  })
+
   it("offers file-only deletion and then removes the open-original action", async () => {
     const user = userEvent.setup()
     api.getDocument

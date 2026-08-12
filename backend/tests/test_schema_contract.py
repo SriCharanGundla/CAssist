@@ -52,6 +52,7 @@ EXPECTED_COLUMNS = {
         "schema_version",
         "preprocessing_version",
         "status",
+        "progress_stage",
         "attempt_count",
         "input_tokens",
         "output_tokens",

@@ -1,10 +1,11 @@
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
 
 from strands import Agent
+from strands.hooks import BeforeNodeCallEvent
 from strands.models.gemini import GeminiModel
 from strands.models.model import Model
 from strands.models.openai_responses import OpenAIResponsesModel
@@ -12,6 +13,7 @@ from strands.multiagent import GraphBuilder
 from strands.types.exceptions import ModelThrottledException
 
 from app.core.config import Settings
+from app.models import ProcessingStage
 from app.schemas.extraction import (
     DocumentClassification,
     GenericDocumentExtraction,
@@ -62,6 +64,7 @@ class ExtractionProvider(Protocol):
         self,
         page_paths: Sequence[Path],
         page_text: Sequence[str | None],
+        on_stage: Callable[[ProcessingStage], None] | None = None,
     ) -> ProviderExtraction: ...
 
 
@@ -106,7 +109,11 @@ class StrandsExtractionProvider:
             dependency_logger.propagate = False
             dependency_logger.setLevel(logging.CRITICAL + 1)
 
-    def _build_graph(self, text_tools: DocumentTextTools):
+    def _build_graph(
+        self,
+        text_tools: DocumentTextTools,
+        on_stage: Callable[[ProcessingStage], None] | None = None,
+    ):
         classifier = Agent(
             model=self.model,
             name="document_classifier",
@@ -146,7 +153,7 @@ class StrandsExtractionProvider:
         graph.add_node(quality_reviewer, "quality")
         graph.add_edge("classify", "extract")
         graph.add_edge("extract", "quality", condition=should_review)
-        return (
+        built_graph = (
             graph.set_entry_point("classify")
             .set_max_node_executions(3)
             .set_node_timeout(self.node_timeout_seconds)
@@ -154,11 +161,26 @@ class StrandsExtractionProvider:
             .set_graph_id("cassist_generic_document_extraction")
             .build()
         )
+        if on_stage is not None:
+            node_stages = {
+                "classify": ProcessingStage.CLASSIFYING,
+                "extract": ProcessingStage.EXTRACTING,
+                "quality": ProcessingStage.QUALITY_CHECK,
+            }
+
+            def report_node_stage(event: BeforeNodeCallEvent) -> None:
+                stage = node_stages.get(event.node_id)
+                if stage is not None:
+                    on_stage(stage)
+
+            built_graph.add_hook(report_node_stage, BeforeNodeCallEvent)
+        return built_graph
 
     def extract_document(
         self,
         page_paths: Sequence[Path],
         page_text: Sequence[str | None],
+        on_stage: Callable[[ProcessingStage], None] | None = None,
     ) -> ProviderExtraction:
         if not page_paths:
             raise ProviderExtractionError("No preprocessed pages were supplied")
@@ -166,7 +188,7 @@ class StrandsExtractionProvider:
             raise ProviderExtractionError("Page image and text counts do not match")
 
         text_tools = DocumentTextTools(tuple(page_text))
-        graph = self._build_graph(text_tools)
+        graph = self._build_graph(text_tools, on_stage)
         content: list[dict[str, object]] = [
             {
                 "text": (

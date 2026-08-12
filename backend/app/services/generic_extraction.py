@@ -88,12 +88,13 @@ def needs_quality_review(draft: GenericExtractionDraft) -> bool:
     return draft.quality_review_recommended or bool(deterministic_quality_candidates(draft))
 
 
-def _validate_region(region: EvidenceRegion | None, page_path: Path) -> None:
+def _valid_region(region: EvidenceRegion | None, page_path: Path) -> EvidenceRegion | None:
     if region is None:
-        return
+        return None
     with Image.open(page_path) as image:
         if region.x + region.width > image.width or region.y + region.height > image.height:
-            raise ValueError("Evidence region extends beyond its source page")
+            return None
+    return region
 
 
 def _validate_page(page_number: int, page_paths: Sequence[Path]) -> None:
@@ -124,8 +125,9 @@ def finalize_extraction(
     fields: list[ExtractedField] = []
     for index, field in enumerate(draft.fields, start=1):
         _validate_page(field.page_number, page_paths)
-        _validate_region(field.region, page_paths[field.page_number - 1])
-        fields.append(ExtractedField(id=f"field-{index:04d}", **field.model_dump()))
+        field_data = field.model_dump()
+        field_data["region"] = _valid_region(field.region, page_paths[field.page_number - 1])
+        fields.append(ExtractedField(id=f"field-{index:04d}", **field_data))
 
     tables: list[ExtractedTable] = []
     for table_index, table in enumerate(draft.tables, start=1):
@@ -158,8 +160,9 @@ def finalize_extraction(
     text_blocks: list[ExtractedTextBlock] = []
     for index, block in enumerate(draft.text_blocks, start=1):
         _validate_page(block.page_number, page_paths)
-        _validate_region(block.region, page_paths[block.page_number - 1])
-        text_blocks.append(ExtractedTextBlock(id=f"text-{index:04d}", **block.model_dump()))
+        block_data = block.model_dump()
+        block_data["region"] = _valid_region(block.region, page_paths[block.page_number - 1])
+        text_blocks.append(ExtractedTextBlock(id=f"text-{index:04d}", **block_data))
 
     document = GenericDocumentExtraction(
         document_type=document_type,

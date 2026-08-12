@@ -4,7 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.enums import DocumentStatus, ModelProvider, ReviewStatus, RunStatus
+from app.models.enums import (
+    DocumentStatus,
+    ModelProvider,
+    ProcessingStage,
+    ReviewStatus,
+    RunStatus,
+)
 
 
 class RunSummaryResponse(BaseModel):
@@ -44,7 +50,7 @@ class DocumentListResponse(BaseModel):
 
 
 class RunProgressResponse(BaseModel):
-    stage: RunStatus
+    stage: ProcessingStage
     completed_pages: int | None
     total_pages: int | None
 

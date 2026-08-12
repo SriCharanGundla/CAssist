@@ -25,6 +25,17 @@ class RunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ProcessingStage(StrEnum):
+    QUEUED = "queued"
+    PREPARING = "preparing"
+    CLASSIFYING = "classifying"
+    EXTRACTING = "extracting"
+    QUALITY_CHECK = "quality_check"
+    SAVING = "saving"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 class ReviewStatus(StrEnum):
     UNREVIEWED = "unreviewed"
     IN_REVIEW = "in_review"

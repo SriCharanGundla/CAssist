@@ -233,6 +233,7 @@ class ProcessingRun(Base):
     status: Mapped[RunStatus] = mapped_column(
         run_status_type, server_default=RunStatus.QUEUED.value
     )
+    progress_stage: Mapped[str] = mapped_column(Text, server_default="queued")
     attempt_count: Mapped[int] = mapped_column(server_default="0")
     input_tokens: Mapped[int | None]
     output_tokens: Mapped[int | None]

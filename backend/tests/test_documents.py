@@ -25,6 +25,7 @@ from app.models import (
     MemberRole,
     ModelProvider,
     ProcessingRun,
+    ProcessingStage,
     RunStatus,
     User,
     WorkspaceMember,
@@ -465,7 +466,7 @@ async def test_run_detail_reports_safe_progress_and_result_link(
     assert payload["result_id"] == str(result_id)
     assert payload["review_status"] == "unreviewed"
     assert payload["progress"] == {
-        "stage": "succeeded",
+        "stage": "complete",
         "completed_pages": 1,
         "total_pages": 1,
     }
@@ -563,6 +564,7 @@ async def test_active_run_reports_stage_without_inventing_page_progress(
         schema_version="active-schema",
         preprocessing_version="active-preprocessing",
         status=RunStatus.EXTRACTING,
+        progress_stage=ProcessingStage.CLASSIFYING.value,
         attempt_count=1,
         started_at=datetime.now(UTC),
     )
@@ -577,7 +579,7 @@ async def test_active_run_reports_stage_without_inventing_page_progress(
     assert response.json()["result_id"] is None
     assert response.json()["review_status"] is None
     assert response.json()["progress"] == {
-        "stage": "extracting",
+        "stage": "classifying",
         "completed_pages": None,
         "total_pages": 1,
     }

@@ -14,6 +14,7 @@ from app.models import (
     DocumentStatus,
     ExtractionResult,
     ProcessingRun,
+    ProcessingStage,
     RunStatus,
 )
 from app.services.model_provider import (
@@ -100,6 +101,7 @@ async def claim_next_run(
 
     run, document = run_and_document
     run.status = RunStatus.PREPROCESSING
+    run.progress_stage = ProcessingStage.PREPARING.value
     run.worker_id = worker_id
     run.lease_expires_at = claimed_at + timedelta(seconds=lease_seconds)
     run.started_at = run.started_at or claimed_at
@@ -131,6 +133,7 @@ async def _advance_stage(
     lease_seconds: int,
     *,
     page_count: int | None = None,
+    progress_stage: ProcessingStage | None = None,
 ) -> bool:
     async with session_factory() as session:
         run_and_document = (
@@ -152,12 +155,39 @@ async def _advance_stage(
         current_time = datetime.now(UTC)
         run, document = run_and_document
         run.status = next_status
+        if progress_stage is not None:
+            run.progress_stage = progress_stage.value
         run.lease_expires_at = current_time + timedelta(seconds=lease_seconds)
         if page_count is not None:
             document.page_count = page_count
         document.updated_at = current_time
         await session.commit()
         return True
+
+
+async def _set_progress_stage(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ClaimedRun,
+    worker_id: str,
+    stage: ProcessingStage,
+    lease_seconds: int,
+) -> None:
+    async with session_factory() as session:
+        run = await session.scalar(
+            select(ProcessingRun)
+            .where(
+                ProcessingRun.id == claim.run_id,
+                ProcessingRun.status == RunStatus.EXTRACTING,
+                ProcessingRun.worker_id == worker_id,
+            )
+            .with_for_update()
+        )
+        if run is None:
+            await session.rollback()
+            return
+        run.progress_stage = stage.value
+        run.lease_expires_at = datetime.now(UTC) + timedelta(seconds=lease_seconds)
+        await session.commit()
 
 
 async def _complete_run(
@@ -198,6 +228,7 @@ async def _complete_run(
             )
         )
         run.status = RunStatus.SUCCEEDED
+        run.progress_stage = ProcessingStage.COMPLETE.value
         run.worker_id = None
         run.lease_expires_at = None
         run.input_tokens = extraction.input_tokens
@@ -236,6 +267,7 @@ async def _fail_run(
         completed_at = datetime.now(UTC)
         run, document = run_and_document
         run.status = RunStatus.FAILED
+        run.progress_stage = ProcessingStage.FAILED.value
         run.worker_id = None
         run.lease_expires_at = None
         run.error_code = error_code
@@ -272,6 +304,7 @@ async def _requeue_rate_limited_run(
         retry_at = datetime.now(UTC) + timedelta(seconds=retry_seconds)
         run, document = run_and_document
         run.status = RunStatus.QUEUED
+        run.progress_stage = ProcessingStage.QUEUED.value
         run.worker_id = None
         run.lease_expires_at = None
         run.queued_at = retry_at
@@ -326,6 +359,7 @@ async def process_next_document(
             RunStatus.EXTRACTING,
             app_settings.worker_lease_seconds,
             page_count=preprocessed.page_count,
+            progress_stage=ProcessingStage.CLASSIFYING,
         ):
             return False
 
@@ -333,10 +367,29 @@ async def process_next_document(
             app_settings,
             claim.model_selection,
         )
+        event_loop = asyncio.get_running_loop()
+
+        def report_stage(stage: ProcessingStage) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                _set_progress_stage(
+                    session_factory,
+                    claim,
+                    worker_id,
+                    stage,
+                    app_settings.worker_lease_seconds,
+                ),
+                event_loop,
+            )
+            try:
+                future.result(timeout=5)
+            except Exception:
+                future.cancel()
+
         extraction = await asyncio.to_thread(
             provider.extract_document,
             preprocessed.page_paths,
             preprocessed.page_text,
+            report_stage,
         )
         if not await _advance_stage(
             session_factory,
@@ -345,6 +398,7 @@ async def process_next_document(
             RunStatus.EXTRACTING,
             RunStatus.VALIDATING,
             app_settings.worker_lease_seconds,
+            progress_stage=ProcessingStage.SAVING,
         ):
             return False
         return await _complete_run(session_factory, claim, worker_id, extraction)

@@ -182,7 +182,7 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
     graph = None
 
-    def build_graph(text_tools):
+    def build_graph(text_tools, _on_stage=None):
         nonlocal graph
         graph = FakeGraph(text_tools)
         return graph
@@ -259,7 +259,7 @@ def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Pat
             )
 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
-    provider._build_graph = lambda _tools: FakeGraph()  # type: ignore[method-assign]
+    provider._build_graph = lambda _tools, _on_stage=None: FakeGraph()  # type: ignore[method-assign]
 
     extraction = provider.extract_document([page_path], (None,))
 
@@ -277,7 +277,7 @@ def test_provider_preserves_throttling_as_a_safe_retryable_error(tmp_path: Path)
             raise ModelThrottledException("provider details must not escape")
 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
-    provider._build_graph = lambda _tools: ThrottledGraph()  # type: ignore[method-assign]
+    provider._build_graph = lambda _tools, _on_stage=None: ThrottledGraph()  # type: ignore[method-assign]
 
     with pytest.raises(ProviderRateLimitError, match="rate limit"):
         provider.extract_document([page_path], (None,))
