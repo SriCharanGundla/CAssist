@@ -51,20 +51,29 @@ describe("authenticated app header", () => {
     api.listDocuments.mockResolvedValue({ items: [], next_cursor: null })
   })
 
-  it("opens theme and account menus without breaking Base UI group context", async () => {
+  it("toggles and remembers an explicit color theme", async () => {
     const user = userEvent.setup()
     renderApp()
 
     const themeButton = await screen.findByRole("button", {
-      name: "Choose color theme",
+      name: "Toggle color theme",
     })
-    themeButton.focus()
-    fireEvent.keyDown(themeButton, { key: "ArrowDown" })
-    expect(await screen.findByText("Theme")).toBeInTheDocument()
-    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }))
-    expect(document.documentElement).toHaveClass("dark")
+    expect(document.documentElement).toHaveClass("light")
+    expect(localStorage.getItem("cassist-theme")).toBeNull()
 
-    const accountButton = screen.getByRole("button", {
+    await user.click(themeButton)
+    expect(document.documentElement).toHaveClass("dark")
+    expect(localStorage.getItem("cassist-theme")).toBe("dark")
+
+    await user.click(themeButton)
+    expect(document.documentElement).toHaveClass("light")
+    expect(localStorage.getItem("cassist-theme")).toBe("light")
+  })
+
+  it("opens the account menu without breaking Base UI group context", async () => {
+    renderApp()
+
+    const accountButton = await screen.findByRole("button", {
       name: "Open account menu",
     })
     accountButton.focus()

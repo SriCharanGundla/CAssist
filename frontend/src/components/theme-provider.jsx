@@ -35,7 +35,7 @@ export function ThemeProvider({
   children,
   defaultTheme = "system",
   storageKey = "cassist-theme",
-  disableTransitionOnChange = true,
+  disableTransitionOnChange = false,
   ...props
 }) {
   const [theme, setThemeState] = React.useState(() => {

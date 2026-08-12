@@ -1,11 +1,6 @@
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
-import {
-  RiComputerLine,
-  RiLogoutBoxRLine,
-  RiMoonLine,
-  RiSunLine,
-} from "@remixicon/react"
+import { RiLogoutBoxRLine, RiMoonLine, RiSunLine } from "@remixicon/react"
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { useTheme } from "@/components/theme-provider"
@@ -16,8 +11,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -28,7 +21,7 @@ import { ReviewPage } from "@/pages/review-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function AuthenticatedApp({ auth }) {
-  const { setTheme, theme } = useTheme()
+  const { setTheme } = useTheme()
   const [logoutError, setLogoutError] = React.useState(null)
   const [isLoggingOut, setIsLoggingOut] = React.useState(false)
 
@@ -51,12 +44,12 @@ function AuthenticatedApp({ auth }) {
     .join("")
     .slice(0, 2)
     .toUpperCase()
-  const ThemeIcon =
-    theme === "dark"
-      ? RiMoonLine
-      : theme === "light"
-        ? RiSunLine
-        : RiComputerLine
+  const toggleTheme = () => {
+    const nextTheme = document.documentElement.classList.contains("dark")
+      ? "light"
+      : "dark"
+    setTheme(nextTheme)
+  }
 
   return (
     <div className="min-h-svh bg-muted/30">
@@ -66,28 +59,17 @@ function AuthenticatedApp({ auth }) {
             CAssist
           </Link>
           <div className="flex min-w-0 items-center gap-3">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                aria-label="Choose color theme"
-                render={<Button size="icon" variant="ghost" />}
-              >
-                <ThemeIcon className="size-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuRadioGroup onValueChange={setTheme} value={theme}>
-                  <DropdownMenuLabel>Theme</DropdownMenuLabel>
-                  <DropdownMenuRadioItem value="light">
-                    <RiSunLine /> Light
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="dark">
-                    <RiMoonLine /> Dark
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="system">
-                    <RiComputerLine /> System
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              aria-label="Toggle color theme"
+              className="relative size-9 rounded-full"
+              onClick={toggleTheme}
+              size="icon"
+              variant="ghost"
+            >
+              <RiSunLine className="size-[1.2rem] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
+              <RiMoonLine className="absolute size-[1.2rem] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
+              <span className="sr-only">Toggle color theme</span>
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Open account menu"
