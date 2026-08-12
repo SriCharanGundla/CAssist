@@ -7,9 +7,14 @@ from app.schemas.extraction import (
     DraftTable,
     EvidenceRegion,
     GenericExtractionDraft,
+    PresentationDraft,
     QualityReviewDraft,
 )
-from app.services.generic_extraction import finalize_extraction, target_value_path
+from app.services.generic_extraction import (
+    finalize_extraction,
+    finalize_presentation,
+    target_value_path,
+)
 
 
 def test_finalization_assigns_stable_ids_and_preserves_source_labels(tmp_path: Path) -> None:
@@ -85,3 +90,45 @@ def test_out_of_bounds_optional_evidence_does_not_discard_extraction(
     assert document.fields[0].value == "INV-42"
     assert document.fields[0].region is None
     assert issues == []
+
+
+def test_presentation_groups_existing_observations_without_dropping_data(
+    tmp_path: Path,
+) -> None:
+    page = tmp_path / "page.png"
+    Image.new("RGB", (200, 100), "white").save(page)
+    draft = GenericExtractionDraft(
+        fields=[
+            DraftField(label="Invoice No.", value="INV-42", page_number=1),
+            DraftField(label="Grand Total", value="118.00", page_number=1),
+        ],
+        tables=[
+            DraftTable(
+                title="Items",
+                headers=["Description", "Amount"],
+                rows=[["Services", "118.00"]],
+                page_numbers=[1],
+            )
+        ],
+    )
+    document, _ = finalize_extraction(draft, "invoice", [page])
+    presentation = finalize_presentation(
+        document,
+        PresentationDraft(
+            sections=[
+                {
+                    "title": "Invoice details",
+                    "target_paths": [
+                        "/fields/0",
+                        "/fields/0",
+                        "/not-a-target/1",
+                    ],
+                }
+            ]
+        ),
+    )
+
+    assert presentation.sections[0].title == "Invoice details"
+    assert presentation.sections[0].target_ids == ["field-0001"]
+    assert presentation.sections[1].title == "Additional information"
+    assert presentation.sections[1].target_ids == ["field-0002", "table-0001"]

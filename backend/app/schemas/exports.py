@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class TallyExportOptions(BaseModel):
-    include_quality_issues: bool = True
+    include_quality_issues: bool = False
 
 
 class CreateExportRequest(BaseModel):

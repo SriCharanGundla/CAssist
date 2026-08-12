@@ -30,6 +30,7 @@ class ProcessingStage(StrEnum):
     PREPARING = "preparing"
     CLASSIFYING = "classifying"
     EXTRACTING = "extracting"
+    ORGANIZING = "organizing"
     QUALITY_CHECK = "quality_check"
     SAVING = "saving"
     COMPLETE = "complete"

@@ -6,6 +6,7 @@ from typing import Any
 from PIL import Image
 
 from app.schemas.extraction import (
+    DocumentPresentation,
     DraftQualityIssue,
     EvidenceRegion,
     ExtractedField,
@@ -15,6 +16,8 @@ from app.schemas.extraction import (
     ExtractedTextBlock,
     GenericDocumentExtraction,
     GenericExtractionDraft,
+    PresentationDraft,
+    PresentationSection,
     QualityIssue,
     QualityReviewDraft,
 )
@@ -23,6 +26,7 @@ _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _TARGET_PATH = re.compile(
     r"^/(?:fields/[0-9]+|text_blocks/[0-9]+|tables/[0-9]+/rows/[0-9]+/[0-9]+)$"
 )
+_PRESENTATION_TARGET_PATH = re.compile(r"^/(?:fields|tables|text_blocks)/[0-9]+$")
 
 
 def _text_is_suspicious(value: str) -> bool:
@@ -235,6 +239,121 @@ def finalize_extraction(
             )
         )
     return document, issues[:200]
+
+
+def _presentation_target_id(
+    document: GenericDocumentExtraction,
+    target_path: str,
+) -> str | None:
+    if not _PRESENTATION_TARGET_PATH.fullmatch(target_path):
+        return None
+    collection_name, raw_index = target_path.split("/")[1:]
+    try:
+        collection = getattr(document, collection_name)
+        return collection[int(raw_index)].id
+    except (AttributeError, IndexError, ValueError):
+        return None
+
+
+def _all_presentation_target_ids(document: GenericDocumentExtraction) -> list[str]:
+    observations: list[tuple[int, int, int, str]] = []
+    observations.extend(
+        (field.page_number, 0, index, field.id)
+        for index, field in enumerate(document.fields)
+    )
+    observations.extend(
+        (min(table.page_numbers), 1, index, table.id)
+        for index, table in enumerate(document.tables)
+    )
+    observations.extend(
+        (block.page_number, 2, index, block.id)
+        for index, block in enumerate(document.text_blocks)
+    )
+    return [target_id for *_, target_id in sorted(observations)]
+
+
+def finalize_presentation(
+    document: GenericDocumentExtraction,
+    draft: PresentationDraft | None,
+) -> DocumentPresentation:
+    sections: list[PresentationSection] = []
+    assigned: set[str] = set()
+    for section in draft.sections if draft else []:
+        target_ids: list[str] = []
+        for target_path in section.target_paths:
+            target_id = _presentation_target_id(document, target_path)
+            if target_id is None or target_id in assigned:
+                continue
+            assigned.add(target_id)
+            target_ids.append(target_id)
+        if target_ids:
+            sections.append(
+                PresentationSection(
+                    id=f"section-{len(sections) + 1:04d}",
+                    title=section.title.strip() or "Document section",
+                    target_ids=target_ids,
+                )
+            )
+
+    unassigned = [
+        target_id
+        for target_id in _all_presentation_target_ids(document)
+        if target_id not in assigned
+    ]
+    if unassigned:
+        sections.append(
+            PresentationSection(
+                id=f"section-{len(sections) + 1:04d}",
+                title="Additional information" if sections else "Document details",
+                target_ids=unassigned,
+            )
+        )
+    return DocumentPresentation(sections=sections)
+
+
+def coerce_stored_presentation(
+    data: dict[str, Any] | None,
+    document: GenericDocumentExtraction,
+) -> DocumentPresentation:
+    if data:
+        try:
+            presentation = DocumentPresentation.model_validate(data)
+        except ValueError:
+            presentation = DocumentPresentation()
+        known_ids = set(_all_presentation_target_ids(document))
+        sections: list[PresentationSection] = []
+        assigned: set[str] = set()
+        for section in presentation.sections:
+            target_ids = [
+                target_id
+                for target_id in section.target_ids
+                if target_id in known_ids and target_id not in assigned
+            ]
+            assigned.update(target_ids)
+            if target_ids:
+                sections.append(
+                    PresentationSection(
+                        id=f"section-{len(sections) + 1:04d}",
+                        title=section.title,
+                        target_ids=target_ids,
+                    )
+                )
+        missing = [target_id for target_id in known_ids if target_id not in assigned]
+        if missing:
+            ordered_missing = [
+                target_id
+                for target_id in _all_presentation_target_ids(document)
+                if target_id in missing
+            ]
+            sections.append(
+                PresentationSection(
+                    id=f"section-{len(sections) + 1:04d}",
+                    title="Additional information" if sections else "Document details",
+                    target_ids=ordered_missing,
+                )
+            )
+        return DocumentPresentation(sections=sections)
+    return finalize_presentation(document, None)
 
 
 def target_value_path(document: GenericDocumentExtraction, target_id: str) -> str:

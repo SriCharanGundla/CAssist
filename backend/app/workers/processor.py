@@ -221,6 +221,7 @@ async def _complete_run(
                 document_type=extraction.document.document_type,
                 raw_provider_output=extraction.raw_provider_output,
                 canonical_data=extraction.document.model_dump(mode="json"),
+                presentation_data=extraction.presentation.model_dump(mode="json"),
                 evidence_data=[],
                 validation_issues=[
                     issue.model_dump(mode="json") for issue in extraction.quality_issues

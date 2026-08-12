@@ -3,6 +3,9 @@
 CAssist is a side-tool for Chartered Accountants to upload accounting documents and images, extract
 the labels, values, tables, and text actually present, review or copy them, and export reviewed data.
 Extraction is document-led: it does not require an invoice template or invent missing fields.
+After extraction, a bounded organizer groups the observed fields, tables, and text into non-empty
+document-specific sections for review. Sections reference immutable observations and cannot change
+their labels or values.
 
 Uploads support PDF, JPEG, PNG, CSV, and XLSX files up to 25 MiB each. The upload screen accepts up to
 ten files at once; legacy XLS and ZIP files are not supported.
@@ -61,6 +64,8 @@ The dashboard is the document hub: it shows processing state and provides origin
 development model comparison, and deletion actions without an intermediate document page. Review
 uses an embedded PDF.js viewer for PDFs. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
+The review screen presents dynamic sections rather than storage-oriented field/table buckets. Tally
+handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
 
 ## Configure authentication
 

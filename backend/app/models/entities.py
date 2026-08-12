@@ -269,6 +269,9 @@ class ExtractionResult(Base):
     document_type: Mapped[str] = mapped_column(Text)
     raw_provider_output: Mapped[dict[str, Any]] = mapped_column(JSONB)
     canonical_data: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    presentation_data: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, server_default=text("'{\"sections\": []}'::jsonb")
+    )
     evidence_data: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, server_default=text("'[]'::jsonb")
     )

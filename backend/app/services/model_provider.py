@@ -16,13 +16,19 @@ from app.core.config import Settings
 from app.models import ProcessingStage
 from app.schemas.extraction import (
     DocumentClassification,
+    DocumentPresentation,
     GenericDocumentExtraction,
     GenericExtractionDraft,
+    PresentationDraft,
     QualityIssue,
     QualityReviewDraft,
 )
 from app.services.document_text_tools import DocumentTextTools
-from app.services.generic_extraction import finalize_extraction, needs_quality_review
+from app.services.generic_extraction import (
+    finalize_extraction,
+    finalize_presentation,
+    needs_quality_review,
+)
 
 _CLASSIFIER_PROMPT = """Classify the supplied accounting document by visible content only.
 Choose the closest broad type. Classification is descriptive metadata and must not impose an
@@ -36,6 +42,13 @@ rename labels, or apply an invoice schema. Page images are the primary source. T
 tools are optional supporting evidence when text is available. Set quality_review_recommended
 only when the source is genuinely ambiguous, illegible, or likely misread. Do not duplicate
 observations."""
+
+_ORGANIZER_PROMPT = """Organize the preceding generic extraction for a Chartered Accountant's
+review without changing any extracted content. Return short ordered section titles and references
+to every extracted top-level observation using only /fields/N, /tables/N, or /text_blocks/N.
+Prefer visible document headings. When headings are absent, use concise financial-document labels
+such as Invoice details, Supplier, Taxes and totals, Payment details, Transactions, or Terms only
+when supported by the observations. Do not create, rename, correct, summarize, or omit values."""
 
 _QUALITY_PROMPT = """Review the preceding generic extraction against the supplied document.
 Only flag likely gibberish, OCR-like character confusion, duplicate observations, or illegible
@@ -56,6 +69,7 @@ class ProviderExtraction:
     raw_provider_output: dict[str, object]
     input_tokens: int
     output_tokens: int
+    presentation: DocumentPresentation = field(default_factory=DocumentPresentation)
     quality_issues: list[QualityIssue] = field(default_factory=list)
 
 
@@ -132,6 +146,15 @@ class StrandsExtractionProvider:
             tools=[text_tools.read_document_text, text_tools.search_document_text],
             retry_strategy=None,
         )
+        organizer = Agent(
+            model=self.model,
+            name="document_presentation_organizer",
+            system_prompt=_ORGANIZER_PROMPT,
+            structured_output_model=PresentationDraft,
+            callback_handler=None,
+            tools=[],
+            retry_strategy=None,
+        )
         quality_reviewer = Agent(
             model=self.model,
             name="extraction_quality_reviewer",
@@ -150,14 +173,17 @@ class StrandsExtractionProvider:
         graph = GraphBuilder()
         graph.add_node(classifier, "classify")
         graph.add_node(extractor, "extract")
+        graph.add_node(organizer, "organize")
         graph.add_node(quality_reviewer, "quality")
         graph.add_edge("classify", "extract")
+        graph.add_edge("extract", "organize")
         graph.add_edge("extract", "quality", condition=should_review)
+        graph.add_edge("organize", "quality", condition=should_review)
         built_graph = (
             graph.set_entry_point("classify")
-            .set_max_node_executions(3)
+            .set_max_node_executions(4)
             .set_node_timeout(self.node_timeout_seconds)
-            .set_execution_timeout(self.node_timeout_seconds * 3)
+            .set_execution_timeout(self.node_timeout_seconds * 4)
             .set_graph_id("cassist_generic_document_extraction")
             .build()
         )
@@ -165,6 +191,7 @@ class StrandsExtractionProvider:
             node_stages = {
                 "classify": ProcessingStage.CLASSIFYING,
                 "extract": ProcessingStage.EXTRACTING,
+                "organize": ProcessingStage.ORGANIZING,
                 "quality": ProcessingStage.QUALITY_CHECK,
             }
 
@@ -211,8 +238,10 @@ class StrandsExtractionProvider:
             graph_result = graph(content)
             classification_result = graph_result.results["classify"].result
             extraction_result = graph_result.results["extract"].result
+            organizer_result = graph_result.results["organize"].result
             classification = classification_result.structured_output
             draft = extraction_result.structured_output
+            presentation_draft = organizer_result.structured_output
             quality_node = graph_result.results.get("quality")
             quality_result = quality_node.result if quality_node else None
             quality_review = quality_result.structured_output if quality_result else None
@@ -220,6 +249,8 @@ class StrandsExtractionProvider:
                 raise ProviderExtractionError("The classifier returned no classification")
             if not isinstance(draft, GenericExtractionDraft):
                 raise ProviderExtractionError("The extractor returned no structured extraction")
+            if not isinstance(presentation_draft, PresentationDraft):
+                raise ProviderExtractionError("The organizer returned no presentation plan")
             if quality_review is not None and not isinstance(quality_review, QualityReviewDraft):
                 raise ProviderExtractionError("The quality reviewer returned invalid output")
             document, quality_issues = finalize_extraction(
@@ -228,6 +259,7 @@ class StrandsExtractionProvider:
                 page_paths,
                 quality_review,
             )
+            presentation = finalize_presentation(document, presentation_draft)
         except ModelThrottledException as exc:
             raise ProviderRateLimitError("The model provider rate limit was reached") from exc
         except ProviderExtractionError:
@@ -238,11 +270,13 @@ class StrandsExtractionProvider:
         usage = graph_result.accumulated_usage
         return ProviderExtraction(
             document=document,
+            presentation=presentation,
             quality_issues=quality_issues,
             raw_provider_output={
                 "classification": classification.model_dump(mode="json"),
                 "classification_stop_reason": classification_result.stop_reason,
                 "extraction_stop_reason": extraction_result.stop_reason,
+                "organizer_stop_reason": organizer_result.stop_reason,
                 "quality_review_performed": quality_result is not None,
                 "quality_stop_reason": quality_result.stop_reason if quality_result else None,
                 "graph_execution_order": [node.node_id for node in graph_result.execution_order],

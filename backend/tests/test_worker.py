@@ -28,6 +28,7 @@ from app.models import (
     WorkspaceMember,
 )
 from app.schemas.extraction import (
+    DocumentPresentation,
     ExtractedField,
     ExtractedTable,
     ExtractedTableCell,
@@ -93,6 +94,7 @@ class FakeExtractionProvider:
         if on_stage is not None:
             on_stage(ProcessingStage.CLASSIFYING)
             on_stage(ProcessingStage.EXTRACTING)
+            on_stage(ProcessingStage.ORGANIZING)
         if self.rate_limited:
             raise ProviderRateLimitError("simulated provider rate limit")
         if self.should_fail:
@@ -139,6 +141,15 @@ class FakeExtractionProvider:
                     message="Check one character",
                 )
             ],
+            presentation=DocumentPresentation(
+                sections=[
+                    {
+                        "id": "section-0001",
+                        "title": "Invoice details",
+                        "target_ids": ["field-0001", "table-0001"],
+                    }
+                ]
+            ),
             raw_provider_output={"provider_response": "structured"},
             input_tokens=120,
             output_tokens=80,
@@ -384,6 +395,7 @@ async def test_processes_one_image_to_result_and_removes_temporary_pages(
         assert result.document_type == "invoice"
         assert result.canonical_data["fields"][0]["value"] == "INV-100"
         assert result.canonical_data["tables"][0]["rows"][0]["cells"][1]["value"] == "118.00"
+        assert result.presentation_data["sections"][0]["title"] == "Invoice details"
         assert result.raw_provider_output == {"provider_response": "structured"}
         assert [issue["code"] for issue in result.validation_issues] == ["possible_ocr_error"]
 

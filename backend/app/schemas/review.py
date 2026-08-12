@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.extraction import GenericDocumentExtraction, QualityIssue
+from app.schemas.extraction import DocumentPresentation, GenericDocumentExtraction, QualityIssue
 
 
 class CorrectionChange(BaseModel):
@@ -54,5 +54,6 @@ class ResultResponse(BaseModel):
     reviewed_at: datetime | None
     extracted_data: GenericDocumentExtraction
     effective_data: GenericDocumentExtraction
+    presentation: DocumentPresentation
     quality_issues: list[QualityIssue]
     corrections: list[CorrectionResponse]

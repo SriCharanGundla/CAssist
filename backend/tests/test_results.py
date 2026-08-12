@@ -26,6 +26,7 @@ from app.models import (
     WorkspaceMember,
 )
 from app.schemas.extraction import (
+    DocumentPresentation,
     ExtractedField,
     ExtractedTable,
     ExtractedTableCell,
@@ -167,6 +168,25 @@ async def result_client() -> AsyncIterator[
         document_type="invoice",
         raw_provider_output={"private": "provider output"},
         canonical_data=extraction.model_dump(mode="json"),
+        presentation_data=DocumentPresentation(
+            sections=[
+                {
+                    "id": "section-0001",
+                    "title": "Invoice details",
+                    "target_ids": ["field-0001", "field-0002"],
+                },
+                {
+                    "id": "section-0002",
+                    "title": "Particulars",
+                    "target_ids": ["table-0001"],
+                },
+                {
+                    "id": "section-0003",
+                    "title": "Terms",
+                    "target_ids": ["text-0001"],
+                },
+            ]
+        ).model_dump(mode="json"),
         validation_issues=[quality_issue.model_dump(mode="json")],
     )
     session.add(result)
@@ -211,6 +231,11 @@ async def test_get_result_returns_generic_data_without_provider_output(
     assert payload["version"] == 1
     assert payload["review_status"] == "unreviewed"
     assert payload["extracted_data"] == payload["effective_data"]
+    assert payload["presentation"]["sections"][0] == {
+        "id": "section-0001",
+        "title": "Invoice details",
+        "target_ids": ["field-0001", "field-0002"],
+    }
     assert payload["effective_data"]["fields"][0] == {
         "id": "field-0001",
         "label": "Bill No.",
@@ -498,7 +523,7 @@ async def test_tally_handoff_requires_approved_current_result(
         json={"expected_version": 2, "format": "tally_json"},
     )
     assert current.status_code == 200
-    assert current.json()["quality_issues"][0]["code"] == "possible_ocr_error"
+    assert "quality_issues" not in current.json()
 
 
 def _contains_float(value: Any) -> bool:
@@ -541,12 +566,13 @@ async def test_tally_handoff_preserves_effective_strings_and_records_safe_events
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["schema_version"] == "tally-handoff-v2"
+    assert payload["schema_version"] == "tally-handoff-v3"
     assert payload["tally_compatibility"]["native_import_ready"] is False
-    assert payload["reviewed_extraction"]["fields"][1]["value"] == "INV-102"
-    assert payload["reviewed_extraction"]["tables"][0]["rows"][0]["cells"][1][
-        "value"
-    ] == "100.00"
+    reviewed = payload["reviewed_document"]
+    assert reviewed["sections"][0]["fields"][1]["value"] == "INV-102"
+    assert reviewed["sections"][1]["tables"][0]["rows"][0][1] == "100.00"
+    assert "field-0001" not in response.text
+    assert "page_number" not in response.text
     assert "quality_issues" not in payload
     assert not _contains_float(payload)
     assert {mapping["code"] for mapping in payload["required_mappings"]} == {
@@ -568,7 +594,7 @@ async def test_tally_handoff_preserves_effective_strings_and_records_safe_events
     assert export_event is not None
     assert export_event.exported_by_user_id == user_id
     assert export_event.format == ExportFormat.TALLY_JSON
-    assert export_event.exporter_version == "tally-handoff-v2"
+    assert export_event.exporter_version == "tally-handoff-v3"
     assert export_event.options == {
         "include_quality_issues": False,
         "result_version": 3,
@@ -577,6 +603,6 @@ async def test_tally_handoff_preserves_effective_strings_and_records_safe_events
     assert audit is not None
     assert audit.metadata_ == {
         "format": "tally_json",
-        "exporter_version": "tally-handoff-v2",
+        "exporter_version": "tally-handoff-v3",
         "result_version": 3,
     }

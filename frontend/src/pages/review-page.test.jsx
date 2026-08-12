@@ -69,6 +69,25 @@ const initialResult = {
   reviewed_at: null,
   extracted_data: structuredClone(extraction),
   effective_data: structuredClone(extraction),
+  presentation: {
+    sections: [
+      {
+        id: "section-0001",
+        title: "Invoice details",
+        target_ids: ["field-0001", "field-0002"],
+      },
+      {
+        id: "section-0002",
+        title: "Items",
+        target_ids: ["table-0001"],
+      },
+      {
+        id: "section-0003",
+        title: "Terms",
+        target_ids: ["text-0001"],
+      },
+    ],
+  },
   quality_issues: [
     {
       target_id: "field-0001",
@@ -111,10 +130,15 @@ describe("ReviewPage", () => {
       await screen.findByText("Review extracted document")
     ).toBeInTheDocument()
     expect(screen.getByText("Bill No.")).toBeInTheDocument()
+    expect(screen.getByText("Invoice details")).toBeInTheDocument()
     expect(screen.getByText("Items")).toBeInTheDocument()
     expect(screen.getByText("Professional services")).toBeInTheDocument()
     expect(screen.queryByText("Description, row 1")).not.toBeInTheDocument()
     expect(screen.getByText("Thank you")).toBeInTheDocument()
+    expect(screen.getByText("Terms")).toBeInTheDocument()
+    expect(screen.queryByText("Fields")).not.toBeInTheDocument()
+    expect(screen.queryByText("Other text")).not.toBeInTheDocument()
+    expect(screen.queryByText("Correction history")).not.toBeInTheDocument()
     expect(screen.getByText("Possible character confusion")).toBeInTheDocument()
     expect(screen.getByAltText("Original document")).toBeInTheDocument()
     expect(screen.queryByText("Supplier GSTIN")).not.toBeInTheDocument()
@@ -182,6 +206,8 @@ describe("ReviewPage", () => {
       },
     ])
     expect(await screen.findByText("Version 2 · In review")).toBeInTheDocument()
+    expect(screen.getByText("Edited")).toBeInTheDocument()
+    expect(screen.getByText("Changes (1)")).toBeInTheDocument()
   })
 
   it("records approval and exports only an approved result", async () => {

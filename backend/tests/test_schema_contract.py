@@ -72,6 +72,7 @@ EXPECTED_COLUMNS = {
         "document_type",
         "raw_provider_output",
         "canonical_data",
+        "presentation_data",
         "evidence_data",
         "validation_issues",
         "review_status",
@@ -178,3 +179,4 @@ def test_hash_cost_and_provider_payload_types_are_exact() -> None:
     assert runs.c.estimated_cost_usd.type.scale == 6
     assert isinstance(results.c.raw_provider_output.type, JSONB)
     assert isinstance(results.c.canonical_data.type, JSONB)
+    assert isinstance(results.c.presentation_data.type, JSONB)

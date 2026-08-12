@@ -27,6 +27,7 @@ from app.services.auth import CurrentAuth
 from app.services.corrections import InvalidCorrectionPath, apply_corrections, replace_pointer
 from app.services.generic_extraction import (
     coerce_stored_extraction,
+    coerce_stored_presentation,
     deterministic_quality_issues,
 )
 
@@ -101,6 +102,7 @@ def _response(
         result.document_type,
     )
     effective_data, _ = coerce_stored_extraction(effective_stored, result.document_type)
+    presentation = coerce_stored_presentation(result.presentation_data, extracted_data)
     path_targets = {path: target_id for target_id, path in target_paths.items()}
     quality_issues: list[QualityIssue] = []
     for issue_data in result.validation_issues:
@@ -125,6 +127,7 @@ def _response(
         reviewed_at=result.reviewed_at,
         extracted_data=extracted_data,
         effective_data=effective_data,
+        presentation=presentation,
         quality_issues=quality_issues,
         corrections=[
             CorrectionResponse(

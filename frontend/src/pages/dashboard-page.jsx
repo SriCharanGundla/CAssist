@@ -56,6 +56,7 @@ const STATUS_LABELS = {
   preparing: "Preparing",
   classifying: "Classifying",
   extracting: "Extracting",
+  organizing: "Organizing",
   quality_check: "Checking quality",
   validating: "Saving",
   saving: "Saving",

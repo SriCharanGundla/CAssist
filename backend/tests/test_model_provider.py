@@ -12,6 +12,7 @@ from app.schemas.extraction import (
     DocumentClassification,
     DraftField,
     GenericExtractionDraft,
+    PresentationDraft,
     QualityReviewDraft,
 )
 from app.services.document_text_tools import DocumentTextTools
@@ -99,12 +100,13 @@ def test_agent_graph_has_bounded_specialists_and_only_native_text_tools() -> Non
     )
     graph = provider._build_graph(DocumentTextTools((None,)))  # type: ignore[attr-defined]
 
-    assert list(graph.nodes) == ["classify", "extract", "quality"]
+    assert list(graph.nodes) == ["classify", "extract", "organize", "quality"]
     assert graph.nodes["classify"].executor.tool_names == []
     assert graph.nodes["extract"].executor.tool_names == [
         "read_document_text",
         "search_document_text",
     ]
+    assert graph.nodes["organize"].executor.tool_names == []
     assert graph.nodes["quality"].executor.tool_names == [
         "read_document_text",
         "search_document_text",
@@ -112,7 +114,12 @@ def test_agent_graph_has_bounded_specialists_and_only_native_text_tools() -> Non
     assert {
         (edge.from_node.node_id, edge.to_node.node_id, edge.condition is not None)
         for edge in graph.edges
-    } == {("classify", "extract", False), ("extract", "quality", True)}
+    } == {
+        ("classify", "extract", False),
+        ("extract", "organize", False),
+        ("extract", "quality", True),
+        ("organize", "quality", True),
+    }
 
 
 def test_provider_attempts_must_fit_inside_worker_lease() -> None:
@@ -171,11 +178,25 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
                             stop_reason="end_turn",
                         )
                     ),
+                    "organize": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=PresentationDraft(
+                                sections=[
+                                    {
+                                        "title": "Invoice details",
+                                        "target_paths": ["/fields/0"],
+                                    }
+                                ]
+                            ),
+                            stop_reason="end_turn",
+                        )
+                    ),
                 },
                 accumulated_usage={"inputTokens": 12, "outputTokens": 8},
                 execution_order=[
                     SimpleNamespace(node_id="classify"),
                     SimpleNamespace(node_id="extract"),
+                    SimpleNamespace(node_id="organize"),
                 ],
             )
 
@@ -194,6 +215,8 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
     assert extraction.document.fields[0].label == "Bill No."
     assert extraction.document.fields[0].value == "INV-1"
     assert extraction.document.fields[0].id == "field-0001"
+    assert extraction.presentation.sections[0].title == "Invoice details"
+    assert extraction.presentation.sections[0].target_ids == ["field-0001"]
     assert extraction.quality_issues == []
     assert extraction.input_tokens == 12
     assert extraction.output_tokens == 8
@@ -234,6 +257,19 @@ def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Pat
                             stop_reason="end_turn",
                         )
                     ),
+                    "organize": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=PresentationDraft(
+                                sections=[
+                                    {
+                                        "title": "Receipt details",
+                                        "target_paths": ["/fields/0"],
+                                    }
+                                ]
+                            ),
+                            stop_reason="end_turn",
+                        )
+                    ),
                     "quality": SimpleNamespace(
                         result=SimpleNamespace(
                             structured_output=QualityReviewDraft(
@@ -254,6 +290,7 @@ def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Pat
                 execution_order=[
                     SimpleNamespace(node_id="classify"),
                     SimpleNamespace(node_id="extract"),
+                    SimpleNamespace(node_id="organize"),
                     SimpleNamespace(node_id="quality"),
                 ],
             )

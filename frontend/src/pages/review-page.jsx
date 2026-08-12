@@ -104,6 +104,7 @@ function QualityIssues({ issues, onUseSuggestion, saving }) {
 }
 
 function EditableValue({
+  edited = false,
   issues,
   hideLabel = false,
   label,
@@ -140,6 +141,11 @@ function EditableValue({
             {pageNumber ? (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                 Page {pageNumber}
+              </span>
+            ) : null}
+            {edited ? (
+              <span className="rounded-full bg-secondary px-2 py-0.5 text-[11px] text-secondary-foreground">
+                Edited
               </span>
             ) : null}
           </div>
@@ -217,7 +223,7 @@ function Card({ children, description, title }) {
   )
 }
 
-function CorrectionHistory({ corrections }) {
+function CorrectionHistory({ corrections, targetLabels }) {
   if (!corrections.length)
     return (
       <p className="mt-3 text-sm text-muted-foreground">No corrections yet.</p>
@@ -226,8 +232,8 @@ function CorrectionHistory({ corrections }) {
     <ol className="mt-3 space-y-3">
       {corrections.map((correction) => (
         <li className="rounded-lg border p-3 text-xs" key={correction.id}>
-          <p className="font-mono text-muted-foreground">
-            {correction.target_id}
+          <p className="font-medium">
+            {targetLabels.get(correction.target_id) || "Extracted value"}
           </p>
           <p className="mt-1 break-words">
             {String(correction.previous_value)} →{" "}
@@ -241,6 +247,56 @@ function CorrectionHistory({ corrections }) {
         </li>
       ))}
     </ol>
+  )
+}
+
+function ReviewTable({ editableProps, sectionTitle, table }) {
+  return (
+    <div className="border-t pt-4 first:border-t-0 first:pt-0">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        {table.title && table.title !== sectionTitle ? (
+          <h3 className="text-sm font-medium">{table.title}</h3>
+        ) : (
+          <span />
+        )}
+        <span className="text-[11px] text-muted-foreground">
+          Page{table.page_numbers.length === 1 ? "" : "s"}{" "}
+          {table.page_numbers.join(", ")}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-max text-left text-sm">
+          <thead>
+            <tr className="border-b">
+              {table.headers.map((header, index) => (
+                <th
+                  className="px-2 py-2 text-xs font-medium text-muted-foreground"
+                  key={`${header}-${index}`}
+                >
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr className="border-b last:border-b-0" key={row.id}>
+                {row.cells.map((cell, cellIndex) => (
+                  <td className="min-w-36 px-2 align-top" key={cell.id}>
+                    <EditableValue
+                      hideLabel
+                      label={`${table.headers[cellIndex]}, row ${rowIndex + 1}`}
+                      value={cell.value}
+                      {...editableProps(cell.id)}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
@@ -316,6 +372,43 @@ export function ReviewPage() {
 
   const result = resultQuery.data
   const data = result.effective_data
+  const fieldsById = new Map(data.fields.map((field) => [field.id, field]))
+  const tablesById = new Map(data.tables.map((table) => [table.id, table]))
+  const textBlocksById = new Map(
+    data.text_blocks.map((block) => [block.id, block])
+  )
+  const editedTargets = new Set(
+    result.corrections.map((correction) => correction.target_id)
+  )
+  const targetLabels = new Map(
+    data.fields.map((field) => [field.id, field.label])
+  )
+  for (const table of data.tables) {
+    table.rows.forEach((row, rowIndex) => {
+      row.cells.forEach((cell, cellIndex) => {
+        targetLabels.set(
+          cell.id,
+          `${table.headers[cellIndex]}, row ${rowIndex + 1}`
+        )
+      })
+    })
+  }
+  data.text_blocks.forEach((block, index) => {
+    targetLabels.set(block.id, `Text ${index + 1}`)
+  })
+  const presentationSections = result.presentation?.sections?.length
+    ? result.presentation.sections
+    : [
+        {
+          id: "section-0001",
+          title: "Document details",
+          target_ids: [
+            ...data.fields.map((field) => field.id),
+            ...data.tables.map((table) => table.id),
+            ...data.text_blocks.map((block) => block.id),
+          ],
+        },
+      ]
   const issuesByTarget = result.quality_issues.reduce((grouped, issue) => {
     grouped.set(issue.target_id, [
       ...(grouped.get(issue.target_id) || []),
@@ -354,6 +447,7 @@ export function ReviewPage() {
       0
     )
   const editableProps = (targetId) => ({
+    edited: editedTargets.has(targetId),
     issues: issuesByTarget.get(targetId) || [],
     onSave: saveCorrection,
     saving: correctionMutation.isPending,
@@ -477,96 +571,70 @@ export function ReviewPage() {
               : "grid items-start gap-5 lg:grid-cols-2"
           }
         >
-          <div className="space-y-5">
-            {data.fields.length ? (
-              <Card title="Fields">
-                {data.fields.map((field) => (
-                  <EditableValue
-                    key={field.id}
-                    label={field.label}
-                    pageNumber={field.page_number}
-                    value={field.value}
-                    {...editableProps(field.id)}
-                  />
-                ))}
-              </Card>
-            ) : null}
-            {data.text_blocks.length ? (
-              <Card
-                description="Useful visible text that was not presented as a labelled field."
-                title="Other text"
-              >
-                {data.text_blocks.map((block, index) => (
-                  <EditableValue
-                    key={block.id}
-                    label={`Text block ${index + 1}`}
-                    pageNumber={block.page_number}
-                    value={block.text}
-                    {...editableProps(block.id)}
-                  />
-                ))}
-              </Card>
-            ) : null}
-          </div>
-
-          <div className="space-y-5">
-            {data.tables.map((table, tableIndex) => (
-              <Card
-                key={table.id}
-                description={`Source pages: ${table.page_numbers.join(", ")}`}
-                title={table.title || `Table ${tableIndex + 1}`}
-              >
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-max text-left text-sm">
-                    <thead>
-                      <tr className="border-b">
-                        {table.headers.map((header, index) => (
-                          <th
-                            className="px-2 py-2 text-xs font-medium text-muted-foreground"
-                            key={`${header}-${index}`}
-                          >
-                            {header}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {table.rows.map((row) => (
-                        <tr className="border-b last:border-b-0" key={row.id}>
-                          {row.cells.map((cell, cellIndex) => (
-                            <td
-                              className="min-w-36 px-2 align-top"
-                              key={cell.id}
-                            >
-                              <EditableValue
-                                hideLabel
-                                label={`${table.headers[cellIndex]}, row ${table.rows.indexOf(row) + 1}`}
-                                value={cell.value}
-                                {...editableProps(cell.id)}
-                              />
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            ))}
-            {!data.fields.length &&
-            !data.tables.length &&
-            !data.text_blocks.length ? (
-              <Card title="No visible values extracted">
-                <p className="text-sm text-muted-foreground">
-                  Review the original and retry processing if this document
-                  contains readable information.
-                </p>
-              </Card>
-            ) : null}
-            <Card title="Correction history">
-              <CorrectionHistory corrections={result.corrections} />
+          {presentationSections.map((section) => (
+            <Card key={section.id} title={section.title}>
+              {section.target_ids.map((targetId) => {
+                const field = fieldsById.get(targetId)
+                if (field) {
+                  return (
+                    <EditableValue
+                      key={field.id}
+                      label={field.label}
+                      pageNumber={field.page_number}
+                      value={field.value}
+                      {...editableProps(field.id)}
+                    />
+                  )
+                }
+                const table = tablesById.get(targetId)
+                if (table) {
+                  return (
+                    <ReviewTable
+                      editableProps={editableProps}
+                      key={table.id}
+                      sectionTitle={section.title}
+                      table={table}
+                    />
+                  )
+                }
+                const block = textBlocksById.get(targetId)
+                if (block) {
+                  return (
+                    <EditableValue
+                      hideLabel
+                      key={block.id}
+                      label={`${section.title} text`}
+                      pageNumber={block.page_number}
+                      value={block.text}
+                      {...editableProps(block.id)}
+                    />
+                  )
+                }
+                return null
+              })}
             </Card>
-          </div>
+          ))}
+          {!data.fields.length &&
+          !data.tables.length &&
+          !data.text_blocks.length ? (
+            <Card title="No visible values extracted">
+              <p className="text-sm text-muted-foreground">
+                Review the original and retry processing if this document
+                contains readable information.
+              </p>
+            </Card>
+          ) : null}
+          {result.corrections.length ? (
+            <details className="rounded-xl border bg-card px-4 py-3 text-sm lg:col-span-2">
+              <summary className="cursor-pointer font-medium">
+                Changes ({result.corrections.length})
+              </summary>
+              <CorrectionHistory
+                corrections={result.corrections}
+                targetLabels={targetLabels}
+              />
+            </details>
+          ) : null}
         </div>
       </div>
     </section>

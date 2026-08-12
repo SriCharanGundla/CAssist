@@ -30,7 +30,7 @@ from app.models import (
     User,
     WorkspaceMember,
 )
-from app.schemas.extraction import CanonicalInvoice, InvoiceTotals, Party
+from app.schemas.extraction import ExtractedField, GenericDocumentExtraction
 from app.services.auth import establish_session
 from app.services.identity_provider import VerifiedIdentity
 from app.services.object_storage import (
@@ -200,18 +200,22 @@ async def document_client() -> AsyncIterator[
             )
             session.add(run)
             await session.flush()
-            invoice = CanonicalInvoice(
-                invoice_number="INV-DELETE",
-                invoice_date="2026-08-12",
-                supplier=Party(name="Supplier"),
-                buyer=Party(name="Buyer"),
-                totals=InvoiceTotals(grand_total="100.00"),
+            extraction = GenericDocumentExtraction(
+                document_type="tax_invoice",
+                fields=[
+                    ExtractedField(
+                        id="field-0001",
+                        label="Invoice number",
+                        value="INV-DELETE",
+                        page_number=1,
+                    )
+                ],
             )
             result = ExtractionResult(
                 processing_run_id=run.id,
                 document_type="tax_invoice",
                 raw_provider_output={"private": "provider data"},
-                canonical_data=invoice.model_dump(mode="json"),
+                canonical_data=extraction.model_dump(mode="json"),
                 validation_issues=[],
             )
             session.add(result)
@@ -220,7 +224,7 @@ async def document_client() -> AsyncIterator[
                 Correction(
                     extraction_result_id=result.id,
                     corrected_by_user_id=owner.id,
-                    field_path="/invoice_number",
+                    field_path="/fields/0/value",
                     previous_value="INV-DELETE",
                     corrected_value="INV-REVIEWED",
                     reason="Reviewed",

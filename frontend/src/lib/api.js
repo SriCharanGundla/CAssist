@@ -306,7 +306,7 @@ export async function downloadTallyExport(resultId, expectedVersion) {
     body: JSON.stringify({
       expected_version: expectedVersion,
       format: "tally_json",
-      options: { include_quality_issues: true },
+      options: { include_quality_issues: false },
     }),
   })
   if (!response.ok) {

@@ -135,7 +135,7 @@ CREATE TABLE processing_runs (
     progress_stage          text NOT NULL DEFAULT 'queued' CHECK (
                                 progress_stage IN (
                                     'queued', 'preparing', 'classifying', 'extracting',
-                                    'quality_check', 'saving', 'complete', 'failed'
+                                    'organizing', 'quality_check', 'saving', 'complete', 'failed'
                                 )
                             ),
     attempt_count           integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
@@ -181,6 +181,7 @@ CREATE TABLE extraction_results (
     document_type           text NOT NULL,
     raw_provider_output     jsonb NOT NULL,
     canonical_data          jsonb NOT NULL,
+    presentation_data       jsonb NOT NULL DEFAULT '{"sections":[]}'::jsonb,
     evidence_data           jsonb NOT NULL DEFAULT '[]'::jsonb,
     validation_issues       jsonb NOT NULL DEFAULT '[]'::jsonb,
     review_status           review_status NOT NULL DEFAULT 'unreviewed',
@@ -246,6 +247,8 @@ The initial physical column names `canonical_data`, `validation_issues`, and `fi
 avoid a cosmetic data migration. They now store the generic extraction, quality issues, and an
 internal value pointer respectively. The public API uses `extracted_data`, `quality_issues`, and
 stable `target_id` values; clients do not depend on those legacy storage names.
+`presentation_data` stores only an ordered dynamic section plan referencing those stable target IDs;
+it never duplicates or rewrites extracted labels or values.
 
 ### Authentication session migration
 
@@ -743,6 +746,15 @@ data. Raw provider output is excluded from ordinary frontend responses.
     "text_blocks": []
   },
   "effective_data": {},
+  "presentation": {
+    "sections": [
+      {
+        "id": "section-0001",
+        "title": "Invoice details",
+        "target_ids": ["field-0001"]
+      }
+    ]
+  },
   "quality_issues": [],
   "corrections": []
 }
@@ -807,7 +819,7 @@ Only `in_review` and `approved` are accepted from clients. The server manages th
   "expected_version": 3,
   "format": "tally_json",
   "options": {
-    "include_quality_issues": true
+    "include_quality_issues": false
   }
 }
 ```
@@ -826,7 +838,9 @@ official format also requires Tally-specific request variables such as `svCurren
 `svVchImportFormat`. CAssist has no client/company or ledger/inventory masters in the MVP, so this
 export deliberately sets `native_import_ready` to `false` and lists the unresolved mappings instead
 of inventing them. It preserves all approved original-label fields, dynamic tables, and text blocks
-as strings. It does not infer voucher numbers, dates, parties, totals, or ledger roles from labels.
+as strings in presentation order. The reviewed document payload strips internal IDs, page numbers,
+and evidence regions so the handoff contains document data rather than UI provenance. It does not
+infer voucher numbers, dates, parties, totals, or ledger roles from labels.
 Direct native import is a later milestone after explicit human mapping exists. Official source:
 https://help.tallysolutions.com/tally-prime-integration-using-json-1/
 
@@ -916,9 +930,10 @@ stage order and an auditable failure boundary.
 flowchart LR
     PRE["Render page images and extract native document text"] --> CLASSIFY["Classification agent"]
     CLASSIFY --> EXTRACT["Generic extraction agent"]
-    EXTRACT --> CHECK["Deterministic suspicion checks"]
+    EXTRACT --> ORGANIZE["Presentation organizer agent"]
+    ORGANIZE --> CHECK["Deterministic suspicion checks"]
     CHECK -->|"suspicious output only"| QUALITY["Quality-review agent"]
-    CHECK -->|"clean output"| STRUCTURE["Structural validation and stable IDs"]
+    CHECK -->|"clean output"| STRUCTURE["Structural validation, stable IDs, and section references"]
     QUALITY --> STRUCTURE
     STRUCTURE --> PERSIST["Persist immutable extraction"]
 ```
@@ -931,6 +946,13 @@ The extraction agent receives the rendered page images directly through the mode
 It preserves visible labels and values as strings, maintains table headers and row order, and emits
 unlabelled narrative content as text blocks. It does not require, infer, normalize, or default any
 accounting field.
+
+The presentation organizer receives the immutable extraction through normal Strands graph dependency
+propagation. It returns only ordered section titles and references such as `/fields/0`, `/tables/0`,
+or `/text_blocks/0`. It cannot rewrite document content. Visible document headings are preferred;
+otherwise it may create short CA-oriented headings appropriate to the observed financial document.
+Deterministic finalization rejects unknown or duplicate references and places every unreferenced
+observation into a final `Additional information` section, so presentation failure never loses data.
 
 The quality-review agent runs only when deterministic checks find blank labels, malformed table
 shapes, repeated observations, control characters, or likely gibberish. It may add an issue and an
@@ -957,6 +979,7 @@ The generic result is document-led rather than contract-led:
 - `fields` contains only visible label/value pairs and assigns stable server IDs after extraction.
 - `tables` preserves visible titles, headers, cells, row order, and supporting pages.
 - `text_blocks` preserves useful unlabelled narrative content.
+- `presentation.sections` groups and orders those observations by stable ID without duplicating data.
 - `quality_issues` references existing observations and may contain a non-destructive suggestion.
 
 There are no required field names, document-family templates, accounting defaults, decimal
@@ -966,15 +989,17 @@ and consistent table widths. The extraction, evidence, provider response, token 
 issues are persisted atomically before the document is marked `ready`.
 
 `processing_runs.progress_stage` exposes the real bounded workflow stage to the authenticated UI:
-queued, preparing pages, classifying, extracting, conditional quality check, saving, and the terminal
+queued, preparing pages, classifying, extracting, organizing, conditional quality check, saving, and the terminal
 complete/failed stage. Strands `BeforeNodeCallEvent` hooks update agent stages without exposing event
 payloads or document content. An optional evidence region outside the rendered page is discarded;
 it must never cause an otherwise valid extracted label/value to fail.
 
-The review UI renders exactly the extracted fields, tables, and text blocks. Hovering a value uses a
-pointer cursor and subtle text-color change; clicking copies the value and briefly confirms
-`Copied`. No copy icon is shown. Corrections remain append-only and never erase the original model
-observation.
+The review UI renders only non-empty dynamic sections. Fields, tables, and narrative text appear
+inside the relevant section rather than separate storage-oriented `Fields`, `Tables`, or `Other text`
+cards. Hovering a value uses a pointer cursor and subtle text-color change; clicking copies the value
+and briefly confirms `Copied`. No copy icon is shown. Corrections remain append-only and never erase
+the original model observation. Corrected values show an inline edited indicator, while the complete
+append-only history lives behind a compact `Changes (n)` disclosure.
 
 This design adopts two proven open-source practices: parse/render artifacts are reusable and
 extraction evidence remains linked to source spans/regions, as demonstrated by
@@ -1029,7 +1054,8 @@ comparison, and deletion without an intermediate document page. The legacy
 `/documents/:documentId` URL redirects to the dashboard.
 
 The `/results/:resultId/review` route retrieves the authorized generic result and dynamically shows
-only extracted fields, tables, text blocks, source pages, and quality issues. It embeds the private
+only non-empty presentation sections referencing extracted fields, tables, text blocks, source
+pages, and quality issues. It embeds the private
 original beside the editable extraction through a fresh short-lived signed URL. A PDF.js canvas
 viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based panning; it renders
 only nearby pages and defers sharp rerendering until interaction settles. Image preview supplies
@@ -1037,8 +1063,9 @@ bounded zoom, pan, and reset controls. CSV/XLSX review shows a short-lived actio
 original spreadsheet because browsers do not provide a reliable native XLSX renderer.
 The user can hide the original. Clicking a displayed value copies it and shows a shadcn popover at
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
-data and provenance remain immutable. The screen shows correction history and requires an explicit
-approval action. Conflicts refresh the result instead of silently overwriting another tab.
+data and provenance remain immutable. A compact changes disclosure shows correction history and the
+screen requires an explicit approval action. Conflicts refresh the result instead of silently
+overwriting another tab.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. Dashboard row

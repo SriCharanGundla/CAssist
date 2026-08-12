@@ -21,7 +21,10 @@ from app.schemas.exports import CreateExportRequest
 from app.schemas.extraction import QualityIssue
 from app.services.auth import CurrentAuth
 from app.services.corrections import apply_corrections
-from app.services.generic_extraction import coerce_stored_extraction
+from app.services.generic_extraction import (
+    coerce_stored_extraction,
+    coerce_stored_presentation,
+)
 from app.services.tally_export import (
     EXPORTER_VERSION,
     build_tally_handoff,
@@ -85,6 +88,7 @@ async def export_result(
             status_code=status.HTTP_409_CONFLICT,
             detail="Effective result is invalid and cannot be exported",
         ) from exc
+    presentation = coerce_stored_presentation(result.presentation_data, extracted_document)
     issues: list[QualityIssue] = []
     for issue_data in result.validation_issues:
         if isinstance(issue_data, dict) and "target_id" in issue_data:
@@ -96,6 +100,7 @@ async def export_result(
         result_id=result.id,
         result_version=result.version,
         document=extracted_document,
+        presentation=presentation,
         quality_issues=issues,
         include_quality_issues=payload.options.include_quality_issues,
     )
