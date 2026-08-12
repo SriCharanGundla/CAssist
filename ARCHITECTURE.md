@@ -870,6 +870,13 @@ read-only. The screen shows correction history and requires an explicit approval
 does not imply bookkeeping, filing, or downstream submission. Conflicts trigger a result refresh
 instead of silently overwriting another tab's changes.
 
+Approved results expose an on-demand Tally JSON download; the browser creates and immediately
+revokes a temporary object URL, while the server retains only export and audit events. The document
+screen opens originals only through a newly requested five-minute signed URL and presents separate
+confirmations for original-only deletion and permanent record deletion. Original-only deletion
+preserves extraction history; permanent deletion returns to the dashboard after the backend has
+deleted R2 data and cascaded the PostgreSQL record.
+
 ## 14. MVP implementation order
 
 1. Add OIDC authentication, PostgreSQL sessions, users, workspaces, and authorization dependencies.

@@ -13,6 +13,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...original,
     getResult: vi.fn(),
     correctResult: vi.fn(),
+    downloadTallyExport: vi.fn(),
     updateResultReview: vi.fn(),
   }
 })
@@ -193,5 +194,24 @@ describe("ReviewPage", () => {
     expect(
       screen.getByRole("button", { name: "Return to review" })
     ).toBeEnabled()
+  })
+
+  it("downloads Tally JSON only from an approved current result", async () => {
+    const user = userEvent.setup()
+    api.getResult.mockResolvedValue({
+      ...structuredClone(initialResult),
+      version: 4,
+      review_status: "approved",
+      reviewed_by_user_id: "user-1",
+      reviewed_at: "2026-08-12T12:00:00Z",
+    })
+    api.downloadTallyExport.mockResolvedValue(undefined)
+    renderReviewPage()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Download Tally JSON" })
+    )
+
+    expect(api.downloadTallyExport).toHaveBeenCalledWith("result-1", 4)
   })
 })

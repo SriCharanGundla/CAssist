@@ -176,3 +176,65 @@ export async function updateResultReview(resultId, expectedVersion, status) {
   }
   return response.json()
 }
+
+export async function createOriginalViewUrl(documentId) {
+  const response = await csrfRequest(`/documents/${documentId}/view-url`, {
+    method: "POST",
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to open the original document.")
+  }
+  return response.json()
+}
+
+export async function deleteDocumentOriginal(documentId) {
+  const response = await csrfRequest(`/documents/${documentId}/original`, {
+    method: "DELETE",
+  })
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "Unable to delete the original document."
+    )
+  }
+}
+
+export async function permanentlyDeleteDocument(documentId) {
+  const response = await csrfRequest(`/documents/${documentId}`, {
+    method: "DELETE",
+  })
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "Unable to permanently delete the document."
+    )
+  }
+}
+
+export async function downloadTallyExport(resultId, expectedVersion) {
+  const response = await csrfRequest(`/results/${resultId}/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      expected_version: expectedVersion,
+      format: "tally_json",
+      options: { include_validation_warnings: true },
+    }),
+  })
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "Unable to create the Tally JSON export."
+    )
+  }
+  const blob = await response.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    const link = document.createElement("a")
+    link.href = objectUrl
+    link.download = `cassist-tally-${resultId}.json`
+    link.click()
+  } finally {
+    URL.revokeObjectURL(objectUrl)
+  }
+}

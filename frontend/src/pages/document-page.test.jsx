@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi } from "vitest"
 
@@ -8,7 +9,14 @@ import * as api from "@/lib/api"
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const original = await importOriginal()
-  return { ...original, getDocument: vi.fn(), getRun: vi.fn() }
+  return {
+    ...original,
+    createOriginalViewUrl: vi.fn(),
+    deleteDocumentOriginal: vi.fn(),
+    getDocument: vi.fn(),
+    getRun: vi.fn(),
+    permanentlyDeleteDocument: vi.fn(),
+  }
 })
 
 function renderDocumentPage() {
@@ -86,5 +94,36 @@ describe("DocumentPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Extraction could not finish."
     )
+  })
+
+  it("requires confirmation before deleting only the original", async () => {
+    const user = userEvent.setup()
+    api.getDocument.mockResolvedValue({
+      id: "document-1",
+      original_filename: "invoice.pdf",
+      mime_type: "application/pdf",
+      status: "ready",
+      original_available: true,
+      latest_run: { id: "run-1", status: "succeeded" },
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "succeeded",
+      result_id: "result-1",
+      error: null,
+      progress: { completed_pages: 1, total_pages: 1 },
+    })
+    api.deleteDocumentOriginal.mockResolvedValue(undefined)
+    renderDocumentPage()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Delete original only" })
+    )
+    expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/Delete the private original file/)
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Confirm deletion" }))
+    expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
   })
 })

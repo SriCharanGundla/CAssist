@@ -3,7 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
-import { correctResult, getResult, updateResultReview } from "@/lib/api"
+import {
+  correctResult,
+  downloadTallyExport,
+  getResult,
+  updateResultReview,
+} from "@/lib/api"
 import {
   INVOICE_FIELDS,
   LINE_ITEM_FIELDS,
@@ -229,6 +234,11 @@ export function ReviewPage() {
     onSuccess: updateCachedResult,
     onError: handleMutationError,
   })
+  const exportMutation = useMutation({
+    mutationFn: ({ expectedVersion }) =>
+      downloadTallyExport(resultId, expectedVersion),
+    onError: handleMutationError,
+  })
 
   if (resultQuery.isPending) {
     return <p className="text-sm text-muted-foreground">Loading extraction…</p>
@@ -302,18 +312,30 @@ export function ReviewPage() {
             </p>
           </div>
           {result.review_status === "approved" ? (
-            <Button
-              disabled={reviewMutation.isPending}
-              onClick={() =>
-                reviewMutation.mutate({
-                  expectedVersion: result.version,
-                  status: "in_review",
-                })
-              }
-              variant="outline"
-            >
-              Return to review
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={exportMutation.isPending}
+                onClick={() =>
+                  exportMutation.mutate({ expectedVersion: result.version })
+                }
+              >
+                {exportMutation.isPending
+                  ? "Creating export…"
+                  : "Download Tally JSON"}
+              </Button>
+              <Button
+                disabled={reviewMutation.isPending}
+                onClick={() =>
+                  reviewMutation.mutate({
+                    expectedVersion: result.version,
+                    status: "in_review",
+                  })
+                }
+                variant="outline"
+              >
+                Return to review
+              </Button>
+            </div>
           ) : (
             <Button
               disabled={
@@ -343,9 +365,9 @@ export function ReviewPage() {
             ))}
           </ul>
         ) : null}
-        {mutationError ? (
+        {mutationError || exportMutation.error ? (
           <p className="mt-4 text-sm text-destructive" role="alert">
-            {mutationError.message}
+            {(mutationError || exportMutation.error).message}
           </p>
         ) : null}
       </section>

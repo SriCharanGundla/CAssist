@@ -9,8 +9,14 @@ import { ReviewPage } from "@/pages/review-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function HomePage() {
+  const location = useLocation()
   return (
     <section className="rounded-2xl border bg-card p-6 shadow-sm">
+      {location.state?.deleted ? (
+        <p className="mb-4 rounded-lg bg-muted p-3 text-sm" role="status">
+          Document permanently deleted.
+        </p>
+      ) : null}
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
         First working flow
       </p>
