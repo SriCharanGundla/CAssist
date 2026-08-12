@@ -32,3 +32,9 @@ class UploadTargetResponse(BaseModel):
 class CreateUploadResponse(BaseModel):
     document_id: UUID
     upload: UploadTargetResponse
+
+
+class CompleteUploadResponse(BaseModel):
+    document_id: UUID
+    status: Literal["uploaded", "processing", "ready", "failed"]
+    deduplicated: bool = False

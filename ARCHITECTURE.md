@@ -256,7 +256,9 @@ header. Deleting a user cascades their application sessions.
 ### Storage invariants
 
 1. `r2_object_key` is an opaque generated key and never contains a filename, client name, GSTIN, PAN, invoice number, or email address.
-2. `sha256` is computed by the worker from the uploaded object; a browser-provided hash is only a hint.
+2. `sha256` is computed by trusted backend code from the uploaded object; a browser-provided hash is
+   never trusted. For the 25 MiB MVP limit, the completion service computes it while finalizing the
+   original so synchronous workspace deduplication can return the existing document ID.
 3. Only one successful processing run exists for an identical cache configuration.
 4. Corrections are append-only. The effective reviewed document is `canonical_data` plus corrections in creation order.
 5. Audit metadata must never contain document text, extracted financial values, hashes, or provider responses.
@@ -429,9 +431,10 @@ contents, extracted financial values, hashes, or provider output.
 Creates a pending document and a short-lived presigned R2 upload URL.
 
 The MVP accepts PDF, JPEG, and PNG originals up to 25 MiB. The authenticated user's private
-workspace is selected server-side. The R2 object key is `originals/<random 128-bit value>` and never
-contains the original filename or identity data. The presigned URL expires after five minutes and
-signs the exact `Content-Type`; the worker later verifies the actual type, size, and trusted hash.
+workspace is selected server-side. The presigned upload targets `incoming/<random 128-bit value>`
+and never contains the original filename or identity data. It expires after five minutes and signs
+the exact `Content-Type`. The incoming key is not the permanent original key, so reusing an unexpired
+presigned `PUT` cannot overwrite a completed document.
 The private development bucket CORS policy allows only `http://localhost:5173` to use `PUT`, `GET`,
 and `HEAD`, allows the `Content-Type` request header, exposes only `ETag`, and caches preflights for
 one hour. Production replaces the development origin with the exact Cloudflare Pages origin.
@@ -464,7 +467,21 @@ Response `201`:
 
 ### `POST /api/v1/uploads/{document_id}/complete`
 
-Confirms upload completion and queues file verification and hashing.
+Confirms upload completion, verifies and finalizes the original, and queues processing.
+
+The trusted completion service streams the private incoming object into a bounded temporary buffer,
+checks the stored and streamed sizes against the database and 25 MiB limit, checks the stored
+`Content-Type`, validates the PDF/JPEG/PNG file signature, and computes SHA-256. It then writes those
+verified bytes to a new `originals/<random 128-bit value>` key that was never exposed to the browser.
+Temporary data is closed and deleted after the request.
+
+For a new hash, the document hash, permanent key, `uploaded` status, and configured queued processing
+run are committed atomically in PostgreSQL. The incoming object is deleted after commit. Completion
+is idempotent and does not create another run for an already completed document. Workspace
+completion is serialized while checking the unique hash so concurrent identical uploads cannot both
+become permanent documents. If the matching document's original was previously deleted, the new
+verified upload restores its private original while retaining the existing document and processing
+history.
 
 Response `202`:
 
