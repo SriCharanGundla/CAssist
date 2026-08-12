@@ -869,7 +869,9 @@ Runs the configured Gemini and OpenAI models using the same schema and preproces
 The route does not exist in production. One call queues or reuses the configured Gemini and OpenAI
 runs; polling the same route returns their current state and, once available, observation agreement,
 structural failures, quality flags, latency, token use, estimated cost, and human correction counts.
-It does not choose a winner automatically or expose provider output.
+The agreement includes up to 200 differing field, table, or text observations with per-provider
+occurrence counts so the development UI can highlight actual differences without exposing raw
+provider output. It does not choose a winner automatically.
 
 ## 12. Worker state machine
 
@@ -911,7 +913,8 @@ is exactly one. Empty queues wait for `WORKER_POLL_SECONDS` (default two seconds
 request graceful shutdown, and unexpected loop-level failures emit only a generic error before retrying;
 exception details that could contain credentials or provider data are not logged. Consecutive
 loop-level failures use exponential backoff capped at 60 seconds and reset after a successful iteration.
-Before each processing attempt, the same single worker deletes at most one expired
+Before each processing attempt, the same single worker deletes a configured bounded batch of expired
+or revoked sessions (`SESSION_CLEANUP_BATCH_SIZE`, default 100) and at most one expired
 `upload_pending` row and its `incoming/` object. R2 deletion succeeds before PostgreSQL removes the
 row; storage failures roll back and retry later. This bounds abandoned browser uploads without ever
 applying expiry to finalized originals.

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 25 * 1024 * 1024
     worker_lease_seconds: int = 5 * 60
     worker_poll_seconds: float = 2.0
+    session_cleanup_batch_size: int = 100
     provider_rate_limit_retry_seconds: int = 60
     provider_rate_limit_max_attempts: int = 3
     preprocessing_max_pages: int = 50
@@ -84,6 +85,8 @@ class Settings(BaseSettings):
             raise ValueError("WORKER_LEASE_SECONDS must be positive")
         if self.worker_poll_seconds <= 0:
             raise ValueError("WORKER_POLL_SECONDS must be positive")
+        if not 1 <= self.session_cleanup_batch_size <= 10_000:
+            raise ValueError("SESSION_CLEANUP_BATCH_SIZE must be between 1 and 10000")
         if self.provider_rate_limit_retry_seconds <= 0:
             raise ValueError("PROVIDER_RATE_LIMIT_RETRY_SECONDS must be positive")
         if not 1 <= self.provider_rate_limit_max_attempts <= 5:

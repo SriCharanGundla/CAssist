@@ -110,10 +110,20 @@ class ComparisonRunResponse(BaseModel):
     structural_failure: bool
 
 
+class ComparisonDifferenceResponse(BaseModel):
+    kind: Literal["field", "table_header", "table_cell", "text"]
+    label: str | None
+    value: str
+    gemini_count: int
+    openai_count: int
+
+
 class ComparisonAgreementResponse(BaseModel):
     compared_observations: int
     matching_observations: int
     match_rate: float
+    difference_count: int
+    differences: list[ComparisonDifferenceResponse]
 
 
 class ComparisonResponse(BaseModel):

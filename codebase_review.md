@@ -1,23 +1,7 @@
 # CAssist Codebase Review
 
-Verified current-application findings only. Deployment work, unsupported claims, and findings already
-handled by the current code have been removed.
-
-## Minor enhancements
-
-### 1. Provider comparison lacks diff highlighting
-
-[`frontend/src/pages/compare-page.jsx`](frontend/src/pages/compare-page.jsx)
-
-The page shows both provider results but does not visually identify differing values. Add a compact
-field/table comparison rather than requiring manual scanning.
-
-### 2. Session-cleanup batch size is not configurable
-
-[`backend/app/services/session_cleanup.py`](backend/app/services/session_cleanup.py)
-
-The cleanup function defaults to 100 records. Move the worker's chosen batch size into settings if
-operational measurements show the default needs tuning.
+The 17 verified current-application findings from this review have been addressed. Deployment work,
+unsupported claims, and findings already handled by the code were removed from the review.
 
 ## Verified controls
 
@@ -34,7 +18,9 @@ operational measurements show the default needs tuning.
 | Development-only comparison route | Implemented |
 | PostgreSQL-backed integration tests with rollback isolation | Implemented |
 
-## Recommended order
+## Completed improvements
 
-1. Add provider-comparison diff highlighting.
-2. Make the session-cleanup batch size configurable.
+- Upload selection, concurrency, cache refresh, request timeout, and CSRF mutation reliability.
+- Worker exception backoff and configurable session-cleanup batches.
+- Review conflict feedback, source viewing, image bounds, zoom controls, and correction editing.
+- Dashboard loading feedback, drag-and-drop feedback, theme accessibility, and provider-result diffs.

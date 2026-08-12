@@ -32,7 +32,10 @@ async def run_worker(
         nonlocal storage
         storage = storage or R2ObjectStorage(app_settings)
         async with async_session_factory() as session:
-            await cleanup_expired_sessions(session)
+            await cleanup_expired_sessions(
+                session,
+                limit=app_settings.session_cleanup_batch_size,
+            )
             await cleanup_one_expired_upload(
                 session,
                 storage,

@@ -1,3 +1,5 @@
+import json
+from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -12,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.api.dependencies import get_app_settings, get_database_session, get_object_storage
+from app.api.routes.documents import _comparison_differences
 from app.core.config import Settings
 from app.main import app
 from app.models import (
@@ -39,6 +42,34 @@ from app.services.object_storage import (
     PresignedUpload,
     StoredObject,
 )
+
+
+def test_comparison_differences_preserve_labels_values_and_provider_counts() -> None:
+    shared = json.dumps(["field", "Invoice date", "12 August 2026"])
+    gemini_only = json.dumps(["field", "Invoice number", "INV-1"])
+    openai_only = json.dumps(["field", "Invoice number", "INV-I"])
+
+    differences = _comparison_differences(
+        Counter({shared: 1, gemini_only: 1}),
+        Counter({shared: 1, openai_only: 1}),
+    )
+
+    assert [difference.model_dump() for difference in differences] == [
+        {
+            "kind": "field",
+            "label": "Invoice number",
+            "value": "INV-1",
+            "gemini_count": 1,
+            "openai_count": 0,
+        },
+        {
+            "kind": "field",
+            "label": "Invoice number",
+            "value": "INV-I",
+            "gemini_count": 0,
+            "openai_count": 1,
+        },
+    ]
 
 
 class DocumentObjectStorage:

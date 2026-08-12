@@ -99,3 +99,19 @@ async def test_worker_uses_bounded_exponential_backoff_for_consecutive_failures(
     )
 
     assert timeouts == [2, 4, 8]
+
+
+def test_session_cleanup_batch_size_is_configurable_and_bounded() -> None:
+    settings = Settings(
+        app_env="test",
+        session_cleanup_batch_size=250,
+        _env_file=None,
+    )
+    assert settings.session_cleanup_batch_size == 250
+
+    with pytest.raises(ValueError, match="SESSION_CLEANUP_BATCH_SIZE"):
+        Settings(
+            app_env="test",
+            session_cleanup_batch_size=0,
+            _env_file=None,
+        )

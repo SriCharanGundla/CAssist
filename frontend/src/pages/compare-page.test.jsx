@@ -44,6 +44,23 @@ describe("ComparePage", () => {
         matching_observations: 3,
         compared_observations: 4,
         match_rate: 0.75,
+        difference_count: 2,
+        differences: [
+          {
+            kind: "field",
+            label: "Invoice number",
+            value: "INV-1",
+            gemini_count: 1,
+            openai_count: 0,
+          },
+          {
+            kind: "field",
+            label: "Invoice number",
+            value: "INV-I",
+            gemini_count: 0,
+            openai_count: 1,
+          },
+        ],
       },
     })
     const queryClient = new QueryClient({
@@ -67,6 +84,9 @@ describe("ComparePage", () => {
     expect(await screen.findByText("gemini-test")).toBeInTheDocument()
     expect(screen.getByText("openai-test")).toBeInTheDocument()
     expect(screen.getByText("75%")).toBeInTheDocument()
+    expect(screen.getByText("Observation differences")).toBeInTheDocument()
+    expect(screen.getByText("INV-1")).toBeInTheDocument()
+    expect(screen.getByText("INV-I")).toBeInTheDocument()
     expect(api.compareDocument).toHaveBeenCalledWith("document-1")
   })
 })

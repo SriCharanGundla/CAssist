@@ -32,6 +32,7 @@ from app.models import (
 )
 from app.schemas.documents import (
     ComparisonAgreementResponse,
+    ComparisonDifferenceResponse,
     ComparisonResponse,
     ComparisonRunResponse,
     CreateRunRequest,
@@ -335,22 +336,55 @@ def _observations(result: ExtractionResult) -> Counter[str]:
     observations: list[str] = []
     for field in data.get("fields", []):
         if isinstance(field, dict):
-            observations.append(json.dumps([field.get("label"), field.get("value")]))
+            observations.append(
+                json.dumps(["field", field.get("label"), field.get("value")])
+            )
     for table in data.get("tables", []):
         if not isinstance(table, dict):
             continue
-        observations.extend(json.dumps(["header", value]) for value in table.get("headers", []))
+        table_title = table.get("title") or "Table"
+        headers = table.get("headers", [])
+        observations.extend(
+            json.dumps(["table_header", table_title, value]) for value in headers
+        )
         for row in table.get("rows", []):
             if isinstance(row, dict):
-                observations.extend(
-                    json.dumps(["cell", cell.get("value")])
-                    for cell in row.get("cells", [])
-                    if isinstance(cell, dict)
-                )
+                for index, cell in enumerate(row.get("cells", [])):
+                    if not isinstance(cell, dict):
+                        continue
+                    header = headers[index] if index < len(headers) else f"Column {index + 1}"
+                    observations.append(
+                        json.dumps(
+                            ["table_cell", f"{table_title} · {header}", cell.get("value")]
+                        )
+                    )
     for block in data.get("text_blocks", []):
         if isinstance(block, dict):
-            observations.append(json.dumps(["text", block.get("text")]))
+            observations.append(json.dumps(["text", None, block.get("text")]))
     return Counter(observations)
+
+
+def _comparison_differences(
+    gemini: Counter[str],
+    openai: Counter[str],
+) -> list[ComparisonDifferenceResponse]:
+    differences: list[ComparisonDifferenceResponse] = []
+    for observation in sorted(gemini.keys() | openai.keys()):
+        gemini_count = gemini[observation]
+        openai_count = openai[observation]
+        if gemini_count == openai_count:
+            continue
+        kind, label, value = json.loads(observation)
+        differences.append(
+            ComparisonDifferenceResponse(
+                kind=kind,
+                label=label,
+                value=value,
+                gemini_count=gemini_count,
+                openai_count=openai_count,
+            )
+        )
+    return differences
 
 
 @router.post("/{document_id}/comparisons", response_model=ComparisonResponse)
@@ -409,13 +443,13 @@ async def compare_document_models(
         await session.commit()
 
     run_responses: list[ComparisonRunResponse] = []
-    successful_results: list[ExtractionResult] = []
+    successful_results: dict[ModelProvider, ExtractionResult] = {}
     for run, cache_hit in runs:
         result = await session.scalar(
             select(ExtractionResult).where(ExtractionResult.processing_run_id == run.id)
         )
         if result is not None:
-            successful_results.append(result)
+            successful_results[run.provider] = result
         correction_count = None
         if result is not None:
             correction_count = await session.scalar(
@@ -446,15 +480,18 @@ async def compare_document_models(
         )
 
     agreement = None
-    if len(successful_results) == 2:
-        left = _observations(successful_results[0])
-        right = _observations(successful_results[1])
+    if set(successful_results) == {ModelProvider.GEMINI, ModelProvider.OPENAI}:
+        left = _observations(successful_results[ModelProvider.GEMINI])
+        right = _observations(successful_results[ModelProvider.OPENAI])
         compared = max(sum(left.values()), sum(right.values()))
         matching = sum((left & right).values())
+        differences = _comparison_differences(left, right)
         agreement = ComparisonAgreementResponse(
             compared_observations=compared,
             matching_observations=matching,
             match_rate=round(matching / compared, 4) if compared else 1.0,
+            difference_count=len(differences),
+            differences=differences[:200],
         )
     return ComparisonResponse(document_id=document.id, runs=run_responses, agreement=agreement)
 

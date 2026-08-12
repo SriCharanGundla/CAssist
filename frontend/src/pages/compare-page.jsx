@@ -48,6 +48,62 @@ function RunCard({ run }) {
   )
 }
 
+function ObservationDifferences({ agreement }) {
+  if (!agreement.difference_count) {
+    return (
+      <p className="mt-5 rounded-xl border bg-card p-4 text-sm">
+        No observation differences found.
+      </p>
+    )
+  }
+  return (
+    <section className="mt-5 overflow-hidden rounded-xl border bg-card">
+      <div className="border-b px-4 py-3">
+        <h2 className="font-semibold">Observation differences</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {agreement.difference_count > agreement.differences.length
+            ? `Showing ${agreement.differences.length} of ${agreement.difference_count}`
+            : `${agreement.difference_count} differing observations`}
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-xl text-left text-xs">
+          <thead>
+            <tr className="border-b text-muted-foreground">
+              <th className="px-4 py-2 font-medium">Observation</th>
+              <th className="px-4 py-2 text-center font-medium">Gemini</th>
+              <th className="px-4 py-2 text-center font-medium">OpenAI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {agreement.differences.map((difference, index) => (
+              <tr
+                className="border-b bg-amber-500/5 last:border-b-0"
+                key={`${difference.kind}-${difference.label}-${difference.value}-${index}`}
+              >
+                <td className="px-4 py-3">
+                  <p className="font-medium">
+                    {difference.label || difference.kind.replaceAll("_", " ")}
+                  </p>
+                  <p className="mt-1 break-words text-muted-foreground">
+                    {difference.value}
+                  </p>
+                </td>
+                <td className="px-4 py-3 text-center font-medium">
+                  {difference.gemini_count}
+                </td>
+                <td className="px-4 py-3 text-center font-medium">
+                  {difference.openai_count}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 export function ComparePage() {
   const { documentId } = useParams()
   const [started, setStarted] = React.useState(false)
@@ -113,14 +169,17 @@ export function ComparePage() {
             ))}
           </div>
           {comparisonQuery.data.agreement ? (
-            <p className="mt-5 rounded-xl border bg-card p-4 text-sm">
-              Exact observation agreement:{" "}
-              <span className="font-semibold">
-                {Math.round(comparisonQuery.data.agreement.match_rate * 100)}%
-              </span>{" "}
-              ({comparisonQuery.data.agreement.matching_observations} of{" "}
-              {comparisonQuery.data.agreement.compared_observations})
-            </p>
+            <>
+              <p className="mt-5 rounded-xl border bg-card p-4 text-sm">
+                Exact observation agreement:{" "}
+                <span className="font-semibold">
+                  {Math.round(comparisonQuery.data.agreement.match_rate * 100)}%
+                </span>{" "}
+                ({comparisonQuery.data.agreement.matching_observations} of{" "}
+                {comparisonQuery.data.agreement.compared_observations})
+              </p>
+              <ObservationDifferences agreement={comparisonQuery.data.agreement} />
+            </>
           ) : null}
         </>
       )}
