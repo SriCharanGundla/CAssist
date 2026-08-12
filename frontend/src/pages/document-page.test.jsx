@@ -69,7 +69,7 @@ describe("DocumentPage", () => {
     ).not.toBeInTheDocument()
     expect(screen.queryByText("2 of 2 pages complete")).not.toBeInTheDocument()
     expect(
-      await screen.findByRole("button", { name: "Review extraction" })
+      await screen.findByRole("button", { name: "Review" })
     ).toHaveAttribute("href", "/results/result-1/review")
   })
 
@@ -104,6 +104,43 @@ describe("DocumentPage", () => {
     expect(
       screen.getByRole("button", { name: "Retry extraction" })
     ).toBeEnabled()
+  })
+
+  it("opens the private original from the filename", async () => {
+    const user = userEvent.setup()
+    const openWindow = vi.spyOn(window, "open").mockImplementation(() => null)
+    api.getDocument.mockResolvedValue({
+      id: "document-1",
+      original_filename: "invoice.pdf",
+      mime_type: "application/pdf",
+      status: "ready",
+      original_available: true,
+      latest_run: { id: "run-1", status: "succeeded" },
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "succeeded",
+      result_id: "result-1",
+      error: null,
+      progress: { completed_pages: 1, total_pages: 1 },
+    })
+    api.createOriginalViewUrl.mockResolvedValue({
+      url: "https://download.invalid/original?signature=test",
+    })
+    renderDocumentPage()
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Open invoice.pdf in a new tab",
+      })
+    )
+
+    expect(api.createOriginalViewUrl).toHaveBeenCalledWith("document-1")
+    expect(openWindow).toHaveBeenCalledWith(
+      "https://download.invalid/original?signature=test",
+      "_blank",
+      "noopener,noreferrer"
+    )
   })
 
   it("retries failed extraction without uploading the original again", async () => {
@@ -202,7 +239,11 @@ describe("DocumentPage", () => {
     api.deleteDocumentOriginal.mockResolvedValue(undefined)
     renderDocumentPage()
 
-    expect(await screen.findByRole("button", { name: "Open" })).toBeEnabled()
+    expect(
+      await screen.findByRole("button", {
+        name: "Open invoice.pdf in a new tab",
+      })
+    ).toBeEnabled()
     await user.click(screen.getByRole("button", { name: "Delete" }))
     expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
     expect(
@@ -214,7 +255,9 @@ describe("DocumentPage", () => {
     expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Open" })
+        screen.queryByRole("button", {
+          name: "Open invoice.pdf in a new tab",
+        })
       ).not.toBeInTheDocument()
     )
   })
@@ -276,7 +319,9 @@ describe("DocumentPage", () => {
     await user.click(await screen.findByRole("button", { name: "Delete" }))
 
     expect(
-      screen.queryByRole("button", { name: "Open" })
+      screen.queryByRole("button", {
+        name: "Open invoice.pdf in a new tab",
+      })
     ).not.toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: "Delete File, Keep Data" })

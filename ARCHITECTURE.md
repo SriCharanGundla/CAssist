@@ -1025,11 +1025,12 @@ approval action. Conflicts refresh the result instead of silently overwriting an
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. The document
-screen keeps `Review extraction`, `Open`, and `Delete` together in the processing-status card.
-`Delete` is disabled while processing. It opens a shadcn dialog offering either `Delete File, Keep
-Data` or `Delete File and Data`. After file-only deletion, the open action disappears and the
-remaining delete choice removes data. Full deletion returns to the dashboard after R2 deletion and
-the PostgreSQL cascade complete.
+screen keeps `Review` and `Delete` beside the processing status. While the original exists, its
+filename is the open action and reveals an external-link icon on hover; it still obtains a fresh
+short-lived signed URL before opening a new tab. `Delete` is disabled while processing. It opens a
+shadcn dialog offering either `Delete File, Keep Data` or `Delete File and Data`. After file-only
+deletion, the filename becomes plain text and the remaining delete choice removes data. Full
+deletion returns to the dashboard after R2 deletion and the PostgreSQL cascade complete.
 
 ## 14. MVP implementation order
 
