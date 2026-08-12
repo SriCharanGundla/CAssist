@@ -204,6 +204,7 @@ function PdfPage({
     <div
       aria-label={`Page ${descriptor.pageNumber}`}
       className="relative shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-black/10"
+      data-page-number={descriptor.pageNumber}
       ref={(element) => {
         wrapperRef.current = element
         registerPage(descriptor.pageNumber, element)
@@ -244,7 +245,6 @@ function PdfPreview({ sourceUrl }) {
   const [currentPage, setCurrentPage] = React.useState(1)
   const [scrollRoot, setScrollRoot] = React.useState(null)
   const drag = React.useRef(null)
-  const frame = React.useRef(null)
   const pageElements = React.useRef(new Map())
 
   React.useEffect(() => {
@@ -297,10 +297,32 @@ function PdfPreview({ sourceUrl }) {
   }, [rotation, zoom])
 
   React.useEffect(() => {
-    return () => {
-      if (frame.current) window.cancelAnimationFrame(frame.current)
-    }
-  }, [])
+    if (!scrollRoot || !pages.length) return undefined
+
+    const visibility = new Map()
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          visibility.set(
+            Number(entry.target.dataset.pageNumber),
+            entry.intersectionRatio
+          )
+        }
+        let visiblePage = 1
+        let visibleRatio = 0
+        for (const [pageNumber, ratio] of visibility) {
+          if (ratio > visibleRatio) {
+            visiblePage = pageNumber
+            visibleRatio = ratio
+          }
+        }
+        if (visibleRatio > 0) setCurrentPage(visiblePage)
+      },
+      { root: scrollRoot, threshold: [0.25, 0.5, 0.75] }
+    )
+    for (const element of pageElements.current.values()) observer.observe(element)
+    return () => observer.disconnect()
+  }, [pages, scrollRoot])
 
   const changeZoom = (nextZoom) => {
     setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom)))
@@ -334,20 +356,7 @@ function PdfPreview({ sourceUrl }) {
     window.requestAnimationFrame(() => goToPage(currentPage, "auto"))
   }
 
-  const applyPendingPan = React.useCallback(() => {
-    frame.current = null
-    const activeDrag = drag.current
-    if (!activeDrag) return
-    activeDrag.scrollElement.scrollLeft = activeDrag.nextLeft
-    activeDrag.scrollElement.scrollTop = activeDrag.nextTop
-  }, [])
-
   const stopDragging = (event) => {
-    if (frame.current) {
-      window.cancelAnimationFrame(frame.current)
-      frame.current = null
-      applyPendingPan()
-    }
     drag.current = null
     if (event?.currentTarget?.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
@@ -443,24 +452,10 @@ function PdfPreview({ sourceUrl }) {
         <div
           aria-label="PDF document viewer"
           className="min-h-96 flex-1 cursor-grab overflow-auto bg-muted/50 p-4 select-none active:cursor-grabbing"
-          onScroll={(event) => {
-            const viewportMiddle =
-              event.currentTarget.scrollTop + event.currentTarget.clientHeight / 2
-            let closestPage = currentPage
-            let closestDistance = Number.POSITIVE_INFINITY
-            for (const [pageNumber, element] of pageElements.current) {
-              const pageMiddle = element.offsetTop + element.offsetHeight / 2
-              const distance = Math.abs(pageMiddle - viewportMiddle)
-              if (distance < closestDistance) {
-                closestDistance = distance
-                closestPage = pageNumber
-              }
-            }
-            setCurrentPage(closestPage)
-          }}
           onPointerCancel={stopDragging}
           onPointerDown={(event) => {
             if (event.button !== 0) return
+            event.preventDefault()
             event.currentTarget.setPointerCapture(event.pointerId)
             drag.current = {
               left: event.currentTarget.scrollLeft,
@@ -468,23 +463,23 @@ function PdfPreview({ sourceUrl }) {
               pointerY: event.clientY,
               scrollElement: event.currentTarget,
               top: event.currentTarget.scrollTop,
-              nextLeft: event.currentTarget.scrollLeft,
-              nextTop: event.currentTarget.scrollTop,
             }
           }}
           onPointerMove={(event) => {
             if (!drag.current) return
-            drag.current.nextLeft =
+            event.preventDefault()
+            drag.current.scrollElement.scrollLeft =
               drag.current.left + drag.current.pointerX - event.clientX
-            drag.current.nextTop =
+            drag.current.scrollElement.scrollTop =
               drag.current.top + drag.current.pointerY - event.clientY
-            if (!frame.current) {
-              frame.current = window.requestAnimationFrame(applyPendingPan)
-            }
           }}
           onPointerUp={stopDragging}
           ref={setScrollRoot}
-          style={{ touchAction: "none" }}
+          style={{
+            overscrollBehavior: "contain",
+            scrollBehavior: "auto",
+            touchAction: "none",
+          }}
         >
           <div className="flex min-w-max flex-col items-center gap-4">
             {pages.map((descriptor) => (

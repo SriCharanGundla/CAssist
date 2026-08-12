@@ -20,8 +20,8 @@ class VisiblePageObserver {
     this.callback = callback
   }
 
-  observe() {
-    this.callback([{ isIntersecting: true }])
+  observe(target) {
+    this.callback([{ intersectionRatio: 1, isIntersecting: true, target }])
   }
 
   disconnect() {}
@@ -103,19 +103,7 @@ describe("SourcePreview PDF viewer", () => {
     expect(screen.getByRole("button", { name: "Fit page" })).toBeEnabled()
   })
 
-  it("coalesces pointer movement without starving the pan frame", async () => {
-    const frames = []
-    const requestAnimationFrame = vi.fn((callback) => {
-      frames.push(callback)
-      return frames.length
-    })
-    const cancelAnimationFrame = vi.fn()
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation(
-      requestAnimationFrame
-    )
-    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(
-      cancelAnimationFrame
-    )
+  it("tracks pointer movement directly without a delayed pan frame", async () => {
     render(
       <SourcePreview
         mimeType="application/pdf"
@@ -139,9 +127,6 @@ describe("SourcePreview PDF viewer", () => {
     fireEvent.pointerMove(viewer, { clientX: 80, clientY: 80, pointerId: 1 })
     fireEvent.pointerMove(viewer, { clientX: 70, clientY: 60, pointerId: 1 })
 
-    expect(requestAnimationFrame).toHaveBeenCalledTimes(1)
-    expect(cancelAnimationFrame).not.toHaveBeenCalled()
-    frames.shift()(16)
     expect(viewer.scrollLeft).toBe(70)
     expect(viewer.scrollTop).toBe(70)
 
