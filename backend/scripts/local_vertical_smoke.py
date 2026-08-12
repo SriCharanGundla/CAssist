@@ -152,7 +152,13 @@ async def run() -> int:
                 document = await client.get(f"/api/v1/documents/{document_id}")
                 document.raise_for_status()
                 document_payload = document.json()
-                assert document_payload["status"] == "ready"
+                if document_payload["status"] != "ready":
+                    run_id = document_payload["latest_run"]["id"]
+                    failed_run = await client.get(f"/api/v1/runs/{run_id}")
+                    failed_run.raise_for_status()
+                    error_code = (failed_run.json().get("error") or {}).get("code")
+                    stage = f"document_status_{document_payload['status']}_{error_code or 'none'}"
+                    raise AssertionError
                 result_id = document_payload["latest_run"]["result_id"]
                 assert result_id is not None
 
