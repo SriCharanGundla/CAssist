@@ -76,3 +76,47 @@ class RetryDocumentResponse(BaseModel):
     document_id: UUID
     run_id: UUID
     status: Literal["uploaded"] = "uploaded"
+
+
+class CreateRunRequest(BaseModel):
+    provider: Literal["openai", "gemini"] | None = None
+    model_id: str | None = None
+    force: bool = False
+
+
+class CreateRunResponse(BaseModel):
+    run_id: UUID
+    status: RunStatus
+    cache_hit: bool
+
+
+class CancelRunResponse(BaseModel):
+    run_id: UUID
+    status: Literal["cancelled"] = "cancelled"
+
+
+class ComparisonRunResponse(BaseModel):
+    provider: ModelProvider
+    model_id: str
+    run_id: UUID
+    status: RunStatus
+    cache_hit: bool
+    latency_ms: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    estimated_cost_usd: str | None
+    quality_issue_count: int | None
+    correction_count: int | None
+    structural_failure: bool
+
+
+class ComparisonAgreementResponse(BaseModel):
+    compared_observations: int
+    matching_observations: int
+    match_rate: float
+
+
+class ComparisonResponse(BaseModel):
+    document_id: UUID
+    runs: list[ComparisonRunResponse]
+    agreement: ComparisonAgreementResponse | None

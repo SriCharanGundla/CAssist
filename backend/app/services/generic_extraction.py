@@ -88,6 +88,53 @@ def needs_quality_review(draft: GenericExtractionDraft) -> bool:
     return draft.quality_review_recommended or bool(deterministic_quality_candidates(draft))
 
 
+def deterministic_quality_issues(
+    document: GenericDocumentExtraction,
+) -> list[QualityIssue]:
+    issues: list[QualityIssue] = []
+    seen: set[tuple[str, str]] = set()
+    for field in document.fields:
+        identity = (field.label.casefold().strip(), field.value.casefold().strip())
+        if identity in seen:
+            issues.append(
+                QualityIssue(
+                    target_id=field.id,
+                    code="duplicate_observation",
+                    message="This label and value duplicate an earlier extracted field",
+                )
+            )
+        seen.add(identity)
+        if _text_is_suspicious(field.label) or _text_is_suspicious(field.value):
+            issues.append(
+                QualityIssue(
+                    target_id=field.id,
+                    code="possible_gibberish",
+                    message="This extracted field contains suspicious characters",
+                )
+            )
+    for block in document.text_blocks:
+        if _text_is_suspicious(block.text):
+            issues.append(
+                QualityIssue(
+                    target_id=block.id,
+                    code="possible_gibberish",
+                    message="This extracted text contains suspicious characters",
+                )
+            )
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if _text_is_suspicious(cell.value):
+                    issues.append(
+                        QualityIssue(
+                            target_id=cell.id,
+                            code="possible_gibberish",
+                            message="This extracted table cell contains suspicious characters",
+                        )
+                    )
+    return issues[:200]
+
+
 def _valid_region(region: EvidenceRegion | None, page_path: Path) -> EvidenceRegion | None:
     if region is None:
         return None

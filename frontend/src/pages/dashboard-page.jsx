@@ -10,6 +10,7 @@ import {
   RiEditLine,
   RiExternalLinkLine,
   RiRestartLine,
+  RiTestTubeLine,
 } from "@remixicon/react"
 import { Link, useLocation } from "react-router-dom"
 
@@ -201,6 +202,16 @@ function DocumentRow({ document }) {
       </div>
 
       <div className="flex items-center gap-1">
+        {import.meta.env.DEV && document.original_available ? (
+          <IconAction
+            label="Compare models"
+            nativeButton={false}
+            render={<Link to={`/dev/compare/${document.id}`} />}
+            variant="ghost"
+          >
+            <RiTestTubeLine />
+          </IconAction>
+        ) : null}
         {resultId ? (
           <IconAction
             label="Review extraction"

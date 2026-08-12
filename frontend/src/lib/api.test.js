@@ -72,6 +72,7 @@ describe("uploadDocument", () => {
         }),
         headers: expect.objectContaining({
           "Content-Type": "application/json",
+          "Idempotency-Key": expect.any(String),
           "X-CSRF-Token": "create-csrf",
         }),
       })
@@ -92,6 +93,7 @@ describe("uploadDocument", () => {
         credentials: "include",
         method: "POST",
         headers: expect.objectContaining({
+          "Idempotency-Key": expect.any(String),
           "X-CSRF-Token": "complete-csrf",
         }),
       })
@@ -163,6 +165,7 @@ describe("correctResult", () => {
         }),
         headers: expect.objectContaining({
           "Content-Type": "application/json",
+          "Idempotency-Key": expect.any(String),
           "X-CSRF-Token": "correction-csrf",
         }),
       })
@@ -195,6 +198,7 @@ describe("document deletion", () => {
           credentials: "include",
           method: "DELETE",
           headers: expect.objectContaining({
+            "Idempotency-Key": expect.any(String),
             "X-CSRF-Token": "delete-csrf",
           }),
         })
@@ -228,7 +232,10 @@ describe("retryDocumentProcessing", () => {
       expect.objectContaining({
         credentials: "include",
         method: "POST",
-        headers: expect.objectContaining({ "X-CSRF-Token": "retry-csrf" }),
+        headers: expect.objectContaining({
+          "Idempotency-Key": expect.any(String),
+          "X-CSRF-Token": "retry-csrf",
+        }),
       })
     )
   })

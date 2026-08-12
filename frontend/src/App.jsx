@@ -1,6 +1,11 @@
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
-import { RiLogoutBoxRLine, RiMoonLine, RiSunLine } from "@remixicon/react"
+import {
+  RiLogoutBoxRLine,
+  RiMoonLine,
+  RiSettingsLine,
+  RiSunLine,
+} from "@remixicon/react"
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { useTheme } from "@/components/theme-provider"
@@ -16,7 +21,9 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
 import { DashboardPage } from "@/pages/dashboard-page"
+import { ComparePage } from "@/pages/compare-page"
 import { ReviewPage } from "@/pages/review-page"
+import { SettingsPage } from "@/pages/settings-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function AuthenticatedApp({ auth }) {
@@ -88,6 +95,10 @@ function AuthenticatedApp({ auth }) {
                   </DropdownMenuLabel>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem render={<Link to="/settings" />}>
+                  <RiSettingsLine /> Settings
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   disabled={isLoggingOut}
                   onClick={handleLogout}
@@ -115,6 +126,10 @@ function AuthenticatedApp({ auth }) {
             path="/documents/:documentId"
           />
           <Route element={<ReviewPage />} path="/results/:resultId/review" />
+          <Route element={<SettingsPage auth={auth} />} path="/settings" />
+          {import.meta.env.DEV ? (
+            <Route element={<ComparePage />} path="/dev/compare/:documentId" />
+          ) : null}
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>

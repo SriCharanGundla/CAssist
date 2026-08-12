@@ -54,6 +54,11 @@ activate a virtual environment manually.
 Open `http://localhost:5173`. API documentation is at
 `http://localhost:8000/docs`.
 
+The dashboard is the document hub: it shows processing state and provides original viewing, review,
+development model comparison, and deletion actions without an intermediate document page. Review
+uses an embedded PDF.js viewer for PDFs. Account and workspace information is available at
+`/settings`; `/dev/compare/:documentId` is available only in development builds.
+
 ## Configure authentication
 
 CAssist uses Auth0 through the FastAPI backend and forces Google OAuth. In the Auth0 Regular Web

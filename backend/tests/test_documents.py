@@ -391,11 +391,27 @@ async def test_document_list_is_safe_filterable_and_cursor_paginated(
     assert "sha256" not in ready.text
     assert "r2_object_key" not in ready.text
 
+    result = await session.scalar(
+        select(ExtractionResult)
+        .join(ProcessingRun, ProcessingRun.id == ExtractionResult.processing_run_id)
+        .where(ProcessingRun.document_id == ready_id)
+    )
+    assert result is not None
+    result.document_type = "receipt"
+    await session.commit()
+    receipt = await client.get(
+        "/api/v1/documents",
+        params={"document_type": "receipt"},
+    )
+    assert receipt.status_code == 200
+    assert [item["id"] for item in receipt.json()["items"]] == [str(ready_id)]
+
     invalid_cursor = await client.get(
         "/api/v1/documents", params={"cursor": "not-a-cursor"}
     )
     assert invalid_cursor.status_code == 422
-    assert invalid_cursor.json()["detail"] == "Invalid document cursor"
+    assert invalid_cursor.json()["error"]["message"] == "Invalid document cursor"
+    assert invalid_cursor.json()["error"]["request_id"].startswith("req_")
 
 
 @pytest.mark.asyncio
@@ -584,6 +600,147 @@ async def test_active_run_reports_stage_without_inventing_page_progress(
         "total_pages": 1,
     }
     assert response.json()["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_manual_run_creation_reuses_cache_and_active_work(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, settings, _, _, document_id, _ = document_client
+
+    first = await client.post(
+        f"/api/v1/documents/{document_id}/runs",
+        json={"provider": "openai", "model_id": "comparison-model", "force": False},
+    )
+    second = await client.post(
+        f"/api/v1/documents/{document_id}/runs",
+        json={"provider": "openai", "model_id": "comparison-model", "force": False},
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert second.json()["run_id"] == first.json()["run_id"]
+    assert second.json()["cache_hit"] is False
+    run = await session.get(ProcessingRun, UUID(first.json()["run_id"]))
+    assert run is not None
+    assert run.provider == ModelProvider.OPENAI
+    assert run.prompt_version == settings.prompt_version
+
+
+@pytest.mark.asyncio
+async def test_active_run_can_be_cancelled_idempotently(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, _, document_id, _ = document_client
+    run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="cancel-model",
+        prompt_version="cancel-prompt",
+        schema_version="cancel-schema",
+        preprocessing_version="cancel-preprocessing",
+        status=RunStatus.QUEUED,
+        attempt_count=0,
+    )
+    session.add(run)
+    await session.commit()
+    await session.refresh(run)
+
+    first = await client.post(f"/api/v1/runs/{run.id}/cancel")
+    second = await client.post(f"/api/v1/runs/{run.id}/cancel")
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    await session.refresh(run)
+    assert run.status == RunStatus.CANCELLED
+    assert run.worker_id is None
+    assert run.lease_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_development_comparison_queues_each_provider_once(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, settings, _, _, document_id, _ = document_client
+
+    first = await client.post(f"/api/v1/documents/{document_id}/comparisons")
+    second = await client.post(f"/api/v1/documents/{document_id}/comparisons")
+
+    assert first.status_code == 200
+    assert {item["provider"] for item in first.json()["runs"]} == {"gemini", "openai"}
+    assert {item["run_id"] for item in second.json()["runs"]} == {
+        item["run_id"] for item in first.json()["runs"]
+    }
+    configured_runs = list(
+        (
+            await session.scalars(
+                select(ProcessingRun).where(
+                    ProcessingRun.document_id == document_id,
+                    ProcessingRun.prompt_version == settings.prompt_version,
+                    ProcessingRun.schema_version == settings.schema_version,
+                    ProcessingRun.preprocessing_version == settings.preprocessing_version,
+                )
+            )
+        ).all()
+    )
+    assert len(configured_runs) == 2
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_is_accepted_and_validated(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, _, _, _, _, _, document_id, _ = document_client
+    accepted = await client.post(
+        f"/api/v1/documents/{document_id}/view-url",
+        headers={"Idempotency-Key": "view-original-0001"},
+    )
+    rejected = await client.post(
+        f"/api/v1/documents/{document_id}/view-url",
+        headers={"Idempotency-Key": "short"},
+    )
+
+    assert accepted.status_code == 200
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "REQUEST_VALIDATION_FAILED"
+    assert rejected.headers["x-request-id"] == rejected.json()["error"]["request_id"]
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,8 @@ class Settings(BaseSettings):
 
     model_provider: Literal["openai", "gemini"] = "gemini"
     model_id: str = "gemini-3.5-flash-lite"
+    comparison_gemini_model_id: str = "gemini-3.5-flash-lite"
+    comparison_openai_model_id: str = "gpt-5.6-luna"
     allow_provider_override: bool = True
     prompt_version: str = "generic-document-v1"
     schema_version: str = "generic-extraction-v1"

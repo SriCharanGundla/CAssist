@@ -300,6 +300,31 @@ async def test_corrections_are_append_only_and_remove_resolved_quality_issue(
 
 
 @pytest.mark.asyncio
+async def test_correction_recomputes_deterministic_quality_issues(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, _, _, _, _, result_id = result_client
+
+    response = await client.patch(
+        f"/api/v1/results/{result_id}/fields",
+        json={
+            "expected_version": 1,
+            "changes": [{"target_id": "field-0002", "value": "%%%%%"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["quality_issues"] == [
+        {
+            "target_id": "field-0002",
+            "code": "possible_gibberish",
+            "message": "This extracted field contains suspicious characters",
+            "suggested_value": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_invalid_target_is_rejected_without_partial_writes(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
@@ -316,7 +341,7 @@ async def test_invalid_target_is_rejected_without_partial_writes(
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "Correction target does not exist"
+    assert response.json()["error"]["message"] == "Correction target does not exist"
     result = await session.get(ExtractionResult, result_id)
     assert result is not None and result.version == 1
     assert (

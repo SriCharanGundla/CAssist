@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
@@ -117,6 +117,15 @@ async def establish_session(
             user.email = identity.email
             user.display_name = identity.display_name
             user.last_seen_at = current_time
+
+        await session.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.user_id == user.id,
+                AuthSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=current_time)
+        )
 
         membership = await session.scalar(
             select(WorkspaceMember).where(WorkspaceMember.user_id == user.id).limit(1)

@@ -25,7 +25,10 @@ from app.schemas.review import (
 )
 from app.services.auth import CurrentAuth
 from app.services.corrections import InvalidCorrectionPath, apply_corrections, replace_pointer
-from app.services.generic_extraction import coerce_stored_extraction
+from app.services.generic_extraction import (
+    coerce_stored_extraction,
+    deterministic_quality_issues,
+)
 
 router = APIRouter()
 
@@ -214,7 +217,10 @@ async def apply_result_corrections(
             )
             session.add(correction)
             pending_corrections.append(correction)
-        coerce_stored_extraction(effective_data, result.document_type)
+        effective_document, _ = coerce_stored_extraction(
+            effective_data,
+            result.document_type,
+        )
     except InvalidCorrectionPath as exc:
         await session.rollback()
         raise HTTPException(
@@ -222,12 +228,20 @@ async def apply_result_corrections(
             detail=str(exc),
         ) from exc
     changed_at = datetime.now(UTC)
+    deterministic_codes = {"duplicate_observation", "possible_gibberish"}
     corrected_targets = {change.target_id for change in payload.changes}
-    result.validation_issues = [
+    retained_issues = [
         issue
         for issue in result.validation_issues
-        if isinstance(issue, dict) and issue.get("target_id") not in corrected_targets
+        if isinstance(issue, dict)
+        and issue.get("code") not in deterministic_codes
+        and issue.get("target_id") not in corrected_targets
     ]
+    recomputed_issues = deterministic_quality_issues(effective_document)
+    result.validation_issues = [
+        *retained_issues,
+        *(issue.model_dump(mode="json") for issue in recomputed_issues),
+    ][:200]
     result.review_status = ReviewStatus.IN_REVIEW
     result.reviewed_by_user_id = None
     result.reviewed_at = None

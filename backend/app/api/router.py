@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.dependencies import accept_idempotency_key
 from app.api.routes import auth, documents, exports, health, results, runs, uploads
 
-api_router = APIRouter()
+api_router = APIRouter(dependencies=[Depends(accept_idempotency_key)])
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, tags=["authentication"])
 api_router.include_router(uploads.router, tags=["uploads"])

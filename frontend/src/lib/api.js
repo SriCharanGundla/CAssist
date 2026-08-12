@@ -20,7 +20,9 @@ async function responseError(response, fallbackMessage) {
   let message = fallbackMessage
   try {
     const payload = await response.json()
-    if (typeof payload.detail === "string") {
+    if (typeof payload.error?.message === "string") {
+      message = payload.error.message
+    } else if (typeof payload.detail === "string") {
       message = payload.detail
     }
   } catch {
@@ -42,10 +44,12 @@ async function getCsrfToken() {
 
 async function csrfRequest(path, options = {}) {
   const csrfToken = await getCsrfToken()
+  const idempotencyKey = options.idempotencyKey || crypto.randomUUID()
   return apiRequest(path, {
     ...options,
     headers: {
       ...options.headers,
+      "Idempotency-Key": idempotencyKey,
       "X-CSRF-Token": csrfToken,
     },
   })
@@ -209,6 +213,38 @@ export async function retryDocumentProcessing(documentId) {
   })
   if (!response.ok) {
     throw await responseError(response, "Unable to retry document extraction.")
+  }
+  return response.json()
+}
+
+export async function createProcessingRun(documentId, options = {}) {
+  const response = await csrfRequest(`/documents/${documentId}/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to queue document extraction.")
+  }
+  return response.json()
+}
+
+export async function cancelProcessingRun(runId) {
+  const response = await csrfRequest(`/runs/${runId}/cancel`, {
+    method: "POST",
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to cancel document extraction.")
+  }
+  return response.json()
+}
+
+export async function compareDocument(documentId) {
+  const response = await csrfRequest(`/documents/${documentId}/comparisons`, {
+    method: "POST",
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to compare extraction models.")
   }
   return response.json()
 }

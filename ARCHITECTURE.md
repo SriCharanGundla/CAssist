@@ -329,9 +329,9 @@ the callback and are never stored in local storage, session storage, application
 - Default absolute lifetime: 7 days.
 - `last_seen_at` updates are throttled to at most once every five minutes.
 - Logout revokes the database session before clearing cookies and initiating Auth0 logout.
-- Session rotation creates a new opaque token and revokes the previous session atomically after
-  reauthentication or a security-sensitive identity or privilege change.
-- Expired and revoked rows may be deleted by a periodic PostgreSQL-backed maintenance job.
+- Reauthentication rotates the opaque token and revokes the user's previous active sessions in the
+  same transaction.
+- Each worker maintenance cycle deletes bounded batches of expired and revoked session rows.
 
 ### CSRF and browser boundary
 
@@ -435,7 +435,11 @@ non-member also return `204` rather than disclosing whether the document exists.
 - Every extracted value is preserved as a string, including monetary values; JSON floating-point
   numbers are never used for document values.
 - List endpoints use cursor pagination.
-- Every mutation accepts an `Idempotency-Key` header.
+- Every mutation accepts and validates a printable `Idempotency-Key` header. The key is available for
+  request correlation; replay behavior remains endpoint-specific. Upload completion, deletion,
+  cancellation, and run creation are independently safe to retry through their resource state and
+  cache constraints.
+- Every response includes a server-generated `X-Request-ID`.
 - Errors use the same envelope:
 
 ```json
@@ -845,9 +849,10 @@ Runs the configured Gemini and OpenAI models using the same schema and preproces
 }
 ```
 
-The route does not exist in production. Comparison results report observation agreement, structural
-failures, quality flags, latency, token use, estimated cost, and later human corrections. It does not
-choose a winner automatically.
+The route does not exist in production. One call queues or reuses the configured Gemini and OpenAI
+runs; polling the same route returns their current state and, once available, observation agreement,
+structural failures, quality flags, latency, token use, estimated cost, and human correction counts.
+It does not choose a winner automatically or expose provider output.
 
 ## 12. Worker state machine
 
@@ -993,9 +998,8 @@ result correction, approval, Tally export, signed original retrieval, and perman
 ```text
 /                         Dashboard and recent documents
 /upload                   Upload dropzone and queued files
-/documents/:documentId    Document metadata and processing history
 /results/:resultId/review Side-by-side preview, fields, warnings, corrections
-/settings                 Workspace and retention information
+/settings                 Profile, workspace, and retention information
 /dev/compare/:documentId  Non-production provider comparison
 ```
 
@@ -1009,28 +1013,32 @@ Suggested frontend data layer:
 The first implemented frontend slice protects all application routes with the backend Auth0 session.
 `/upload` accepts one PDF, JPEG, or PNG up to 25 MiB, obtains a fresh CSRF token for each mutating
 API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
-only after R2 succeeds. It then redirects to `/documents/:documentId`, including the existing
-document ID returned by deduplication. The document screen polls document and run status every two
-seconds until a terminal state, reports only backend-safe errors, and explicitly keeps successful
-extraction review-required. It does not invent page-level progress while extraction is active.
+only after R2 succeeds. It then returns to the dashboard, including when completion reports an
+existing document from deduplication. The dashboard polls document and run status every two seconds
+until terminal state, reports only backend-safe errors, and does not invent page-level progress.
+Filename links open originals with fresh short-lived URLs; row actions provide review, development
+comparison, and deletion without an intermediate document page. The legacy
+`/documents/:documentId` URL redirects to the dashboard.
 
 The `/results/:resultId/review` route retrieves the authorized generic result and dynamically shows
 only extracted fields, tables, text blocks, source pages, and quality issues. It embeds the private
-original beside the editable extraction through a fresh short-lived signed URL; the native browser
-PDF viewer supplies PDF controls, while image preview supplies bounded zoom, pan, and reset controls.
+original beside the editable extraction through a fresh short-lived signed URL. A PDF.js canvas
+viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based panning; it renders
+only nearby pages and defers sharp rerendering until interaction settles. Image preview supplies
+bounded zoom, pan, and reset controls.
 The user can hide the original. Clicking a displayed value copies it and shows a shadcn popover at
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
 data and provenance remain immutable. The screen shows correction history and requires an explicit
 approval action. Conflicts refresh the result instead of silently overwriting another tab.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
-revokes a temporary object URL, while the server retains only export and audit events. The document
-screen keeps `Review` and `Delete` beside the processing status. While the original exists, its
-filename is the open action and reveals an external-link icon on hover; it still obtains a fresh
-short-lived signed URL before opening a new tab. `Delete` is disabled while processing. It opens a
-shadcn dialog offering either `Delete File, Keep Data` or `Delete File and Data`. After file-only
-deletion, the filename becomes plain text and the remaining delete choice removes data. Full
-deletion returns to the dashboard after R2 deletion and the PostgreSQL cascade complete.
+revokes a temporary object URL, while the server retains only export and audit events. Dashboard row
+actions keep review and delete together. While the original exists, its filename is the open action
+and reveals an external-link icon on hover; it obtains a fresh short-lived signed URL before opening
+a new tab. Delete is disabled while processing and opens a shadcn dialog offering either
+`Delete File, Keep Data` or `Delete File and Data`. After file-only deletion, the filename becomes
+plain text and the remaining delete choice removes data. Full deletion removes the row after R2
+deletion and the PostgreSQL cascade complete.
 
 ## 14. MVP implementation order
 

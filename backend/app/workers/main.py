@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from app.core.config import Settings, settings
 from app.core.database import async_session_factory, engine
 from app.services.object_storage import R2ObjectStorage
+from app.services.session_cleanup import cleanup_expired_sessions
 from app.services.upload_cleanup import cleanup_one_expired_upload
 from app.workers.processor import process_next_document
 
@@ -30,6 +31,7 @@ async def run_worker(
         nonlocal storage
         storage = storage or R2ObjectStorage(app_settings)
         async with async_session_factory() as session:
+            await cleanup_expired_sessions(session)
             await cleanup_one_expired_upload(
                 session,
                 storage,

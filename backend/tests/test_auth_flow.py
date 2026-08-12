@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
@@ -15,7 +16,10 @@ from app.api.dependencies import (
 from app.core.config import Settings
 from app.core.database import engine
 from app.main import app
+from app.models import AuthSession
+from app.services.auth import hash_token
 from app.services.identity_provider import VerifiedIdentity
+from app.services.session_cleanup import cleanup_expired_sessions
 
 
 class FakeIdentityProvider:
@@ -102,7 +106,28 @@ async def test_callback_me_and_csrf_protected_logout(
             callback = await client.get("/api/v1/auth/callback")
             assert callback.status_code == 303
             assert callback.headers["location"] == "http://localhost:5173/documents"
-            assert client.cookies.get("cassist_session")
+            first_session_token = client.cookies.get("cassist_session")
+            assert first_session_token
+
+            reauthenticated = await client.get("/api/v1/auth/callback")
+            assert reauthenticated.status_code == 303
+            assert client.cookies.get("cassist_session") != first_session_token
+            first_session = await database_session.scalar(
+                select(AuthSession).where(
+                    AuthSession.token_hash == hash_token(first_session_token)
+                )
+            )
+            assert first_session is not None
+            assert first_session.revoked_at is not None
+            assert await cleanup_expired_sessions(database_session) >= 1
+            assert (
+                await database_session.scalar(
+                    select(AuthSession).where(
+                        AuthSession.token_hash == hash_token(first_session_token)
+                    )
+                )
+                is None
+            )
 
             me = await client.get("/api/v1/auth/me")
             assert me.status_code == 200
@@ -182,7 +207,7 @@ async def test_callback_rejects_an_email_outside_the_locked_allowlist(
             callback = await client.get("/api/v1/auth/callback")
 
         assert callback.status_code == 403
-        assert callback.json()["detail"] == "Access to CAssist is restricted"
+        assert callback.json()["error"]["message"] == "Access to CAssist is restricted"
         assert client.cookies.get("cassist_session") is None
     finally:
         app.dependency_overrides.clear()

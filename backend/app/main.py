@@ -1,9 +1,16 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.api.errors import (
+    http_exception_handler,
+    new_request_id,
+    unhandled_exception_handler,
+    validation_exception_handler,
+)
 from app.api.router import api_router
 from app.core.access_logging import configure_safe_access_logging
 from app.core.config import settings
@@ -23,6 +30,19 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def attach_request_id(request: Request, call_next):
+    request.state.request_id = new_request_id()
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request.state.request_id
+    return response
+
+
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.add_middleware(
     CORSMiddleware,

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,24 @@ async def get_database_session() -> AsyncIterator[AsyncSession]:
 
 def get_app_settings() -> Settings:
     return settings
+
+
+async def accept_idempotency_key(
+    request: Request,
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="Idempotency-Key", min_length=8, max_length=200),
+    ] = None,
+) -> str | None:
+    """Validate optional mutation correlation keys without persisting their raw value."""
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"} or idempotency_key is None:
+        return None
+    if any(ord(character) < 33 or ord(character) > 126 for character in idempotency_key):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key contains unsupported characters",
+        )
+    return idempotency_key
 
 
 def get_identity_provider(
