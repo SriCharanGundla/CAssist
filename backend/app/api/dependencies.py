@@ -18,6 +18,7 @@ from app.services.auth import (
     verify_csrf,
 )
 from app.services.identity_provider import Auth0IdentityProvider, IdentityProvider
+from app.services.object_storage import ObjectStorage, R2ObjectStorage
 
 
 async def get_database_session() -> AsyncIterator[AsyncSession]:
@@ -38,6 +39,17 @@ def get_identity_provider(
             detail="Authentication is not configured",
         )
     return Auth0IdentityProvider(app_settings)
+
+
+def get_object_storage(
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+) -> ObjectStorage:
+    if not app_settings.r2_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Object storage is not configured",
+        )
+    return R2ObjectStorage(app_settings)
 
 
 async def get_current_auth(

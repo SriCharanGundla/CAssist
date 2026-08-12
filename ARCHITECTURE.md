@@ -428,6 +428,14 @@ contents, extracted financial values, hashes, or provider output.
 
 Creates a pending document and a short-lived presigned R2 upload URL.
 
+The MVP accepts PDF, JPEG, and PNG originals up to 25 MiB. The authenticated user's private
+workspace is selected server-side. The R2 object key is `originals/<random 128-bit value>` and never
+contains the original filename or identity data. The presigned URL expires after five minutes and
+signs the exact `Content-Type`; the worker later verifies the actual type, size, and trusted hash.
+The private development bucket CORS policy allows only `http://localhost:5173` to use `PUT`, `GET`,
+and `HEAD`, allows the `Content-Type` request header, exposes only `ETag`, and caches preflights for
+one hour. Production replaces the development origin with the exact Cloudflare Pages origin.
+
 Request:
 
 ```json

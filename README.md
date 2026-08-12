@@ -58,3 +58,10 @@ Set `AUTH_ISSUER_URL`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, and a random
 uses `http://localhost:8000/api/v1` by default; override it with
 `VITE_API_BASE_URL` in `frontend/.env` when needed. Credentials and tokens must
 never be committed.
+
+## Configure development object storage
+
+Create a private Cloudflare R2 bucket and an Object Read & Write API token scoped only to that
+bucket. Set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` in
+`backend/.env`. The bucket must keep public access disabled and allow CORS only from
+`http://localhost:5173` for `PUT`, `GET`, and `HEAD` with the `Content-Type` request header.

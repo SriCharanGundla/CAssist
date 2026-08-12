@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     r2_secret_access_key: str | None = None
     r2_bucket_name: str = "cassist-documents"
     r2_presigned_url_ttl_seconds: int = 300
+    upload_max_bytes: int = 25 * 1024 * 1024
 
     @model_validator(mode="after")
     def enforce_production_model(self) -> "Settings":
@@ -48,6 +49,10 @@ class Settings(BaseSettings):
             raise ValueError("AUTH_SESSION_IDLE_SECONDS must be positive")
         if self.auth_session_absolute_seconds < self.auth_session_idle_seconds:
             raise ValueError("AUTH_SESSION_ABSOLUTE_SECONDS must be at least the idle lifetime")
+        if not 60 <= self.r2_presigned_url_ttl_seconds <= 900:
+            raise ValueError("R2_PRESIGNED_URL_TTL_SECONDS must be between 60 and 900")
+        if self.upload_max_bytes <= 0:
+            raise ValueError("UPLOAD_MAX_BYTES must be positive")
 
         if self.app_env == "production":
             self.model_provider = "openai"
@@ -85,6 +90,17 @@ class Settings(BaseSettings):
     @property
     def auth_cookie_secure(self) -> bool:
         return self.app_env == "production"
+
+    @property
+    def r2_configured(self) -> bool:
+        return all(
+            (
+                self.r2_endpoint_url,
+                self.r2_access_key_id,
+                self.r2_secret_access_key,
+                self.r2_bucket_name,
+            )
+        )
 
 
 @lru_cache
