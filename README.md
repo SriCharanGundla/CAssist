@@ -14,6 +14,9 @@ compose.yaml    Local PostgreSQL service
 
 ## Run locally
 
+Prerequisites: Docker, `uv`, Node.js, and `pnpm`. The backend Python version and environment are
+managed by `uv`; do not create or activate a virtual environment manually.
+
 1. Start PostgreSQL:
 
    ```bash
@@ -25,19 +28,16 @@ compose.yaml    Local PostgreSQL service
    ```bash
    cd backend
    cp .env.example .env
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -e '.[dev]'
-   alembic upgrade head
-   uvicorn app.main:app --reload
+   uv sync
+   uv run --locked alembic upgrade head
+   uv run --locked uvicorn app.main:app --reload
    ```
 
 3. Start the single-concurrency extraction worker in another terminal:
 
    ```bash
    cd backend
-   source .venv/bin/activate
-   cassist-worker
+   uv run --locked cassist-worker
    ```
 
 4. Start the frontend in another terminal:
@@ -71,8 +71,7 @@ To verify the development model adapter with generated synthetic data only:
 
 ```bash
 cd backend
-source .venv/bin/activate
-python scripts/live_model_smoke.py
+uv run --locked python scripts/live_model_smoke.py
 ```
 
 The script creates its invoice image inside a temporary directory, never uploads it to R2 or stores
@@ -83,8 +82,7 @@ After the ordinary test suites pass, verify the complete local workflow with syn
 
 ```bash
 cd backend
-source .venv/bin/activate
-python scripts/local_vertical_smoke.py
+uv run --locked python scripts/local_vertical_smoke.py
 ```
 
 This gate refuses production and refuses to run while another processing job is active. It creates a

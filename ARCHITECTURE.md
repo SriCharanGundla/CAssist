@@ -3,7 +3,7 @@
 Status: architecture baseline  
 API prefix: `/api/v1`  
 Frontend: Vite + React + JavaScript + shadcn/ui  
-Backend: FastAPI + PostgreSQL + Strands Agents  
+Backend: FastAPI + PostgreSQL + Strands Agents + uv<br>
 Object storage: private Cloudflare R2  
 Test model: `gemini-3.5-flash`  
 Production model: `gpt-5.6-luna`
@@ -20,6 +20,8 @@ Production model: `gpt-5.6-luna`
 - CAssist never stores passwords or sends OIDC tokens to frontend JavaScript.
 - Application sessions are opaque, revocable, and stored as hashes in PostgreSQL.
 - HTTP access logs never include query strings because callbacks and signed URLs can contain secrets.
+- Python versions, the backend project environment, dependency resolution, locking, and command
+  execution are managed with Astral `uv`; manual `pip`/`venv` workflows are not used.
 
 ## 2. Entity relationships
 
@@ -955,8 +957,8 @@ flowchart TD
 | Component | Initial location | Rule |
 |---|---|---|
 | React frontend | Cloudflare Pages | Static production build; no application secrets |
-| FastAPI API | NAS container | Reached only through Cloudflare Tunnel |
-| Strands worker | NAS container | One worker initially; concurrency raised only after measurement |
+| FastAPI API | NAS container | Reached only through Cloudflare Tunnel; image installs from the committed `uv.lock` without development dependencies |
+| Strands worker | NAS container | Same locked backend image; one worker initially; concurrency raised only after measurement |
 | PostgreSQL | Dedicated NAS container on NVMe | Never published to the LAN or internet |
 | Originals | Private Cloudflare R2 | Retained until user deletion |
 | Temporary derivatives | Ephemeral worker storage | Deleted after processing |
