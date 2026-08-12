@@ -238,4 +238,38 @@ describe("UploadPage", () => {
     expect(await screen.findByText("Dashboard destination")).toBeInTheDocument()
     expect(api.uploadDocument).toHaveBeenCalledTimes(3)
   })
+
+  it("shows upload progress and cancels an in-flight file", async () => {
+    const user = userEvent.setup()
+    api.uploadDocument.mockImplementation(
+      (_file, { onProgress, onStage, signal }) =>
+        new Promise((_resolve, reject) => {
+          onStage("uploading")
+          onProgress(42)
+          signal.addEventListener("abort", () =>
+            reject(new DOMException("Upload cancelled", "AbortError"))
+          )
+        })
+    )
+    const { container } = renderUploadPage()
+    await user.upload(
+      container.querySelector('input[type="file"]'),
+      new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" })
+    )
+    await user.click(screen.getByRole("button", { name: "Upload and process" }))
+
+    expect(
+      await screen.findByRole("progressbar", {
+        name: "invoice.pdf upload progress",
+      })
+    ).toHaveAttribute("aria-valuenow", "42")
+    await user.click(
+      screen.getByRole("button", { name: "Cancel upload invoice.pdf" })
+    )
+
+    expect(await screen.findByText("Upload cancelled")).toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "1 upload was cancelled"
+    )
+  })
 })

@@ -172,6 +172,62 @@ describe("ReviewPage", () => {
     expect(localStorage.getItem("cassist-review-source-visible")).toBe("false")
   })
 
+  it("highlights field evidence in the source preview", async () => {
+    const result = structuredClone(initialResult)
+    result.extracted_data.fields[0].region = {
+      x: 100,
+      y: 120,
+      width: 200,
+      height: 40,
+    }
+    result.effective_data.fields[0].region = {
+      x: 100,
+      y: 120,
+      width: 200,
+      height: 40,
+    }
+    api.getResult.mockResolvedValue(result)
+    renderReviewPage()
+
+    const image = await screen.findByAltText("Original document")
+    Object.defineProperties(image, {
+      naturalHeight: { configurable: true, value: 1_000 },
+      naturalWidth: { configurable: true, value: 1_000 },
+    })
+    fireEvent.load(image)
+    fireEvent.mouseEnter(
+      screen.getByText("Bill No.").closest("[data-review-target]")
+    )
+
+    expect(
+      await screen.findByLabelText("Highlighted source region")
+    ).toHaveStyle({ left: "10%", top: "12%", width: "20%", height: "4%" })
+  })
+
+  it("collapses sections and moves between field editors with Tab", async () => {
+    const user = userEvent.setup()
+    renderReviewPage()
+
+    const collapse = await screen.findByRole("button", {
+      name: "Collapse Invoice details section",
+    })
+    await user.click(collapse)
+    expect(screen.queryByText("Bill No.")).not.toBeInTheDocument()
+    await user.click(
+      screen.getByRole("button", { name: "Expand Invoice details section" })
+    )
+
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Edit" }))[0]
+    )
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Bill No." }), {
+      key: "Tab",
+    })
+    expect(
+      await screen.findByRole("textbox", { name: "Grand Total" })
+    ).toBeInTheDocument()
+  })
+
   it("remembers when the original preview was hidden", async () => {
     const user = userEvent.setup()
     const firstRender = renderReviewPage()

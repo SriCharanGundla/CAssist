@@ -13,6 +13,20 @@ const { destroyDocument, getDocument, renderPage } = vi.hoisted(() => ({
 vi.mock("pdfjs-dist", () => ({
   GlobalWorkerOptions: {},
   getDocument,
+  TextLayer: class {
+    constructor({ container }) {
+      this.container = container
+    }
+
+    cancel() {}
+
+    render() {
+      const text = document.createElement("span")
+      text.textContent = "Selectable invoice text"
+      this.container.append(text)
+      return Promise.resolve()
+    }
+  },
 }))
 
 class VisiblePageObserver {
@@ -41,6 +55,7 @@ describe("SourcePreview PDF viewer", () => {
               ? { height: 800 * scale, width: 600 * scale }
               : { height: 600 * scale, width: 800 * scale },
           pageNumber,
+          getTextContent: vi.fn(async () => ({ items: [], styles: {} })),
           render: renderPage,
         })),
         numPages: 2,
@@ -67,12 +82,17 @@ describe("SourcePreview PDF viewer", () => {
     })
     expect(screen.getByLabelText("Page 1")).toBeInTheDocument()
     expect(screen.getByLabelText("Page 2")).toBeInTheDocument()
-    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(4))
+    expect(screen.getByLabelText("PDF page thumbnails")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Go to page 2" })).toBeEnabled()
+    expect(await screen.findAllByText("Selectable invoice text")).toHaveLength(
+      2
+    )
 
     await user.click(screen.getByRole("button", { name: "Zoom in" }))
 
     expect(screen.getByText("125%")).toBeInTheDocument()
-    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(4))
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(6))
   })
 
   it("navigates and rotates pages with compact viewer controls", async () => {
@@ -99,7 +119,7 @@ describe("SourcePreview PDF viewer", () => {
       height: "600px",
       width: "800px",
     })
-    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(4))
+    await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(6))
     expect(screen.getByRole("button", { name: "Fit page" })).toBeEnabled()
   })
 
@@ -179,9 +199,11 @@ describe("SourcePreview PDF viewer", () => {
       clientWidth: { configurable: true, value: 400 },
     })
     Object.defineProperties(image, {
-      offsetHeight: { configurable: true, value: 200 },
-      offsetWidth: { configurable: true, value: 200 },
+      naturalHeight: { configurable: true, value: 200 },
+      naturalWidth: { configurable: true, value: 200 },
     })
+    fireEvent.load(image)
+    fireEvent(window, new Event("resize"))
     viewport.setPointerCapture = vi.fn()
 
     await user.click(screen.getByRole("button", { name: "Zoom in" }))
@@ -196,8 +218,8 @@ describe("SourcePreview PDF viewer", () => {
       pointerId: 1,
     })
 
-    expect(image).toHaveStyle({
-      transform: "translate(277px, 227px) scale(1.25)",
+    expect(image.parentElement).toHaveStyle({
+      transform: "translate(-50%, -50%) translate(277px, 227px) scale(1.25)",
     })
   })
 

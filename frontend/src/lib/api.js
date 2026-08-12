@@ -57,8 +57,8 @@ async function responseError(response, fallbackMessage) {
   return error
 }
 
-async function getCsrfToken() {
-  const response = await apiRequest("/auth/csrf")
+async function getCsrfToken({ signal } = {}) {
+  const response = await apiRequest("/auth/csrf", { signal })
   if (!response.ok) {
     throw await responseError(response, "Unable to authorize this request.")
   }
@@ -70,7 +70,7 @@ let csrfMutationQueue = Promise.resolve()
 
 function csrfRequest(path, options = {}) {
   const request = async () => {
-    const csrfToken = await getCsrfToken()
+    const csrfToken = await getCsrfToken({ signal: options.signal })
     const idempotencyKey = options.idempotencyKey || crypto.randomUUID()
     return apiRequest(path, {
       ...options,
@@ -141,7 +141,46 @@ export function uploadMimeType(file) {
   return UPLOAD_MIME_TYPE_BY_EXTENSION[extension] || file.type
 }
 
-export async function uploadDocument(file, { onStage } = {}) {
+function uploadToPrivateStorage(file, upload, { onProgress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    const abort = () => request.abort()
+    request.open(upload.method, upload.url)
+    for (const [name, value] of Object.entries(upload.headers)) {
+      request.setRequestHeader(name, value)
+    }
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(Math.round((event.loaded / event.total) * 100))
+      }
+    })
+    request.addEventListener("load", () => {
+      signal?.removeEventListener("abort", abort)
+      if (request.status >= 200 && request.status < 300) resolve()
+      else
+        reject(new Error("The file could not be uploaded to private storage."))
+    })
+    request.addEventListener("error", () => {
+      signal?.removeEventListener("abort", abort)
+      reject(new Error("The file could not be uploaded to private storage."))
+    })
+    request.addEventListener("abort", () => {
+      signal?.removeEventListener("abort", abort)
+      reject(new DOMException("Upload cancelled", "AbortError"))
+    })
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"))
+      return
+    }
+    signal?.addEventListener("abort", abort, { once: true })
+    request.send(file)
+  })
+}
+
+export async function uploadDocument(
+  file,
+  { onProgress, onStage, signal } = {}
+) {
   const mimeType = uploadMimeType(file)
   onStage?.("creating")
   const createResponse = await csrfRequest("/uploads", {
@@ -152,6 +191,7 @@ export async function uploadDocument(file, { onStage } = {}) {
       mime_type: mimeType,
       byte_size: file.size,
     }),
+    signal,
   })
   if (!createResponse.ok) {
     throw await responseError(createResponse, "Unable to create the upload.")
@@ -159,19 +199,14 @@ export async function uploadDocument(file, { onStage } = {}) {
   const created = await createResponse.json()
 
   onStage?.("uploading")
-  const uploadResponse = await fetch(created.upload.url, {
-    method: created.upload.method,
-    headers: created.upload.headers,
-    body: file,
-  })
-  if (!uploadResponse.ok) {
-    throw new Error("The file could not be uploaded to private storage.")
-  }
+  onProgress?.(0)
+  await uploadToPrivateStorage(file, created.upload, { onProgress, signal })
+  onProgress?.(100)
 
   onStage?.("verifying")
   const completeResponse = await csrfRequest(
     `/uploads/${created.document_id}/complete`,
-    { method: "POST" }
+    { method: "POST", signal }
   )
   if (!completeResponse.ok) {
     throw await responseError(
@@ -192,12 +227,16 @@ export async function getDocument(documentId, { signal } = {}) {
 
 export async function listDocuments({
   cursor,
+  documentType,
   limit = 25,
+  search,
   signal,
   status,
 } = {}) {
   const query = new URLSearchParams({ limit: String(limit) })
   if (cursor) query.set("cursor", cursor)
+  if (documentType) query.set("document_type", documentType)
+  if (search) query.set("search", search)
   if (status) query.set("status", status)
   const response = await apiRequest(`/documents?${query}`, { signal })
   if (!response.ok) {

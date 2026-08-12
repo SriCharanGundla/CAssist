@@ -560,8 +560,9 @@ limit=25
 
 The implemented endpoint returns newest-first frontend-safe document summaries with the latest run,
 uses an opaque `(created_at, id)` keyset cursor, accepts limits from 1 through 100, and returns
-`Cache-Control: no-store`. Status and classifier document-type filters are supported. The dashboard
-shows exactly ten records per page and uses shadcn Previous/Next controls over the opaque
+`Cache-Control: no-store`. Case-insensitive filename search plus status and classifier document-type
+filters are supported. The dashboard exposes all three controls, resets pagination when they change,
+shows exactly ten records per page, and uses shadcn Previous/Next controls over the opaque
 `next_cursor` chain; it never receives hashes, R2 keys, or provider output.
 
 ### `GET /api/v1/documents/{document_id}`
@@ -1057,8 +1058,10 @@ The first implemented frontend slice protects all application routes with the ba
 `/upload` accepts up to ten PDF, JPEG, or PNG files per selection, each up to 25 MiB. It
 keeps valid files when other selected files fail client validation and processes at most three
 uploads concurrently. It obtains a fresh CSRF token for each mutating
-API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
-only after R2 succeeds. It then returns to the dashboard, including when completion reports an
+API request, sends the original directly to the exact presigned R2 `PUT` with a progress-aware XHR,
+and calls upload completion only after R2 succeeds. Each file exposes byte-level progress and an
+abort control; a batch control aborts every pending/in-flight upload, and navigation receives a
+standard unload warning while transfers remain active. It then returns to the dashboard, including when completion reports an
 existing document from deduplication, after invalidating the cached document list. The dashboard list itself does not poll. Each active document
 row independently polls only its processing run until terminal state, starting at two-second
 intervals and backing off to five and then ten seconds for longer runs, then updates
@@ -1076,8 +1079,9 @@ The `/results/:resultId/review` route retrieves the authorized generic result an
 only non-empty presentation sections referencing extracted fields, tables, text blocks, source
 pages, and quality issues. It embeds the private
 original beside the editable extraction through a fresh short-lived signed URL. A PDF.js canvas
-viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based panning; it renders
-only nearby pages, supports focused `+`/`-` zoom shortcuts, and defers sharp rerendering until
+viewer supplies selectable text layers, a page-thumbnail sidebar, page navigation, zoom, fit,
+rotation, and smooth scroll-based panning; it renders only nearby pages, supports focused `+`/`-`
+zoom shortcuts, and defers sharp rerendering until
 interaction settles. Image preview supplies
 the same bounded zoom range plus clamped pan and reset controls, keeping part of the image reachable.
 The user can hide the original, and that interface preference persists locally across navigation.
@@ -1086,8 +1090,12 @@ that value. Field correction uses its stable ID and appends a versioned correcti
 data and provenance remain immutable. Edited values retain visible original-value context, while a
 compact changes disclosure labels each correction's before and after values. Document-level quality
 issues are separated from issues attached to a specific value. The screen requires an explicit
-approval action. Correction editors grow with their content up to a bounded height and support
-`Escape` to cancel plus `Cmd/Ctrl+Enter` to save. Primary load and preview errors expose a local retry
+approval action. Presentation sections are independently collapsible. Hovering or focusing an
+extracted field scrolls to its evidence page and highlights its optional source region; image regions
+use normalized natural-image coordinates and PDF regions map from the 144-DPI preprocessing image.
+Correction editors grow with their content up to a bounded height and support `Escape` to cancel,
+`Cmd/Ctrl+Enter` to save, and Tab/Shift-Tab to save or leave the current value and open the adjacent
+field. Primary load and preview errors expose a local retry
 action. Conflicts refresh the result instead of silently
 overwriting another tab and show concise user-facing feedback without exposing concurrency details.
 Approved results are read-only: copying and export remain available, but

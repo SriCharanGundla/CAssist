@@ -47,6 +47,23 @@ import {
 import { adaptivePollingInterval } from "@/lib/polling"
 
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"])
+const DOCUMENT_TYPE_OPTIONS = [
+  ["tax_invoice", "Tax invoice"],
+  ["invoice", "Invoice"],
+  ["receipt", "Receipt"],
+  ["credit_note", "Credit note"],
+  ["debit_note", "Debit note"],
+  ["cheque", "Cheque"],
+  ["bank_statement", "Bank statement"],
+  ["other_financial_document", "Other financial document"],
+]
+const STATUS_FILTER_OPTIONS = [
+  ["upload_pending", "Upload pending"],
+  ["uploaded", "Queued"],
+  ["processing", "Processing"],
+  ["ready", "Ready"],
+  ["failed", "Failed"],
+]
 
 const STATUS_LABELS = {
   upload_pending: "Upload pending",
@@ -329,8 +346,23 @@ function DocumentRow({ document }) {
 export function DashboardPage() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [search, setSearch] = React.useState("")
+  const [debouncedSearch, setDebouncedSearch] = React.useState("")
+  const [statusFilter, setStatusFilter] = React.useState("")
+  const [documentTypeFilter, setDocumentTypeFilter] = React.useState("")
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageCursors, setPageCursors] = React.useState([null])
+  const resetPagination = React.useCallback(() => {
+    setPageIndex(0)
+    setPageCursors([null])
+  }, [])
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedSearch(search.trim())
+      resetPagination()
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [resetPagination, search])
   React.useEffect(() => {
     if (location.state?.deleted) {
       toast.success("Document and extraction data deleted.")
@@ -349,9 +381,22 @@ export function DashboardPage() {
   }, [location.pathname, location.state, navigate])
   const currentCursor = pageCursors[pageIndex]
   const documentsQuery = useQuery({
-    queryKey: ["documents", currentCursor],
+    queryKey: [
+      "documents",
+      currentCursor,
+      debouncedSearch,
+      documentTypeFilter,
+      statusFilter,
+    ],
     queryFn: ({ signal }) =>
-      listDocuments({ cursor: currentCursor, limit: 10, signal }),
+      listDocuments({
+        cursor: currentCursor,
+        documentType: documentTypeFilter || undefined,
+        limit: 10,
+        search: debouncedSearch || undefined,
+        signal,
+        status: statusFilter || undefined,
+      }),
     staleTime: 5_000,
   })
   const documents = documentsQuery.data?.items || []
@@ -395,11 +440,55 @@ export function DashboardPage() {
         </div>
 
         <div className="mt-7 overflow-hidden rounded-2xl border bg-card shadow-sm">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b px-5 py-4">
-            <h2 className="font-semibold">Recent documents</h2>
-            <span className="text-xs font-medium text-muted-foreground">
-              Actions
-            </span>
+          <div className="border-b px-5 py-4">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="font-semibold">Recent documents</h2>
+              <span className="text-xs font-medium text-muted-foreground">
+                Actions
+              </span>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto_auto]">
+              <input
+                aria-label="Search documents"
+                className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search filenames"
+                type="search"
+                value={search}
+              />
+              <select
+                aria-label="Filter by status"
+                className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                onChange={(event) => {
+                  setStatusFilter(event.target.value)
+                  resetPagination()
+                }}
+                value={statusFilter}
+              >
+                <option value="">All statuses</option>
+                {STATUS_FILTER_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Filter by document type"
+                className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                onChange={(event) => {
+                  setDocumentTypeFilter(event.target.value)
+                  resetPagination()
+                }}
+                value={documentTypeFilter}
+              >
+                <option value="">All document types</option>
+                {DOCUMENT_TYPE_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           {documentsQuery.isPending ? (
             <DocumentListSkeleton />
@@ -424,9 +513,15 @@ export function DashboardPage() {
             </ul>
           ) : (
             <div className="p-8 text-center">
-              <p className="text-sm font-medium">No documents yet</p>
+              <p className="text-sm font-medium">
+                {debouncedSearch || statusFilter || documentTypeFilter
+                  ? "No matching documents"
+                  : "No documents yet"}
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Upload documents to start the review workflow.
+                {debouncedSearch || statusFilter || documentTypeFilter
+                  ? "Adjust the search or filters and try again."
+                  : "Upload documents to start the review workflow."}
               </p>
             </div>
           )}

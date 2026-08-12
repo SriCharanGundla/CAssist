@@ -2,6 +2,8 @@ import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   RiArrowLeftSLine,
+  RiArrowDownSLine,
+  RiArrowRightSLine,
   RiCheckboxCircleLine,
   RiEyeLine,
   RiEyeOffLine,
@@ -111,6 +113,8 @@ function EditableValue({
   issues,
   hideLabel = false,
   label,
+  onEvidenceChange,
+  onNavigate,
   onSave,
   originalValue,
   pageNumber,
@@ -137,8 +141,10 @@ function EditableValue({
       await onSave(targetId, nextValue, nextReason)
       setEditing(false)
       setReason("")
+      return true
     } catch {
       // The page-level mutation error remains visible while this editor stays open.
+      return false
     }
   }
   const cancelEditing = () => {
@@ -158,11 +164,29 @@ function EditableValue({
     ) {
       event.preventDefault()
       save()
+    } else if (event.key === "Tab" && onNavigate) {
+      event.preventDefault()
+      const direction = event.shiftKey ? -1 : 1
+      const move = async () => {
+        if (draft !== value || reason.trim()) {
+          const saved = await save()
+          if (!saved) return
+        } else cancelEditing()
+        onNavigate(targetId, direction)
+      }
+      move()
     }
   }
 
   return (
-    <div className="border-b py-4 last:border-b-0">
+    <div
+      className="border-b py-4 last:border-b-0"
+      data-review-target={targetId}
+      onBlur={() => onEvidenceChange?.(null)}
+      onFocus={() => onEvidenceChange?.()}
+      onMouseEnter={() => onEvidenceChange?.()}
+      onMouseLeave={() => onEvidenceChange?.(null)}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -239,6 +263,7 @@ function EditableValue({
           </div>
         ) : canEdit ? (
           <Button
+            data-edit-target={targetId}
             onClick={() => {
               setDraft(value)
               setEditing(true)
@@ -253,14 +278,37 @@ function EditableValue({
   )
 }
 
-function Card({ children, description, title }) {
+function Card({
+  children,
+  collapsible = false,
+  description,
+  itemCount,
+  title,
+}) {
+  const [open, setOpen] = React.useState(true)
   return (
     <section className="rounded-2xl border bg-card p-5 shadow-sm">
-      <h2 className="font-semibold">{title}</h2>
+      {collapsible ? (
+        <button
+          aria-expanded={open}
+          aria-label={`${open ? "Collapse" : "Expand"} ${title} section`}
+          className="flex w-full items-center justify-between gap-3 text-left"
+          onClick={() => setOpen((current) => !current)}
+          type="button"
+        >
+          <span className="font-semibold">{title}</span>
+          <span className="flex items-center gap-2 text-xs text-muted-foreground">
+            {itemCount} {itemCount === 1 ? "item" : "items"}
+            {open ? <RiArrowDownSLine /> : <RiArrowRightSLine />}
+          </span>
+        </button>
+      ) : (
+        <h2 className="font-semibold">{title}</h2>
+      )}
       {description ? (
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       ) : null}
-      <div className="mt-3">{children}</div>
+      {!collapsible || open ? <div className="mt-3">{children}</div> : null}
     </section>
   )
 }
@@ -337,7 +385,10 @@ function ReviewTable({ editableProps, sectionTitle, table }) {
                       hideLabel
                       label={`${table.headers[cellIndex]}, row ${rowIndex + 1}`}
                       value={cell.value}
-                      {...editableProps(cell.id)}
+                      {...editableProps(cell.id, {
+                        pageNumber: table.page_numbers[0],
+                        region: null,
+                      })}
                     />
                   </td>
                 ))}
@@ -356,6 +407,7 @@ export function ReviewPage() {
   const [showOriginal, setShowOriginal] = React.useState(
     () => localStorage.getItem(SOURCE_VISIBILITY_STORAGE_KEY) !== "false"
   )
+  const [activeEvidence, setActiveEvidence] = React.useState(null)
   const toggleOriginal = () => {
     setShowOriginal((current) => {
       const next = !current
@@ -497,6 +549,14 @@ export function ReviewPage() {
           ],
         },
       ]
+  const targetOrder = presentationSections.flatMap((section) =>
+    section.target_ids.flatMap((targetId) => {
+      const table = tablesById.get(targetId)
+      return table
+        ? table.rows.flatMap((row) => row.cells.map((cell) => cell.id))
+        : [targetId]
+    })
+  )
   const issuesByTarget = result.quality_issues.reduce((grouped, issue) => {
     grouped.set(issue.target_id, [
       ...(grouped.get(issue.target_id) || []),
@@ -537,11 +597,26 @@ export function ReviewPage() {
         table.rows.reduce((rowCount, row) => rowCount + row.cells.length, 0),
       0
     )
-  const editableProps = (targetId) => ({
+  const navigateTarget = (targetId, direction) => {
+    const currentIndex = targetOrder.indexOf(targetId)
+    const nextTarget = targetOrder[currentIndex + direction]
+    if (!nextTarget) return
+    window.requestAnimationFrame(() => {
+      const button = document.querySelector(
+        `[data-edit-target="${nextTarget}"]`
+      )
+      button?.focus()
+      button?.click()
+    })
+  }
+  const editableProps = (targetId, evidence) => ({
     canEdit: result.review_status !== "approved",
     edited: editedTargets.has(targetId),
     issues: issuesByTarget.get(targetId) || [],
     onSave: saveCorrection,
+    onEvidenceChange: (nextEvidence) =>
+      setActiveEvidence(nextEvidence === null ? null : evidence),
+    onNavigate: navigateTarget,
     originalValue: originalValues.get(targetId),
     saving: correctionMutation.isPending,
     targetId,
@@ -661,6 +736,7 @@ export function ReviewPage() {
       >
         {showOriginal && result.original_available ? (
           <SourcePreview
+            activeEvidence={activeEvidence}
             error={sourceMutation.error}
             loading={sourceMutation.isPending}
             mimeType={result.original_mime_type}
@@ -679,7 +755,12 @@ export function ReviewPage() {
           }
         >
           {presentationSections.map((section) => (
-            <Card key={section.id} title={section.title}>
+            <Card
+              collapsible
+              itemCount={section.target_ids.length}
+              key={section.id}
+              title={section.title}
+            >
               {section.target_ids.map((targetId) => {
                 const field = fieldsById.get(targetId)
                 if (field) {
@@ -689,7 +770,10 @@ export function ReviewPage() {
                       label={field.label}
                       pageNumber={field.page_number}
                       value={field.value}
-                      {...editableProps(field.id)}
+                      {...editableProps(field.id, {
+                        pageNumber: field.page_number,
+                        region: field.region,
+                      })}
                     />
                   )
                 }
@@ -713,7 +797,10 @@ export function ReviewPage() {
                       label={`${section.title} text`}
                       pageNumber={block.page_number}
                       value={block.text}
-                      {...editableProps(block.id)}
+                      {...editableProps(block.id, {
+                        pageNumber: block.page_number,
+                        region: block.region,
+                      })}
                     />
                   )
                 }

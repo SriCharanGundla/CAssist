@@ -408,9 +408,7 @@ async def test_document_list_is_safe_filterable_and_cursor_paginated(
     first_page = await client.get("/api/v1/documents", params={"limit": 1})
     assert first_page.status_code == 200
     assert first_page.headers["cache-control"] == "no-store"
-    assert [item["id"] for item in first_page.json()["items"]] == [
-        str(pending_documents[1].id)
-    ]
+    assert [item["id"] for item in first_page.json()["items"]] == [str(pending_documents[1].id)]
     assert first_page.json()["next_cursor"] is not None
 
     second_page = await client.get(
@@ -418,9 +416,7 @@ async def test_document_list_is_safe_filterable_and_cursor_paginated(
         params={"limit": 1, "cursor": first_page.json()["next_cursor"]},
     )
     assert second_page.status_code == 200
-    assert [item["id"] for item in second_page.json()["items"]] == [
-        str(pending_documents[0].id)
-    ]
+    assert [item["id"] for item in second_page.json()["items"]] == [str(pending_documents[0].id)]
 
     ready = await client.get(
         "/api/v1/documents",
@@ -447,9 +443,21 @@ async def test_document_list_is_safe_filterable_and_cursor_paginated(
     assert receipt.status_code == 200
     assert [item["id"] for item in receipt.json()["items"]] == [str(ready_id)]
 
-    invalid_cursor = await client.get(
-        "/api/v1/documents", params={"cursor": "not-a-cursor"}
+    filename_match = await client.get(
+        "/api/v1/documents",
+        params={"search": "PRIVATE-INVOICE"},
     )
+    assert filename_match.status_code == 200
+    assert [item["id"] for item in filename_match.json()["items"]] == [str(ready_id)]
+
+    filename_miss = await client.get(
+        "/api/v1/documents",
+        params={"search": "unrelated receipt"},
+    )
+    assert filename_miss.status_code == 200
+    assert filename_miss.json()["items"] == []
+
+    invalid_cursor = await client.get("/api/v1/documents", params={"cursor": "not-a-cursor"})
     assert invalid_cursor.status_code == 422
     assert invalid_cursor.json()["error"]["message"] == "Invalid document cursor"
     assert invalid_cursor.json()["error"]["request_id"].startswith("req_")
@@ -790,9 +798,7 @@ async def test_document_cannot_be_deleted_until_processing_stops(
     response = await client.delete(f"/api/v1/documents/{document_id}")
 
     assert response.status_code == 409
-    assert response.json()["error"]["message"] == (
-        "Stop document processing before deleting it"
-    )
+    assert response.json()["error"]["message"] == ("Stop document processing before deleting it")
     assert storage.deleted_keys == []
 
 

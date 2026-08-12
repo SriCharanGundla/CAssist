@@ -1,0 +1,62 @@
+.textLayer {
+  color-scheme: only light;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  caret-color: CanvasText;
+  transform-origin: 0 0;
+  forced-color-adjust: none;
+  text-size-adjust: none;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height, 0));
+  transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1))
+    scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer span[role="img"] {
+  cursor: default;
+  user-select: none;
+}
+
+.textLayer ::selection {
+  color: transparent;
+  background: color-mix(in srgb, AccentColor, transparent 50%);
+}
+
+.textLayer .endOfContent {
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  display: block;
+  cursor: default;
+  user-select: none;
+}
+
+.textLayer.selecting .endOfContent {
+  top: 0;
+}

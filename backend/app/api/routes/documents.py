@@ -118,9 +118,7 @@ def _document_response(
         original_deleted_at=document.original_deleted_at,
         created_at=document.created_at,
         updated_at=document.updated_at,
-        latest_run=(
-            run_summary(latest_run, latest_result) if latest_run is not None else None
-        ),
+        latest_run=(run_summary(latest_run, latest_result) if latest_run is not None else None),
     )
 
 
@@ -151,6 +149,7 @@ async def list_documents(
     session: Annotated[AsyncSession, Depends(get_database_session)],
     document_status: Annotated[DocumentStatus | None, Query(alias="status")] = None,
     document_type: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    search: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
     cursor: Annotated[str | None, Query(min_length=1, max_length=1000)] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> DocumentListResponse:
@@ -161,6 +160,10 @@ async def list_documents(
     )
     if document_status is not None:
         statement = statement.where(Document.status == document_status)
+    if search is not None:
+        statement = statement.where(
+            Document.original_filename.icontains(search.strip(), autoescape=True)
+        )
     if document_type is not None:
         typed_document_ids = (
             select(ProcessingRun.document_id)
@@ -179,9 +182,7 @@ async def list_documents(
     documents = list(
         (
             await session.scalars(
-                statement.order_by(Document.created_at.desc(), Document.id.desc()).limit(
-                    limit + 1
-                )
+                statement.order_by(Document.created_at.desc(), Document.id.desc()).limit(limit + 1)
             )
         ).all()
     )
@@ -206,9 +207,7 @@ async def list_documents(
                 .distinct(ProcessingRun.document_id)
             )
         ).all()
-        latest_by_document = {
-            run.document_id: (run, result) for run, result in latest_rows
-        }
+        latest_by_document = {run.document_id: (run, result) for run, result in latest_rows}
 
     response.headers["Cache-Control"] = "no-store"
     return DocumentListResponse(
@@ -358,17 +357,13 @@ def _observations(result: ExtractionResult) -> Counter[str]:
     observations: list[str] = []
     for field in data.get("fields", []):
         if isinstance(field, dict):
-            observations.append(
-                json.dumps(["field", field.get("label"), field.get("value")])
-            )
+            observations.append(json.dumps(["field", field.get("label"), field.get("value")]))
     for table in data.get("tables", []):
         if not isinstance(table, dict):
             continue
         table_title = table.get("title") or "Table"
         headers = table.get("headers", [])
-        observations.extend(
-            json.dumps(["table_header", table_title, value]) for value in headers
-        )
+        observations.extend(json.dumps(["table_header", table_title, value]) for value in headers)
         for row in table.get("rows", []):
             if isinstance(row, dict):
                 for index, cell in enumerate(row.get("cells", [])):
@@ -376,9 +371,7 @@ def _observations(result: ExtractionResult) -> Counter[str]:
                         continue
                     header = headers[index] if index < len(headers) else f"Column {index + 1}"
                     observations.append(
-                        json.dumps(
-                            ["table_cell", f"{table_title} · {header}", cell.get("value")]
-                        )
+                        json.dumps(["table_cell", f"{table_title} · {header}", cell.get("value")])
                     )
     for block in data.get("text_blocks", []):
         if isinstance(block, dict):
@@ -493,9 +486,7 @@ async def compare_document_models(
                 estimated_cost_usd=(
                     str(run.estimated_cost_usd) if run.estimated_cost_usd is not None else None
                 ),
-                quality_issue_count=(
-                    len(result.validation_issues) if result is not None else None
-                ),
+                quality_issue_count=(len(result.validation_issues) if result is not None else None),
                 correction_count=correction_count,
                 structural_failure=run.status in {RunStatus.FAILED, RunStatus.CANCELLED},
             )

@@ -18,6 +18,7 @@ const STAGE_LABELS = {
   uploading: "Uploading to private storage…",
   verifying: "Verifying the file and queuing extraction…",
   complete: "Queued for extraction",
+  cancelled: "Upload cancelled",
 }
 const MAX_CONCURRENT_UPLOADS = 3
 
@@ -62,10 +63,30 @@ export function UploadPage() {
   const queryClient = useQueryClient()
   const inputRef = React.useRef(null)
   const dragDepth = React.useRef(0)
+  const uploadControllers = React.useRef(new Map())
   const [items, setItems] = React.useState([])
   const [error, setError] = React.useState(null)
   const [dragActive, setDragActive] = React.useState(false)
   const [uploading, setUploading] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!uploading) return undefined
+    const warnBeforeLeaving = (event) => {
+      event.preventDefault()
+      event.returnValue = ""
+    }
+    window.addEventListener("beforeunload", warnBeforeLeaving)
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving)
+  }, [uploading])
+
+  React.useEffect(
+    () => () => {
+      for (const controller of uploadControllers.current.values()) {
+        controller.abort()
+      }
+    },
+    []
+  )
 
   const selectFiles = (selectedFiles) => {
     const files = Array.from(selectedFiles || [])
@@ -94,6 +115,7 @@ export function UploadPage() {
         id: `${file.name}-${file.size}-${file.lastModified}-${index}`,
         file,
         stage: null,
+        progress: 0,
         result: null,
         error: null,
         validationError,
@@ -117,29 +139,50 @@ export function UploadPage() {
     }
     setError(null)
     setUploading(true)
+    for (const item of pendingItems) {
+      uploadControllers.current.set(item.id, new AbortController())
+      updateItem(item.id, { error: null, progress: 0, stage: null })
+    }
     const outcomes = await mapWithConcurrency(
       pendingItems,
       MAX_CONCURRENT_UPLOADS,
       async (item) => {
-        updateItem(item.id, { error: null })
+        const controller = uploadControllers.current.get(item.id)
         try {
           const result = await uploadDocument(item.file, {
+            onProgress: (progress) => updateItem(item.id, { progress }),
             onStage: (stage) => updateItem(item.id, { stage }),
+            signal: controller.signal,
           })
-          updateItem(item.id, { result, stage: "complete" })
+          updateItem(item.id, { progress: 100, result, stage: "complete" })
           return { result }
         } catch (uploadError) {
+          if (uploadError.name === "AbortError") {
+            updateItem(item.id, {
+              error: null,
+              progress: 0,
+              stage: "cancelled",
+            })
+            return { cancelled: true }
+          }
           updateItem(item.id, { error: uploadError.message, stage: null })
           return { error: uploadError }
+        } finally {
+          uploadControllers.current.delete(item.id)
         }
       }
     )
     setUploading(false)
     const failedCount = outcomes.filter((outcome) => outcome.error).length
-    if (!failedCount) {
+    const cancelledCount = outcomes.filter(
+      (outcome) => outcome.cancelled
+    ).length
+    if (!failedCount && !cancelledCount) {
       const completedResults = [
         ...items.flatMap((item) => (item.result ? [item.result] : [])),
-        ...outcomes.map((outcome) => outcome.result),
+        ...outcomes.flatMap((outcome) =>
+          outcome.result ? [outcome.result] : []
+        ),
       ]
       await queryClient.invalidateQueries({ queryKey: ["documents"] })
       navigate("/", {
@@ -150,10 +193,21 @@ export function UploadPage() {
           uploaded: true,
         },
       })
-    } else {
+    } else if (failedCount) {
       setError(
         `${failedCount} of ${outcomes.length} files failed. Retry the failed files.`
       )
+    } else {
+      setError(
+        `${cancelledCount} ${cancelledCount === 1 ? "upload was" : "uploads were"} cancelled. Retry when ready.`
+      )
+    }
+  }
+
+  const cancelUpload = (id) => uploadControllers.current.get(id)?.abort()
+  const cancelAllUploads = () => {
+    for (const controller of uploadControllers.current.values()) {
+      controller.abort()
     }
   }
 
@@ -240,8 +294,33 @@ export function UploadPage() {
                           STAGE_LABELS[item.stage] ||
                           formatBytes(item.file.size)}
                       </p>
+                      {item.stage === "uploading" ? (
+                        <div
+                          aria-label={`${item.file.name} upload progress`}
+                          aria-valuemax="100"
+                          aria-valuemin="0"
+                          aria-valuenow={item.progress}
+                          className="mt-2 h-1.5 overflow-hidden rounded-full bg-background"
+                          role="progressbar"
+                        >
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width]"
+                            style={{ width: `${item.progress}%` }}
+                          />
+                        </div>
+                      ) : null}
                     </div>
-                    {!uploading && !item.result ? (
+                    {uploading && !item.result && !item.validationError ? (
+                      <Button
+                        aria-label={`Cancel upload ${item.file.name}`}
+                        onClick={() => cancelUpload(item.id)}
+                        size="icon"
+                        type="button"
+                        variant="destructive"
+                      >
+                        <RiCloseLine />
+                      </Button>
+                    ) : !uploading && !item.result ? (
                       <Button
                         aria-label={`Remove ${item.file.name}`}
                         onClick={() =>
@@ -292,10 +371,21 @@ export function UploadPage() {
 
         {uploading ? (
           <div aria-live="polite" className="rounded-lg bg-muted p-4 text-sm">
-            <p className="font-medium">Uploading selected files…</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Keep this page open until verification finishes.
-            </p>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium">Uploading selected files…</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Keep this page open until verification finishes.
+                </p>
+              </div>
+              <Button
+                onClick={cancelAllUploads}
+                type="button"
+                variant="outline"
+              >
+                Cancel all
+              </Button>
+            </div>
           </div>
         ) : null}
         {error ? (

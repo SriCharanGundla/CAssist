@@ -10,6 +10,7 @@ import {
   RiZoomOutLine,
 } from "@remixicon/react"
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
+import "@/components/pdf-text-layer.css"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -51,26 +52,58 @@ function PreviewError({ message, onRetry }) {
   )
 }
 
-function ImagePreview({ sourceUrl }) {
+function ImagePreview({ activeEvidence, sourceUrl }) {
   const [zoom, setZoom] = React.useState(1)
   const [position, setPosition] = React.useState({ x: 0, y: 0 })
+  const [imageSize, setImageSize] = React.useState({ height: 0, width: 0 })
+  const [viewportSize, setViewportSize] = React.useState({
+    height: 0,
+    width: 0,
+  })
   const drag = React.useRef(null)
-  const imageRef = React.useRef(null)
   const viewportRef = React.useRef(null)
+  const fitScale = imageSize.width
+    ? Math.min(
+        1,
+        viewportSize.width / imageSize.width,
+        viewportSize.height / imageSize.height
+      )
+    : 1
+  const baseWidth = imageSize.width * fitScale
+  const baseHeight = imageSize.height * fitScale
+
+  React.useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return undefined
+    const updateSize = () =>
+      setViewportSize({
+        height: viewport.clientHeight,
+        width: viewport.clientWidth,
+      })
+    updateSize()
+    window.addEventListener("resize", updateSize)
+    const observer = window.ResizeObserver
+      ? new ResizeObserver(updateSize)
+      : null
+    observer?.observe(viewport)
+    return () => {
+      window.removeEventListener("resize", updateSize)
+      observer?.disconnect()
+    }
+  }, [])
 
   const clampPosition = React.useCallback(
     (nextPosition, nextZoom = zoom) => {
-      const image = imageRef.current
       const viewport = viewportRef.current
-      if (!image || !viewport || nextZoom <= 1) return { x: 0, y: 0 }
+      if (!viewport || nextZoom <= 1) return { x: 0, y: 0 }
       const maximumX = Math.max(
         0,
-        (viewport.clientWidth + image.offsetWidth * nextZoom) / 2 -
+        (viewport.clientWidth + baseWidth * nextZoom) / 2 -
           MIN_VISIBLE_IMAGE_PIXELS
       )
       const maximumY = Math.max(
         0,
-        (viewport.clientHeight + image.offsetHeight * nextZoom) / 2 -
+        (viewport.clientHeight + baseHeight * nextZoom) / 2 -
           MIN_VISIBLE_IMAGE_PIXELS
       )
       return {
@@ -78,7 +111,7 @@ function ImagePreview({ sourceUrl }) {
         y: Math.min(maximumY, Math.max(-maximumY, nextPosition.y)),
       }
     },
-    [zoom]
+    [baseHeight, baseWidth, zoom]
   )
 
   const reset = () => {
@@ -155,22 +188,46 @@ function ImagePreview({ sourceUrl }) {
         }}
         ref={viewportRef}
       >
-        <img
-          alt="Original document"
-          className="absolute inset-0 m-auto max-h-full max-w-full object-contain transition-transform duration-100 select-none"
-          draggable="false"
-          ref={imageRef}
-          src={sourceUrl}
+        <div
+          className="absolute top-1/2 left-1/2 transition-transform duration-100"
           style={{
-            transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+            height: baseHeight || "100%",
+            transform: `translate(-50%, -50%) translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+            width: baseWidth || "100%",
           }}
-        />
+        >
+          <img
+            alt="Original document"
+            className="size-full select-none"
+            draggable="false"
+            onLoad={(event) =>
+              setImageSize({
+                height: event.currentTarget.naturalHeight,
+                width: event.currentTarget.naturalWidth,
+              })
+            }
+            src={sourceUrl}
+          />
+          {activeEvidence?.region && imageSize.width ? (
+            <span
+              aria-label="Highlighted source region"
+              className="pointer-events-none absolute rounded-sm border-2 border-primary bg-primary/20 shadow-sm"
+              style={{
+                height: `${(activeEvidence.region.height / imageSize.height) * 100}%`,
+                left: `${(activeEvidence.region.x / imageSize.width) * 100}%`,
+                top: `${(activeEvidence.region.y / imageSize.height) * 100}%`,
+                width: `${(activeEvidence.region.width / imageSize.width) * 100}%`,
+              }}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
   )
 }
 
 function PdfPage({
+  activeEvidence,
   descriptor,
   registerPage,
   renderView,
@@ -179,6 +236,7 @@ function PdfPage({
   zoom,
 }) {
   const canvasRef = React.useRef(null)
+  const textLayerRef = React.useRef(null)
   const wrapperRef = React.useRef(null)
   const [nearViewport, setNearViewport] = React.useState(false)
   const [renderError, setRenderError] = React.useState(false)
@@ -232,15 +290,42 @@ function PdfPage({
     }
   }, [descriptor.page, nearViewport, renderAttempt, renderView])
 
-  const displayViewport = descriptor.page.getViewport({
-    rotation,
-    scale: zoom,
-  })
+  const displayViewport = React.useMemo(
+    () => descriptor.page.getViewport({ rotation, scale: zoom }),
+    [descriptor.page, rotation, zoom]
+  )
+
+  React.useEffect(() => {
+    if (!nearViewport || !textLayerRef.current || !descriptor.TextLayer) {
+      return undefined
+    }
+    let active = true
+    let textLayer
+    const renderText = async () => {
+      const textContent = await descriptor.page.getTextContent()
+      if (!active || !textLayerRef.current) return
+      textLayerRef.current.replaceChildren()
+      textLayer = new descriptor.TextLayer({
+        container: textLayerRef.current,
+        textContentSource: textContent,
+        viewport: displayViewport,
+      })
+      await textLayer.render()
+    }
+    renderText().catch(() => undefined)
+    return () => {
+      active = false
+      textLayer?.cancel()
+    }
+  }, [descriptor, displayViewport, nearViewport])
+
+  const highlighted = activeEvidence?.pageNumber === descriptor.pageNumber
+  const evidenceScale = zoom / 2
 
   return (
     <div
       aria-label={`Page ${descriptor.pageNumber}`}
-      className="relative shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-black/10"
+      className={`relative shrink-0 overflow-hidden bg-white shadow-sm ring-1 ring-black/10 ${highlighted && !activeEvidence.region ? "ring-2 ring-primary" : ""}`}
       data-page-number={descriptor.pageNumber}
       ref={(element) => {
         wrapperRef.current = element
@@ -259,6 +344,10 @@ function PdfPage({
             className={`block size-full transition-opacity duration-150 ${rendering ? "opacity-70" : "opacity-100"}`}
             ref={canvasRef}
           />
+          <div
+            className="textLayer absolute inset-0 overflow-hidden text-transparent selection:bg-primary/30"
+            ref={textLayerRef}
+          />
           {renderError ? (
             <span className="absolute inset-0 grid place-items-center bg-white/95 text-xs text-destructive">
               <span className="text-center">
@@ -276,6 +365,18 @@ function PdfPage({
           ) : null}
         </>
       ) : null}
+      {highlighted && activeEvidence.region && rotation === 0 ? (
+        <span
+          aria-label="Highlighted source region"
+          className="pointer-events-none absolute rounded-sm border-2 border-primary bg-primary/20 shadow-sm"
+          style={{
+            height: activeEvidence.region.height * evidenceScale,
+            left: activeEvidence.region.x * evidenceScale,
+            top: activeEvidence.region.y * evidenceScale,
+            width: activeEvidence.region.width * evidenceScale,
+          }}
+        />
+      ) : null}
       <span className="absolute right-2 bottom-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
         {descriptor.pageNumber}
       </span>
@@ -283,7 +384,36 @@ function PdfPage({
   )
 }
 
-function PdfPreview({ sourceUrl }) {
+function PdfThumbnail({ active, descriptor, onSelect }) {
+  const canvasRef = React.useRef(null)
+  React.useEffect(() => {
+    if (!canvasRef.current) return undefined
+    const viewport = descriptor.page.getViewport({
+      scale: 72 / descriptor.width,
+    })
+    const canvas = canvasRef.current
+    canvas.width = Math.ceil(viewport.width)
+    canvas.height = Math.ceil(viewport.height)
+    const task = descriptor.page.render({ canvas, viewport })
+    task.promise.catch(() => undefined)
+    return () => task.cancel()
+  }, [descriptor])
+  return (
+    <button
+      aria-label={`Go to page ${descriptor.pageNumber}`}
+      className={`rounded border p-1 transition-colors ${active ? "border-primary bg-primary/10" : "border-transparent hover:border-border"}`}
+      onClick={onSelect}
+      type="button"
+    >
+      <canvas aria-hidden="true" className="block bg-white" ref={canvasRef} />
+      <span className="mt-1 block text-center text-[10px] text-muted-foreground">
+        {descriptor.pageNumber}
+      </span>
+    </button>
+  )
+}
+
+function PdfPreview({ activeEvidence, sourceUrl }) {
   const [pages, setPages] = React.useState([])
   const [error, setError] = React.useState(null)
   const [loadAttempt, setLoadAttempt] = React.useState(0)
@@ -302,7 +432,8 @@ function PdfPreview({ sourceUrl }) {
     const load = async () => {
       try {
         setError(null)
-        const { GlobalWorkerOptions, getDocument } = await import("pdfjs-dist")
+        const { GlobalWorkerOptions, getDocument, TextLayer } =
+          await import("pdfjs-dist")
         if (!active) return
         GlobalWorkerOptions.workerSrc = pdfWorkerUrl
         loadingTask = getDocument({ url: sourceUrl })
@@ -315,6 +446,7 @@ function PdfPreview({ sourceUrl }) {
               height: viewport.height,
               page,
               pageNumber: index + 1,
+              TextLayer,
               width: viewport.width,
             }
           })
@@ -383,14 +515,25 @@ function PdfPreview({ sourceUrl }) {
     else pageElements.current.delete(pageNumber)
   }, [])
 
-  const goToPage = (pageNumber, behavior = "smooth") => {
-    const boundedPage = Math.min(pages.length, Math.max(1, pageNumber))
-    const pageElement = pageElements.current.get(boundedPage)
-    setCurrentPage(boundedPage)
-    if (!scrollRoot || !pageElement) return
-    const top = Math.max(0, pageElement.offsetTop - 16)
-    scrollRoot.scrollTo({ behavior, top })
-  }
+  const goToPage = React.useCallback(
+    (pageNumber, behavior = "smooth") => {
+      const boundedPage = Math.min(pages.length, Math.max(1, pageNumber))
+      const pageElement = pageElements.current.get(boundedPage)
+      setCurrentPage(boundedPage)
+      if (!scrollRoot || !pageElement) return
+      const top = Math.max(0, pageElement.offsetTop - 16)
+      scrollRoot.scrollTo({ behavior, top })
+    },
+    [pages.length, scrollRoot]
+  )
+
+  React.useEffect(() => {
+    if (!activeEvidence?.pageNumber) return undefined
+    const frame = window.requestAnimationFrame(() =>
+      goToPage(activeEvidence.pageNumber, "smooth")
+    )
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeEvidence?.pageNumber, goToPage])
 
   const fitCurrentPage = () => {
     const descriptor = pages[currentPage - 1]
@@ -500,60 +643,79 @@ function PdfPreview({ sourceUrl }) {
           onRetry={() => setLoadAttempt((current) => current + 1)}
         />
       ) : (
-        <div
-          aria-label="PDF document viewer"
-          className="min-h-96 flex-1 cursor-grab overflow-auto bg-muted/50 p-4 select-none active:cursor-grabbing"
-          onPointerCancel={stopDragging}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return
-            event.preventDefault()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            drag.current = {
-              left: event.currentTarget.scrollLeft,
-              pointerX: event.clientX,
-              pointerY: event.clientY,
-              scrollElement: event.currentTarget,
-              top: event.currentTarget.scrollTop,
-            }
-          }}
-          onPointerMove={(event) => {
-            if (!drag.current) return
-            event.preventDefault()
-            drag.current.scrollElement.scrollLeft =
-              drag.current.left + drag.current.pointerX - event.clientX
-            drag.current.scrollElement.scrollTop =
-              drag.current.top + drag.current.pointerY - event.clientY
-          }}
-          onPointerUp={stopDragging}
-          onKeyDown={(event) => {
-            if (event.key === "+" || event.key === "=") {
+        <div className="flex min-h-0 flex-1">
+          {pages.length > 1 ? (
+            <aside
+              aria-label="PDF page thumbnails"
+              className="w-24 shrink-0 space-y-2 overflow-y-auto border-r bg-muted/30 p-2"
+            >
+              {pages.map((descriptor) => (
+                <PdfThumbnail
+                  active={currentPage === descriptor.pageNumber}
+                  descriptor={descriptor}
+                  key={descriptor.pageNumber}
+                  onSelect={() => goToPage(descriptor.pageNumber)}
+                />
+              ))}
+            </aside>
+          ) : null}
+          <div
+            aria-label="PDF document viewer"
+            className="min-h-96 flex-1 cursor-grab overflow-auto bg-muted/50 p-4 active:cursor-grabbing"
+            onPointerCancel={stopDragging}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return
+              if (event.target.closest?.(".textLayer")) return
               event.preventDefault()
-              changeZoom(zoom + ZOOM_STEP)
-            } else if (event.key === "-") {
+              event.currentTarget.setPointerCapture(event.pointerId)
+              drag.current = {
+                left: event.currentTarget.scrollLeft,
+                pointerX: event.clientX,
+                pointerY: event.clientY,
+                scrollElement: event.currentTarget,
+                top: event.currentTarget.scrollTop,
+              }
+            }}
+            onPointerMove={(event) => {
+              if (!drag.current) return
               event.preventDefault()
-              changeZoom(zoom - ZOOM_STEP)
-            }
-          }}
-          ref={setScrollRoot}
-          style={{
-            overscrollBehavior: "contain",
-            scrollBehavior: "auto",
-            touchAction: "none",
-          }}
-          tabIndex={0}
-        >
-          <div className="flex min-w-max flex-col items-center gap-4">
-            {pages.map((descriptor) => (
-              <PdfPage
-                descriptor={descriptor}
-                key={descriptor.pageNumber}
-                registerPage={registerPage}
-                renderView={renderView}
-                rotation={rotation}
-                scrollRoot={scrollRoot}
-                zoom={zoom}
-              />
-            ))}
+              drag.current.scrollElement.scrollLeft =
+                drag.current.left + drag.current.pointerX - event.clientX
+              drag.current.scrollElement.scrollTop =
+                drag.current.top + drag.current.pointerY - event.clientY
+            }}
+            onPointerUp={stopDragging}
+            onKeyDown={(event) => {
+              if (event.key === "+" || event.key === "=") {
+                event.preventDefault()
+                changeZoom(zoom + ZOOM_STEP)
+              } else if (event.key === "-") {
+                event.preventDefault()
+                changeZoom(zoom - ZOOM_STEP)
+              }
+            }}
+            ref={setScrollRoot}
+            style={{
+              overscrollBehavior: "contain",
+              scrollBehavior: "auto",
+              touchAction: "none",
+            }}
+            tabIndex={0}
+          >
+            <div className="flex min-w-max flex-col items-center gap-4">
+              {pages.map((descriptor) => (
+                <PdfPage
+                  activeEvidence={activeEvidence}
+                  descriptor={descriptor}
+                  key={descriptor.pageNumber}
+                  registerPage={registerPage}
+                  renderView={renderView}
+                  rotation={rotation}
+                  scrollRoot={scrollRoot}
+                  zoom={zoom}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -562,6 +724,7 @@ function PdfPreview({ sourceUrl }) {
 }
 
 export function SourcePreview({
+  activeEvidence,
   error,
   loading,
   mimeType,
@@ -581,9 +744,9 @@ export function SourcePreview({
         ) : error ? (
           <PreviewError message={error.message} onRetry={onRetry} />
         ) : sourceUrl && mimeType === "application/pdf" ? (
-          <PdfPreview sourceUrl={sourceUrl} />
+          <PdfPreview activeEvidence={activeEvidence} sourceUrl={sourceUrl} />
         ) : sourceUrl ? (
-          <ImagePreview sourceUrl={sourceUrl} />
+          <ImagePreview activeEvidence={activeEvidence} sourceUrl={sourceUrl} />
         ) : null}
       </section>
     </TooltipProvider>

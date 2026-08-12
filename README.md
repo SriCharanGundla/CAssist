@@ -61,12 +61,15 @@ activate a virtual environment manually.
 Open `http://localhost:5173`. API documentation is at
 `http://localhost:8000/docs`.
 
-The dashboard is the document hub: it shows processing state and provides original viewing, review,
-development model comparison, cancellation, and deletion actions without an intermediate document
-page. Active cancellation is acknowledged by the worker before deletion is enabled. Review
-uses an embedded PDF.js viewer for PDFs. Account and workspace information is available at
+The dashboard is the document hub: it supports filename search plus status and document-type
+filters, shows processing state, and provides original viewing, review, development model
+comparison, cancellation, and deletion actions without an intermediate document page. Active
+cancellation is acknowledged by the worker before deletion is enabled. Uploads show byte progress
+and can be cancelled individually or as a batch. Review uses an embedded PDF.js viewer with
+selectable text, page thumbnails, and source-evidence highlighting. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
-The review screen presents dynamic sections rather than storage-oriented field/table buckets. Tally
+The review screen presents collapsible dynamic sections rather than storage-oriented field/table
+buckets and supports Tab navigation between correction editors. Tally
 handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
 Authenticated routes use descriptive browser titles and keyboard skip navigation; compact controls
 expand their touch targets on coarse-pointer devices.

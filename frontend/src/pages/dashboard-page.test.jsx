@@ -239,6 +239,39 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("No documents yet")).toBeInTheDocument()
   })
 
+  it("searches and filters documents through the paginated API", async () => {
+    const user = userEvent.setup()
+    api.listDocuments.mockResolvedValue({ items: [], next_cursor: null })
+    renderDashboard()
+    await screen.findByText("No documents yet")
+
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search documents" }),
+      "acme"
+    )
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filter by status" }),
+      "ready"
+    )
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filter by document type" }),
+      "tax_invoice"
+    )
+
+    await waitFor(() =>
+      expect(api.listDocuments).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cursor: null,
+          documentType: "tax_invoice",
+          limit: 10,
+          search: "acme",
+          status: "ready",
+        })
+      )
+    )
+    expect(screen.getByText("No matching documents")).toBeInTheDocument()
+  })
+
   it("shows a structural loading state while documents load", () => {
     api.listDocuments.mockReturnValue(new Promise(() => {}))
     renderDashboard()

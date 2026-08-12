@@ -19,9 +19,51 @@ function jsonResponse(payload, init = {}) {
   })
 }
 
+let xhrStatus = 200
+const xhrRequests = []
+
+class FakeXMLHttpRequest extends EventTarget {
+  constructor() {
+    super()
+    this.headers = {}
+    this.status = 0
+    this.upload = new EventTarget()
+    xhrRequests.push(this)
+  }
+
+  abort() {
+    this.dispatchEvent(new Event("abort"))
+  }
+
+  open(method, url) {
+    this.method = method
+    this.url = url
+  }
+
+  send(body) {
+    this.body = body
+    this.upload.dispatchEvent(
+      new ProgressEvent("progress", {
+        lengthComputable: true,
+        loaded: body.size,
+        total: body.size,
+      })
+    )
+    this.status = xhrStatus
+    queueMicrotask(() => this.dispatchEvent(new Event("load")))
+  }
+
+  setRequestHeader(name, value) {
+    this.headers[name] = value
+  }
+}
+
 describe("uploadDocument", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    xhrRequests.length = 0
+    xhrStatus = 200
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest)
   })
 
   it("normalizes image MIME types from safe filename extensions", () => {
@@ -47,7 +89,6 @@ describe("uploadDocument", () => {
           { status: 201 }
         )
       )
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
       .mockResolvedValueOnce(jsonResponse({ csrf_token: "complete-csrf" }))
       .mockResolvedValueOnce(
         jsonResponse(
@@ -66,7 +107,7 @@ describe("uploadDocument", () => {
 
     expect(result).toEqual({ document_id: "document-1", status: "uploaded" })
     expect(stages).toEqual(["creating", "uploading", "verifying"])
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       `${API_BASE_URL}/uploads`,
@@ -85,17 +126,15 @@ describe("uploadDocument", () => {
         }),
       })
     )
+    expect(xhrRequests).toHaveLength(1)
+    expect(xhrRequests[0]).toMatchObject({
+      body: file,
+      headers: { "Content-Type": "application/pdf" },
+      method: "PUT",
+      url: "https://storage.example/upload",
+    })
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
-      "https://storage.example/upload",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/pdf" },
-        body: file,
-      }
-    )
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      5,
+      4,
       `${API_BASE_URL}/uploads/document-1/complete`,
       expect.objectContaining({
         credentials: "include",
@@ -109,6 +148,7 @@ describe("uploadDocument", () => {
   })
 
   it("stops before completion when private storage rejects the upload", async () => {
+    xhrStatus = 403
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf" }))
       .mockResolvedValueOnce(
@@ -124,14 +164,54 @@ describe("uploadDocument", () => {
           { status: 201 }
         )
       )
-      .mockResolvedValueOnce(new Response(null, { status: 403 }))
 
     await expect(
       uploadDocument(
         new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" })
       )
     ).rejects.toThrow("The file could not be uploaded to private storage.")
-    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it("reports byte progress and aborts an in-flight storage upload", async () => {
+    const controller = new AbortController()
+    const progress = []
+    vi.spyOn(FakeXMLHttpRequest.prototype, "send").mockImplementation(
+      function send(body) {
+        this.body = body
+        this.upload.dispatchEvent(
+          new ProgressEvent("progress", {
+            lengthComputable: true,
+            loaded: 4,
+            total: 10,
+          })
+        )
+      }
+    )
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf" }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            document_id: "document-1",
+            upload: {
+              method: "PUT",
+              url: "https://storage.example/upload",
+              headers: { "Content-Type": "application/pdf" },
+            },
+          },
+          { status: 201 }
+        )
+      )
+
+    const upload = uploadDocument(
+      new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" }),
+      { onProgress: (value) => progress.push(value), signal: controller.signal }
+    )
+    await vi.waitFor(() => expect(progress).toContain(40))
+    controller.abort()
+
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" })
   })
 })
 
