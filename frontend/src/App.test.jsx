@@ -59,14 +59,17 @@ describe("authenticated app header", () => {
       name: "Toggle color theme",
     })
     expect(document.documentElement).toHaveClass("light")
+    expect(themeButton).toHaveAttribute("aria-pressed", "false")
     expect(localStorage.getItem("cassist-theme")).toBeNull()
 
     await user.click(themeButton)
     expect(document.documentElement).toHaveClass("dark")
+    expect(themeButton).toHaveAttribute("aria-pressed", "true")
     expect(localStorage.getItem("cassist-theme")).toBe("dark")
 
     await user.click(themeButton)
     expect(document.documentElement).toHaveClass("light")
+    expect(themeButton).toHaveAttribute("aria-pressed", "false")
     expect(localStorage.getItem("cassist-theme")).toBe("light")
   })
 

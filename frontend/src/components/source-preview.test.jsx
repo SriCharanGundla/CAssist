@@ -134,6 +134,22 @@ describe("SourcePreview PDF viewer", () => {
     expect(viewer.releasePointerCapture).toHaveBeenCalledWith(1)
   })
 
+  it("zooms the focused PDF viewer with keyboard shortcuts", async () => {
+    render(
+      <SourcePreview
+        mimeType="application/pdf"
+        sourceUrl="https://download.invalid/original.pdf"
+      />
+    )
+
+    const viewer = await screen.findByLabelText("PDF document viewer")
+    fireEvent.keyDown(viewer, { key: "+" })
+    expect(screen.getByText("125%")).toBeInTheDocument()
+
+    fireEvent.keyDown(viewer, { key: "-" })
+    expect(screen.getByText("100%")).toBeInTheDocument()
+  })
+
   it("offers the signed original for spreadsheet review", () => {
     render(
       <SourcePreview

@@ -27,7 +27,7 @@ import { SettingsPage } from "@/pages/settings-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function AuthenticatedApp({ auth }) {
-  const { setTheme } = useTheme()
+  const { resolvedTheme, setTheme } = useTheme()
   const [logoutError, setLogoutError] = React.useState(null)
   const [isLoggingOut, setIsLoggingOut] = React.useState(false)
 
@@ -67,6 +67,7 @@ function AuthenticatedApp({ auth }) {
           <div className="flex min-w-0 items-center gap-3">
             <Button
               aria-label="Toggle color theme"
+              aria-pressed={resolvedTheme === "dark"}
               className="relative size-9 rounded-full"
               onClick={toggleTheme}
               size="icon"

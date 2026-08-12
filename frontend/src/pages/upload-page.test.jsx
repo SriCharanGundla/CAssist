@@ -93,6 +93,17 @@ describe("UploadPage", () => {
     ).toBeEnabled()
   })
 
+  it("highlights the drop zone while files are dragged over it", () => {
+    renderUploadPage()
+    const dropZone = screen.getByLabelText("Document drop zone")
+
+    fireEvent.dragEnter(dropZone)
+    expect(dropZone).toHaveAttribute("data-drag-active", "true")
+
+    fireEvent.dragLeave(dropZone)
+    expect(dropZone).not.toHaveAttribute("data-drag-active")
+  })
+
   it("returns to the dashboard after upload completion", async () => {
     const user = userEvent.setup()
     api.uploadDocument.mockImplementation(async (_file, { onStage }) => {

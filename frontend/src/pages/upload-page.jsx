@@ -64,8 +64,10 @@ export function UploadPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const inputRef = React.useRef(null)
+  const dragDepth = React.useRef(0)
   const [items, setItems] = React.useState([])
   const [error, setError] = React.useState(null)
+  const [dragActive, setDragActive] = React.useState(false)
   const [uploading, setUploading] = React.useState(false)
 
   const selectFiles = (selectedFiles) => {
@@ -186,10 +188,25 @@ export function UploadPage() {
 
       <form className="mt-7 space-y-5" onSubmit={handleSubmit}>
         <div
-          className="rounded-2xl border border-dashed bg-card p-8 text-center shadow-sm"
+          aria-label="Document drop zone"
+          className={`rounded-2xl border border-dashed p-8 text-center shadow-sm transition-colors ${dragActive ? "border-primary bg-primary/5" : "bg-card"}`}
+          data-drag-active={dragActive || undefined}
+          onDragEnter={(event) => {
+            event.preventDefault()
+            if (uploading) return
+            dragDepth.current += 1
+            setDragActive(true)
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault()
+            dragDepth.current = Math.max(0, dragDepth.current - 1)
+            if (!dragDepth.current) setDragActive(false)
+          }}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault()
+            dragDepth.current = 0
+            setDragActive(false)
             if (!uploading) selectFiles(event.dataTransfer.files)
           }}
         >

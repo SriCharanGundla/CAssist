@@ -502,12 +502,22 @@ function PdfPreview({ sourceUrl }) {
               drag.current.top + drag.current.pointerY - event.clientY
           }}
           onPointerUp={stopDragging}
+          onKeyDown={(event) => {
+            if (event.key === "+" || event.key === "=") {
+              event.preventDefault()
+              changeZoom(zoom + ZOOM_STEP)
+            } else if (event.key === "-") {
+              event.preventDefault()
+              changeZoom(zoom - ZOOM_STEP)
+            }
+          }}
           ref={setScrollRoot}
           style={{
             overscrollBehavior: "contain",
             scrollBehavior: "auto",
             touchAction: "none",
           }}
+          tabIndex={0}
         >
           <div className="flex min-w-max flex-col items-center gap-4">
             {pages.map((descriptor) => (

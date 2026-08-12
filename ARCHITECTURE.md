@@ -1054,6 +1054,7 @@ its own status and actions without refreshing the table. It reports only backend
 not invent page-level progress. Standard API requests use a 30-second client timeout; the direct R2
 upload is excluded because large file transfers require their own progress-aware lifecycle. The
 dashboard displays structural row placeholders while its initial document query is pending.
+The upload drop zone highlights while files are dragged over it.
 Filename links open originals with fresh short-lived URLs; row actions provide review, development
 comparison, and deletion without an intermediate document page. The legacy
 `/documents/:documentId` URL redirects to the dashboard.
@@ -1063,14 +1064,17 @@ only non-empty presentation sections referencing extracted fields, tables, text 
 pages, and quality issues. It embeds the private
 original beside the editable extraction through a fresh short-lived signed URL. A PDF.js canvas
 viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based panning; it renders
-only nearby pages and defers sharp rerendering until interaction settles. Image preview supplies
+only nearby pages, supports focused `+`/`-` zoom shortcuts, and defers sharp rerendering until
+interaction settles. Image preview supplies
 the same bounded zoom range plus clamped pan and reset controls, keeping part of the image reachable.
 CSV/XLSX review shows a short-lived action for opening the
 original spreadsheet because browsers do not provide a reliable native XLSX renderer.
-The user can hide the original. Clicking a displayed value copies it and shows a shadcn popover at
+The user can hide the original, and that interface preference persists locally across navigation.
+Clicking a displayed value copies it and shows a shadcn popover at
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
 data and provenance remain immutable. A compact changes disclosure shows correction history and the
-screen requires an explicit approval action. Conflicts refresh the result instead of silently
+screen requires an explicit approval action. Correction editors grow with their content up to a
+bounded height. Conflicts refresh the result instead of silently
 overwriting another tab and show concise user-facing feedback without exposing concurrency details.
 Approved results are read-only: copying and export remain available, but
 correction controls and quality suggestions return only after an explicit `Return to review` action.

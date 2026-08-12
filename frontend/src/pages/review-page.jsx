@@ -29,6 +29,7 @@ const REVIEW_LABELS = {
   in_review: "In review",
   approved: "Approved",
 }
+const SOURCE_VISIBILITY_STORAGE_KEY = "cassist-review-source-visible"
 
 function documentTypeLabel(value) {
   return value
@@ -119,6 +120,16 @@ function EditableValue({
   const [editing, setEditing] = React.useState(false)
   const [draft, setDraft] = React.useState(value)
   const [reason, setReason] = React.useState("")
+  const editorRef = React.useRef(null)
+
+  React.useLayoutEffect(() => {
+    const editor = editorRef.current
+    if (!editing || !editor) return
+    editor.style.height = "auto"
+    const nextHeight = Math.min(320, Math.max(40, editor.scrollHeight))
+    editor.style.height = `${nextHeight}px`
+    editor.style.overflowY = editor.scrollHeight > 320 ? "auto" : "hidden"
+  }, [draft, editing])
 
   const save = async (nextValue = draft, nextReason = reason) => {
     try {
@@ -159,6 +170,8 @@ function EditableValue({
                 disabled={saving}
                 maxLength={20000}
                 onChange={(event) => setDraft(event.target.value)}
+                ref={editorRef}
+                rows={1}
                 value={draft}
               />
               <input
@@ -306,7 +319,16 @@ function ReviewTable({ editableProps, sectionTitle, table }) {
 export function ReviewPage() {
   const { resultId } = useParams()
   const queryClient = useQueryClient()
-  const [showOriginal, setShowOriginal] = React.useState(true)
+  const [showOriginal, setShowOriginal] = React.useState(
+    () => localStorage.getItem(SOURCE_VISIBILITY_STORAGE_KEY) !== "false"
+  )
+  const toggleOriginal = () => {
+    setShowOriginal((current) => {
+      const next = !current
+      localStorage.setItem(SOURCE_VISIBILITY_STORAGE_KEY, String(next))
+      return next
+    })
+  }
 
   const resultQuery = useQuery({
     queryKey: ["result", resultId],
@@ -496,7 +518,7 @@ export function ReviewPage() {
         <div className="flex flex-wrap gap-2">
           {result.original_available ? (
             <Button
-              onClick={() => setShowOriginal((current) => !current)}
+              onClick={toggleOriginal}
               variant="outline"
             >
               {showOriginal ? <RiEyeOffLine /> : <RiEyeLine />}

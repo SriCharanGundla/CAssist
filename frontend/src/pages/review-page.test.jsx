@@ -122,6 +122,7 @@ function renderReviewPage() {
 describe("ReviewPage", () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    localStorage.removeItem("cassist-review-source-visible")
     api.getResult.mockResolvedValue(structuredClone(initialResult))
     api.createOriginalViewUrl.mockResolvedValue({
       url: "https://download.invalid/original?signature=test",
@@ -160,6 +161,38 @@ describe("ReviewPage", () => {
     await user.click(screen.getByRole("button", { name: "Hide original" }))
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Show original" })).toBeEnabled()
+    expect(localStorage.getItem("cassist-review-source-visible")).toBe("false")
+  })
+
+  it("remembers when the original preview was hidden", async () => {
+    const user = userEvent.setup()
+    const firstRender = renderReviewPage()
+    await screen.findByAltText("Original document")
+    await user.click(screen.getByRole("button", { name: "Hide original" }))
+    firstRender.unmount()
+
+    renderReviewPage()
+
+    expect(
+      await screen.findByRole("button", { name: "Show original" })
+    ).toBeEnabled()
+    expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
+  })
+
+  it("grows the correction editor with its content", async () => {
+    const user = userEvent.setup()
+    renderReviewPage()
+    const editButtons = await screen.findAllByRole("button", { name: "Edit" })
+    await user.click(editButtons[0])
+    const editor = screen.getByRole("textbox", { name: "Bill No." })
+    Object.defineProperty(editor, "scrollHeight", {
+      configurable: true,
+      value: 180,
+    })
+
+    await user.type(editor, " with a longer corrected value")
+
+    expect(editor).toHaveStyle({ height: "180px", overflowY: "hidden" })
   })
 
   it("copies a value by clicking it and shows brief feedback", async () => {
