@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { RiArrowLeftSLine, RiCloseLine } from "@remixicon/react"
 import { Link, useNavigate } from "react-router-dom"
 
@@ -17,6 +18,26 @@ const STAGE_LABELS = {
   uploading: "Uploading to private storage…",
   verifying: "Verifying the file and queuing extraction…",
   complete: "Queued for extraction",
+}
+const MAX_CONCURRENT_UPLOADS = 3
+
+async function mapWithConcurrency(items, limit, operation) {
+  const outcomes = Array(items.length)
+  let nextIndex = 0
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      outcomes[currentIndex] = await operation(items[currentIndex])
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(limit, items.length) },
+      () => worker()
+    )
+  )
+  return outcomes
 }
 
 function validateFile(file) {
@@ -41,6 +62,7 @@ function formatBytes(bytes) {
 
 export function UploadPage() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const inputRef = React.useRef(null)
   const [items, setItems] = React.useState([])
   const [error, setError] = React.useState(null)
@@ -56,22 +78,26 @@ export function UploadPage() {
       setItems([])
       return
     }
-    const invalid = files
-      .map((file) => ({ file, message: validateFile(file) }))
-      .find(({ message }) => message)
-    if (invalid) {
-      setError(`${invalid.file.name}: ${invalid.message}`)
-      setItems([])
-      return
-    }
-    setError(null)
+    const selections = files.map((file) => ({
+      file,
+      validationError: validateFile(file),
+    }))
+    const invalidCount = selections.filter(
+      ({ validationError }) => validationError
+    ).length
+    setError(
+      invalidCount
+        ? `${invalidCount} invalid ${invalidCount === 1 ? "file was" : "files were"} excluded from upload.`
+        : null
+    )
     setItems(
-      files.map((file, index) => ({
+      selections.map(({ file, validationError }, index) => ({
         id: `${file.name}-${file.size}-${file.lastModified}-${index}`,
         file,
         stage: null,
         result: null,
         error: null,
+        validationError,
       }))
     )
   }
@@ -84,14 +110,18 @@ export function UploadPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    const pendingItems = items.filter((item) => !item.result)
+    const pendingItems = items.filter(
+      (item) => !item.result && !item.validationError
+    )
     if (!pendingItems.length || uploading) {
       return
     }
     setError(null)
     setUploading(true)
-    const outcomes = await Promise.all(
-      pendingItems.map(async (item) => {
+    const outcomes = await mapWithConcurrency(
+      pendingItems,
+      MAX_CONCURRENT_UPLOADS,
+      async (item) => {
         updateItem(item.id, { error: null })
         try {
           const result = await uploadDocument(item.file, {
@@ -103,7 +133,7 @@ export function UploadPage() {
           updateItem(item.id, { error: uploadError.message, stage: null })
           return { error: uploadError }
         }
-      })
+      }
     )
     setUploading(false)
     const failedCount = outcomes.filter((outcome) => outcome.error).length
@@ -112,6 +142,7 @@ export function UploadPage() {
         ...items.flatMap((item) => (item.result ? [item.result] : [])),
         ...outcomes.map((outcome) => outcome.result),
       ]
+      await queryClient.invalidateQueries({ queryKey: ["documents"] })
       navigate("/", {
         replace: true,
         state: {
@@ -127,8 +158,10 @@ export function UploadPage() {
     }
   }
 
-  const pendingCount = items.filter((item) => !item.result).length
-  const completedCount = items.length - pendingCount
+  const pendingCount = items.filter(
+    (item) => !item.result && !item.validationError
+  ).length
+  const completedCount = items.filter((item) => item.result).length
 
   return (
     <section className="mx-auto max-w-2xl">
@@ -188,7 +221,8 @@ export function UploadPage() {
                         {item.file.name}
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {item.error ||
+                        {item.validationError ||
+                          item.error ||
                           STAGE_LABELS[item.stage] ||
                           formatBytes(item.file.size)}
                       </p>
@@ -244,7 +278,7 @@ export function UploadPage() {
 
         {uploading ? (
           <div aria-live="polite" className="rounded-lg bg-muted p-4 text-sm">
-            <p className="font-medium">Uploading {items.length} files…</p>
+            <p className="font-medium">Uploading selected files…</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Keep this page open until verification finishes.
             </p>

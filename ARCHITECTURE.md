@@ -345,7 +345,8 @@ Unsafe cookie-authenticated requests (`POST`, `PUT`, `PATCH`, and `DELETE`) must
 
 The CSRF token is independently random and contains no session or user data. Authenticated React
 clients obtain a freshly rotated token from `GET /api/v1/auth/csrf`; the response is never cached and
-the token is held only in memory. The bootstrap request itself must carry the exact configured
+the token is held only in memory. Frontend mutation requests serialize token rotation and the
+corresponding protected request so concurrent actions cannot invalidate one another. The bootstrap request itself must carry the exact configured
 frontend `Origin`. This synchronizer-token design is required because a host-only API cookie cannot
 be read by the static frontend on a sibling hostname. CORS allows credentials only from explicit
 development and production frontend origins. Login `return_to` values must be relative application
@@ -908,7 +909,8 @@ The local and container worker entry point is `cassist-worker`. It runs one poll
 each complete claim/process/persist attempt before claiming another document, so initial concurrency
 is exactly one. Empty queues wait for `WORKER_POLL_SECONDS` (default two seconds). SIGINT/SIGTERM
 request graceful shutdown, and unexpected loop-level failures emit only a generic error before retrying;
-exception details that could contain credentials or provider data are not logged.
+exception details that could contain credentials or provider data are not logged. Consecutive
+loop-level failures use exponential backoff capped at 60 seconds and reset after a successful iteration.
 Before each processing attempt, the same single worker deletes at most one expired
 `upload_pending` row and its `incoming/` object. R2 deletion succeeds before PostgreSQL removes the
 row; storage failures roll back and retry later. This bounds abandoned browser uploads without ever
@@ -1042,10 +1044,11 @@ Suggested frontend data layer:
 
 The first implemented frontend slice protects all application routes with the backend Auth0 session.
 `/upload` accepts up to ten PDF, JPEG, PNG, CSV, or XLSX files per selection, each up to 25 MiB. It
-obtains a fresh CSRF token for each mutating
+keeps valid files when other selected files fail client validation and processes at most three
+uploads concurrently. It obtains a fresh CSRF token for each mutating
 API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
 only after R2 succeeds. It then returns to the dashboard, including when completion reports an
-existing document from deduplication. The dashboard list itself does not poll. Each active document
+existing document from deduplication, after invalidating the cached document list. The dashboard list itself does not poll. Each active document
 row independently polls only its processing run every two seconds until terminal state, then updates
 its own status and actions without refreshing the table. It reports only backend-safe errors and does
 not invent page-level progress.

@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 from app.core.config import Settings
+from app.workers import main as worker_main
 from app.workers.main import run_worker
 
 
@@ -62,3 +63,39 @@ async def test_worker_recovers_from_safe_iteration_failure(
     assert calls == 2
     assert "private upstream detail" not in caplog.text
     assert "Worker iteration failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_worker_uses_bounded_exponential_backoff_for_consecutive_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop_event = asyncio.Event()
+    calls = 0
+    timeouts: list[float] = []
+
+    async def process_once() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls <= 3:
+            raise RuntimeError("infrastructure unavailable")
+        stop_event.set()
+        return False
+
+    async def record_wait(awaitable, *, timeout: float):
+        awaitable.close()
+        timeouts.append(timeout)
+        raise TimeoutError
+
+    monkeypatch.setattr(worker_main.asyncio, "wait_for", record_wait)
+
+    await run_worker(
+        app_settings=Settings(
+            app_env="test",
+            worker_poll_seconds=2,
+            _env_file=None,
+        ),
+        stop_event=stop_event,
+        process_once=process_once,
+    )
+
+    assert timeouts == [2, 4, 8]

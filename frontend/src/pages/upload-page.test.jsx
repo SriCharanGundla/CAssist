@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
@@ -13,12 +14,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 function renderUploadPage() {
   return render(
-    <MemoryRouter initialEntries={["/upload"]}>
-      <Routes>
-        <Route element={<UploadPage />} path="/upload" />
-        <Route element={<p>Dashboard destination</p>} path="/" />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter initialEntries={["/upload"]}>
+        <Routes>
+          <Route element={<UploadPage />} path="/upload" />
+          <Route element={<p>Dashboard destination</p>} path="/" />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
@@ -36,8 +41,11 @@ describe("UploadPage", () => {
       },
     })
 
-    expect(screen.getByRole("alert")).toHaveTextContent(
+    expect(screen.getByText(
       "Choose a PDF, JPEG, PNG, CSV, or XLSX file."
+    )).toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "1 invalid file was excluded"
     )
     expect(api.uploadDocument).not.toHaveBeenCalled()
     expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute(
@@ -64,6 +72,25 @@ describe("UploadPage", () => {
       "Choose no more than 10 files at once."
     )
     expect(api.uploadDocument).not.toHaveBeenCalled()
+  })
+
+  it("keeps valid files when invalid files are selected with them", () => {
+    const { container } = renderUploadPage()
+    const valid = new File(["%PDF-1.7"], "invoice.pdf", {
+      type: "application/pdf",
+    })
+    const invalid = new File(["text"], "notes.txt", { type: "text/plain" })
+
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [valid, invalid] },
+    })
+
+    expect(screen.getByText("invoice.pdf")).toBeInTheDocument()
+    expect(screen.getByText("notes.txt")).toBeInTheDocument()
+    expect(screen.getByText(/1 invalid file was excluded/)).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Upload and process" })
+    ).toBeEnabled()
   })
 
   it("returns to the dashboard after upload completion", async () => {
@@ -119,6 +146,48 @@ describe("UploadPage", () => {
       expect.objectContaining({ name: "invoices.csv" }),
       expect.objectContaining({ onStage: expect.any(Function) })
     )
+  })
+
+  it("limits batch uploads to three active files", async () => {
+    const user = userEvent.setup()
+    let active = 0
+    let maximumActive = 0
+    const releases = []
+    api.uploadDocument.mockImplementation(
+      (file) =>
+        new Promise((resolve) => {
+          active += 1
+          maximumActive = Math.max(maximumActive, active)
+          releases.push(() => {
+            active -= 1
+            resolve({
+              document_id: file.name,
+              status: "uploaded",
+              deduplicated: false,
+            })
+          })
+        })
+    )
+    const { container } = renderUploadPage()
+    const files = Array.from(
+      { length: 5 },
+      (_, index) =>
+        new File(["%PDF-1.7"], `invoice-${index}.pdf`, {
+          type: "application/pdf",
+        })
+    )
+
+    await user.upload(container.querySelector('input[type="file"]'), files)
+    await user.click(
+      screen.getByRole("button", { name: "Upload and process 5 files" })
+    )
+
+    expect(api.uploadDocument).toHaveBeenCalledTimes(3)
+    releases.splice(0, 3).forEach((release) => release())
+    await vi.waitFor(() => expect(api.uploadDocument).toHaveBeenCalledTimes(5))
+    releases.splice(0).forEach((release) => release())
+    expect(await screen.findByText("Dashboard destination")).toBeInTheDocument()
+    expect(maximumActive).toBe(3)
   })
 
   it("retries only failed files after a partial batch failure", async () => {

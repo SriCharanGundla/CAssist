@@ -42,17 +42,27 @@ async function getCsrfToken() {
   return payload.csrf_token
 }
 
-async function csrfRequest(path, options = {}) {
-  const csrfToken = await getCsrfToken()
-  const idempotencyKey = options.idempotencyKey || crypto.randomUUID()
-  return apiRequest(path, {
-    ...options,
-    headers: {
-      ...options.headers,
-      "Idempotency-Key": idempotencyKey,
-      "X-CSRF-Token": csrfToken,
-    },
-  })
+let csrfMutationQueue = Promise.resolve()
+
+function csrfRequest(path, options = {}) {
+  const request = async () => {
+    const csrfToken = await getCsrfToken()
+    const idempotencyKey = options.idempotencyKey || crypto.randomUUID()
+    return apiRequest(path, {
+      ...options,
+      headers: {
+        ...options.headers,
+        "Idempotency-Key": idempotencyKey,
+        "X-CSRF-Token": csrfToken,
+      },
+    })
+  }
+  const response = csrfMutationQueue.then(request, request)
+  csrfMutationQueue = response.then(
+    () => undefined,
+    () => undefined
+  )
+  return response
 }
 
 export function loginUrl(returnTo = "/") {

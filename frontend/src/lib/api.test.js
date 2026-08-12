@@ -181,6 +181,41 @@ describe("correctResult", () => {
       })
     )
   })
+
+  it("serializes concurrent CSRF-protected mutations", async () => {
+    let releaseFirstMutation
+    const firstMutationResponse = new Promise((resolve) => {
+      releaseFirstMutation = () =>
+        resolve(jsonResponse({ result_id: "result-1", version: 2 }))
+    })
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf-1" }))
+      .mockReturnValueOnce(firstMutationResponse)
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf-2" }))
+      .mockResolvedValueOnce(jsonResponse({ result_id: "result-2", version: 2 }))
+
+    const first = correctResult("result-1", 1, [
+      { target_id: "field-0001", value: "A" },
+    ])
+    const second = correctResult("result-2", 1, [
+      { target_id: "field-0001", value: "B" },
+    ])
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(fetchMock.mock.calls[0][0]).toBe(`${API_BASE_URL}/auth/csrf`)
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `${API_BASE_URL}/results/result-1/fields`
+    )
+    releaseFirstMutation()
+    await Promise.all([first, second])
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `${API_BASE_URL}/auth/csrf`,
+      `${API_BASE_URL}/results/result-1/fields`,
+      `${API_BASE_URL}/auth/csrf`,
+      `${API_BASE_URL}/results/result-2/fields`,
+    ])
+  })
 })
 
 describe("document deletion", () => {

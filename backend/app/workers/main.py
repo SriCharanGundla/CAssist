@@ -15,6 +15,7 @@ from app.services.upload_cleanup import cleanup_one_expired_upload
 from app.workers.processor import process_next_document
 
 logger = logging.getLogger("cassist.worker")
+_MAX_ERROR_BACKOFF_SECONDS = 60.0
 
 
 async def run_worker(
@@ -39,16 +40,30 @@ async def run_worker(
         return await process_next_document(app_settings=app_settings)
 
     process = process_once or configured_process
+    error_backoff_seconds = app_settings.worker_poll_seconds
     while not stopping.is_set():
+        iteration_failed = False
         try:
             processed = await process()
+            error_backoff_seconds = app_settings.worker_poll_seconds
         except Exception:
-            logger.error("Worker iteration failed; retrying after the polling interval")
+            logger.error("Worker iteration failed; retrying with bounded backoff")
             processed = False
+            iteration_failed = True
         if processed or stopping.is_set():
             continue
+        wait_seconds = (
+            error_backoff_seconds
+            if iteration_failed
+            else app_settings.worker_poll_seconds
+        )
+        if iteration_failed:
+            error_backoff_seconds = min(
+                _MAX_ERROR_BACKOFF_SECONDS,
+                error_backoff_seconds * 2,
+            )
         try:
-            await asyncio.wait_for(stopping.wait(), timeout=app_settings.worker_poll_seconds)
+            await asyncio.wait_for(stopping.wait(), timeout=wait_seconds)
         except TimeoutError:
             pass
 
