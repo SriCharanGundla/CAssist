@@ -4,11 +4,21 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   createOriginalViewUrl,
   deleteDocumentOriginal,
   getDocument,
   getRun,
   permanentlyDeleteDocument,
+  retryDocumentProcessing,
 } from "@/lib/api"
 
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed"])
@@ -35,7 +45,7 @@ export function DocumentPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [confirming, setConfirming] = React.useState(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const documentQuery = useQuery({
     queryKey: ["document", documentId],
     queryFn: ({ signal }) => getDocument(documentId, { signal }),
@@ -61,10 +71,18 @@ export function DocumentPage() {
     mutationFn: () => createOriginalViewUrl(documentId),
     onSuccess: ({ url }) => window.open(url, "_blank", "noopener,noreferrer"),
   })
+  const retryMutation = useMutation({
+    mutationFn: () => retryDocumentProcessing(documentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["document", documentId],
+      })
+    },
+  })
   const originalDeleteMutation = useMutation({
     mutationFn: () => deleteDocumentOriginal(documentId),
     onSuccess: async () => {
-      setConfirming(null)
+      setDeleteDialogOpen(false)
       await queryClient.invalidateQueries({
         queryKey: ["document", documentId],
       })
@@ -96,6 +114,7 @@ export function DocumentPage() {
   const failedError = runQuery.data?.error
   const actionError =
     viewMutation.error ||
+    retryMutation.error ||
     originalDeleteMutation.error ||
     permanentDeleteMutation.error
 
@@ -166,6 +185,14 @@ export function DocumentPage() {
             Review extraction
           </Button>
         ) : null}
+        {run?.status === "failed" && document.original_available ? (
+          <Button
+            disabled={retryMutation.isPending}
+            onClick={() => retryMutation.mutate()}
+          >
+            {retryMutation.isPending ? "Retrying…" : "Retry extraction"}
+          </Button>
+        ) : null}
         <Button
           nativeButton={false}
           render={<Link to="/upload" />}
@@ -187,54 +214,71 @@ export function DocumentPage() {
               {viewMutation.isPending ? "Opening…" : "Open original"}
             </Button>
           ) : null}
-          <Button onClick={() => setConfirming("delete")} variant="destructive">
+          <Button
+            onClick={() => setDeleteDialogOpen(true)}
+            variant="destructive"
+          >
             Delete
           </Button>
         </div>
-        {confirming ? (
-          <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
-            <p className="text-sm font-medium">What should be deleted?</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {document.original_available ? (
-                <Button
-                  disabled={
-                    originalDeleteMutation.isPending ||
-                    permanentDeleteMutation.isPending
-                  }
-                  onClick={() => originalDeleteMutation.mutate()}
-                  variant="outline"
-                >
-                  {originalDeleteMutation.isPending
-                    ? "Deleting…"
-                    : "Delete file, keep extraction"}
-                </Button>
-              ) : null}
-              <Button
-                disabled={
-                  originalDeleteMutation.isPending ||
-                  permanentDeleteMutation.isPending
-                }
-                onClick={() => permanentDeleteMutation.mutate()}
-                variant="destructive"
-              >
-                {permanentDeleteMutation.isPending
-                  ? "Deleting…"
-                  : document.original_available
-                    ? "Delete file and extraction"
-                    : "Delete extraction data"}
-              </Button>
-              <Button onClick={() => setConfirming(null)} variant="ghost">
-                Cancel
-              </Button>
-            </div>
-          </div>
-        ) : null}
         {actionError ? (
           <p className="mt-4 text-sm text-destructive" role="alert">
             {actionError.message}
           </p>
         ) : null}
       </section>
+
+      <Dialog onOpenChange={setDeleteDialogOpen} open={deleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete document?</DialogTitle>
+            <DialogDescription>
+              Choose whether to keep the extracted data for review and export.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="sm:justify-start">
+            {document.original_available ? (
+              <Button
+                disabled={
+                  originalDeleteMutation.isPending ||
+                  permanentDeleteMutation.isPending
+                }
+                onClick={() => originalDeleteMutation.mutate()}
+                variant="outline"
+              >
+                {originalDeleteMutation.isPending
+                  ? "Deleting…"
+                  : "Delete File, Keep Data"}
+              </Button>
+            ) : null}
+            <Button
+              disabled={
+                originalDeleteMutation.isPending ||
+                permanentDeleteMutation.isPending
+              }
+              onClick={() => permanentDeleteMutation.mutate()}
+              variant="destructive"
+            >
+              {permanentDeleteMutation.isPending
+                ? "Deleting…"
+                : document.original_available
+                  ? "Delete File and Data"
+                  : "Delete Data"}
+            </Button>
+            <DialogClose render={<Button variant="ghost" />}>
+              Cancel
+            </DialogClose>
+          </DialogFooter>
+          {originalDeleteMutation.error || permanentDeleteMutation.error ? (
+            <p className="text-sm text-destructive" role="alert">
+              {
+                (originalDeleteMutation.error || permanentDeleteMutation.error)
+                  .message
+              }
+            </p>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

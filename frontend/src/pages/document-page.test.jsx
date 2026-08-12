@@ -16,6 +16,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getDocument: vi.fn(),
     getRun: vi.fn(),
     permanentlyDeleteDocument: vi.fn(),
+    retryDocumentProcessing: vi.fn(),
   }
 })
 
@@ -98,6 +99,40 @@ describe("DocumentPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Extraction could not finish."
     )
+    expect(
+      screen.getByRole("button", { name: "Retry extraction" })
+    ).toBeEnabled()
+  })
+
+  it("retries failed extraction without uploading the original again", async () => {
+    const user = userEvent.setup()
+    api.getDocument.mockResolvedValue({
+      id: "document-1",
+      original_filename: "invoice.pdf",
+      mime_type: "application/pdf",
+      status: "failed",
+      original_available: true,
+      latest_run: { id: "run-1", status: "failed" },
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "failed",
+      result_id: null,
+      error: { code: "PROVIDER_RATE_LIMITED", message: "Provider was busy." },
+      progress: { completed_pages: null, total_pages: 1 },
+    })
+    api.retryDocumentProcessing.mockResolvedValue({
+      document_id: "document-1",
+      run_id: "run-2",
+      status: "uploaded",
+    })
+    renderDocumentPage()
+
+    await user.click(
+      await screen.findByRole("button", { name: "Retry extraction" })
+    )
+
+    expect(api.retryDocumentProcessing).toHaveBeenCalledWith("document-1")
   })
 
   it("offers file-only deletion and then removes the open-original action", async () => {
@@ -134,9 +169,11 @@ describe("DocumentPage", () => {
     ).toBeEnabled()
     await user.click(screen.getByRole("button", { name: "Delete" }))
     expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
-    expect(screen.getByText("What should be deleted?")).toBeInTheDocument()
+    expect(
+      screen.getByRole("dialog", { name: "Delete document?" })
+    ).toBeInTheDocument()
     await user.click(
-      screen.getByRole("button", { name: "Delete file, keep extraction" })
+      screen.getByRole("button", { name: "Delete File, Keep Data" })
     )
     expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
     await waitFor(() =>
@@ -173,7 +210,7 @@ describe("DocumentPage", () => {
     )
     expect(api.permanentlyDeleteDocument).not.toHaveBeenCalled()
     await user.click(
-      screen.getByRole("button", { name: "Delete file and extraction" })
+      screen.getByRole("button", { name: "Delete File and Data" })
     )
 
     await waitFor(() =>
@@ -206,10 +243,8 @@ describe("DocumentPage", () => {
       screen.queryByRole("button", { name: "Open original" })
     ).not.toBeInTheDocument()
     expect(
-      screen.queryByRole("button", { name: "Delete file, keep extraction" })
+      screen.queryByRole("button", { name: "Delete File, Keep Data" })
     ).not.toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Delete extraction data" })
-    ).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Delete Data" })).toBeEnabled()
   })
 })

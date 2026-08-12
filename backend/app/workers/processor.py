@@ -22,6 +22,7 @@ from app.services.model_provider import (
     ProviderConfigurationError,
     ProviderExtraction,
     ProviderExtractionError,
+    ProviderRateLimitError,
     create_extraction_provider,
 )
 from app.services.object_storage import (
@@ -75,7 +76,10 @@ async def claim_next_run(
                 Document.r2_object_key.is_not(None),
                 Document.sha256.is_not(None),
                 or_(
-                    ProcessingRun.status == RunStatus.QUEUED,
+                    and_(
+                        ProcessingRun.status == RunStatus.QUEUED,
+                        ProcessingRun.queued_at <= claimed_at,
+                    ),
                     and_(
                         ProcessingRun.status.in_(_ACTIVE_STATUSES),
                         or_(
@@ -242,6 +246,42 @@ async def _fail_run(
         await session.commit()
 
 
+async def _requeue_rate_limited_run(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ClaimedRun,
+    worker_id: str,
+    retry_seconds: int,
+) -> None:
+    async with session_factory() as session:
+        run_and_document = (
+            await session.execute(
+                select(ProcessingRun, Document)
+                .join(Document, Document.id == ProcessingRun.document_id)
+                .where(
+                    ProcessingRun.id == claim.run_id,
+                    ProcessingRun.status.in_(_ACTIVE_STATUSES),
+                    ProcessingRun.worker_id == worker_id,
+                )
+                .with_for_update()
+            )
+        ).first()
+        if run_and_document is None:
+            await session.rollback()
+            return
+
+        retry_at = datetime.now(UTC) + timedelta(seconds=retry_seconds)
+        run, document = run_and_document
+        run.status = RunStatus.QUEUED
+        run.worker_id = None
+        run.lease_expires_at = None
+        run.queued_at = retry_at
+        run.error_code = "PROVIDER_RATE_LIMITED"
+        run.error_message_safe = "The model provider is busy; retrying automatically"
+        document.status = DocumentStatus.UPLOADED
+        document.updated_at = datetime.now(UTC)
+        await session.commit()
+
+
 async def process_next_document(
     *,
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
@@ -316,6 +356,23 @@ async def process_next_document(
             "PROVIDER_NOT_CONFIGURED",
             "The configured model provider is unavailable",
         )
+        return True
+    except ProviderRateLimitError:
+        if claim.attempt_count < app_settings.provider_rate_limit_max_attempts:
+            await _requeue_rate_limited_run(
+                session_factory,
+                claim,
+                worker_id,
+                app_settings.provider_rate_limit_retry_seconds,
+            )
+        else:
+            await _fail_run(
+                session_factory,
+                claim,
+                worker_id,
+                "PROVIDER_RATE_LIMITED",
+                "The model provider remained busy after automatic retries",
+            )
         return True
     except ProviderExtractionError:
         await _fail_run(

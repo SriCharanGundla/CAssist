@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     )
 
     model_provider: Literal["openai", "gemini"] = "gemini"
-    model_id: str = "gemini-3.5-flash"
+    model_id: str = "gemini-3.5-flash-lite"
     allow_provider_override: bool = True
     prompt_version: str = "generic-document-v1"
     schema_version: str = "generic-extraction-v1"
@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 25 * 1024 * 1024
     worker_lease_seconds: int = 5 * 60
     worker_poll_seconds: float = 2.0
+    provider_rate_limit_retry_seconds: int = 60
+    provider_rate_limit_max_attempts: int = 3
     preprocessing_max_pages: int = 50
     preprocessing_render_dpi: int = 144
     preprocessing_max_pixels: int = 40_000_000
@@ -80,6 +82,10 @@ class Settings(BaseSettings):
             raise ValueError("WORKER_LEASE_SECONDS must be positive")
         if self.worker_poll_seconds <= 0:
             raise ValueError("WORKER_POLL_SECONDS must be positive")
+        if self.provider_rate_limit_retry_seconds <= 0:
+            raise ValueError("PROVIDER_RATE_LIMIT_RETRY_SECONDS must be positive")
+        if not 1 <= self.provider_rate_limit_max_attempts <= 5:
+            raise ValueError("PROVIDER_RATE_LIMIT_MAX_ATTEMPTS must be between 1 and 5")
         if self.preprocessing_max_pages <= 0:
             raise ValueError("PREPROCESSING_MAX_PAGES must be positive")
         if self.preprocessing_render_dpi <= 0:

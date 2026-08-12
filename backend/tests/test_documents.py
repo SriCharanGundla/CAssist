@@ -794,6 +794,61 @@ async def test_nonmembers_cannot_observe_or_delete_document(
 
 
 @pytest.mark.asyncio
+async def test_failed_document_can_queue_a_new_current_model_run(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, settings, owner_id, workspace_id, document_id, _ = document_client
+    document = await session.get(Document, document_id)
+    assert document is not None
+    failed_run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="previous-model",
+        prompt_version="previous-prompt",
+        schema_version="previous-schema",
+        preprocessing_version="previous-preprocessing",
+        status=RunStatus.FAILED,
+        attempt_count=1,
+        queued_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+    )
+    session.add(failed_run)
+    document.status = DocumentStatus.FAILED
+    await session.commit()
+
+    response = await client.post(f"/api/v1/documents/{document_id}/retry")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["document_id"] == str(document_id)
+    assert payload["status"] == "uploaded"
+    retry_run = await session.get(ProcessingRun, UUID(payload["run_id"]))
+    assert retry_run is not None
+    assert retry_run.status == RunStatus.QUEUED
+    assert retry_run.provider.value == settings.model_provider
+    assert retry_run.model_id == "gemini-3.5-flash-lite"
+    await session.refresh(document)
+    assert document.status == DocumentStatus.UPLOADED
+    audit = await session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.workspace_id == workspace_id,
+            AuditEvent.action == "document.processing_retried",
+        )
+    )
+    assert audit is not None
+
+
+@pytest.mark.asyncio
 async def test_members_can_delete_original_but_only_privileged_or_uploading_member_deletes_record(
     document_client: tuple[
         AsyncClient,

@@ -23,13 +23,16 @@ from app.models import (
     DocumentStatus,
     ExtractionResult,
     MemberRole,
+    ModelProvider,
     ProcessingRun,
+    RunStatus,
     WorkspaceMember,
 )
 from app.schemas.documents import (
     DocumentDetailResponse,
     DocumentListItemResponse,
     DocumentListResponse,
+    RetryDocumentResponse,
     ViewOriginalResponse,
 )
 from app.services.auth import CurrentAuth
@@ -236,6 +239,71 @@ async def get_document(
         updated_at=document.updated_at,
         latest_run=latest_run,
     )
+
+
+@router.post(
+    "/{document_id}/retry",
+    response_model=RetryDocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_document_processing(
+    document_id: UUID,
+    current_auth: Annotated[CurrentAuth, Depends(require_csrf)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> RetryDocumentResponse:
+    row = await _authorized_document(session, document_id, current_auth.user.id, lock=True)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    document, _ = row
+    if (
+        document.r2_object_key is None
+        or document.sha256 is None
+        or document.original_deleted_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Original document is unavailable",
+        )
+    latest_run = await session.scalar(
+        select(ProcessingRun)
+        .where(ProcessingRun.document_id == document.id)
+        .order_by(ProcessingRun.queued_at.desc(), ProcessingRun.id.desc())
+        .limit(1)
+    )
+    if latest_run is None or latest_run.status != RunStatus.FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only failed processing can be retried",
+        )
+
+    retry_run = ProcessingRun(
+        document_id=document.id,
+        requested_by_user_id=current_auth.user.id,
+        provider=ModelProvider(app_settings.model_provider),
+        model_id=app_settings.model_id,
+        prompt_version=app_settings.prompt_version,
+        schema_version=app_settings.schema_version,
+        preprocessing_version=app_settings.preprocessing_version,
+        status=RunStatus.QUEUED,
+        attempt_count=0,
+    )
+    session.add(retry_run)
+    await session.flush()
+    document.status = DocumentStatus.UPLOADED
+    document.updated_at = datetime.now(UTC)
+    session.add(
+        AuditEvent(
+            workspace_id=document.workspace_id,
+            actor_user_id=current_auth.user.id,
+            action="document.processing_retried",
+            entity_type="document",
+            entity_id=document.id,
+            metadata_={},
+        )
+    )
+    await session.commit()
+    return RetryDocumentResponse(document_id=document.id, run_id=retry_run.id)
 
 
 @router.post("/{document_id}/view-url", response_model=ViewOriginalResponse)

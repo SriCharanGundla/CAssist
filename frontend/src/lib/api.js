@@ -203,6 +203,16 @@ export async function createOriginalViewUrl(documentId) {
   return response.json()
 }
 
+export async function retryDocumentProcessing(documentId) {
+  const response = await csrfRequest(`/documents/${documentId}/retry`, {
+    method: "POST",
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to retry document extraction.")
+  }
+  return response.json()
+}
+
 export async function deleteDocumentOriginal(documentId) {
   const response = await csrfRequest(`/documents/${documentId}/original`, {
     method: "DELETE",

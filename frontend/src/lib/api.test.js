@@ -5,6 +5,7 @@ import {
   correctResult,
   deleteDocumentOriginal,
   permanentlyDeleteDocument,
+  retryDocumentProcessing,
   uploadDocument,
 } from "@/lib/api"
 
@@ -200,4 +201,35 @@ describe("document deletion", () => {
       )
     }
   )
+})
+
+describe("retryDocumentProcessing", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("queues a CSRF-protected retry", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "retry-csrf" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          document_id: "document-1",
+          run_id: "run-2",
+          status: "uploaded",
+        })
+      )
+
+    await retryDocumentProcessing("document-1")
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${API_BASE_URL}/documents/document-1/retry`,
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-Token": "retry-csrf" }),
+      })
+    )
+  })
 })

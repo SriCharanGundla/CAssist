@@ -5,7 +5,7 @@ API prefix: `/api/v1`
 Frontend: Vite + React + JavaScript + shadcn/ui  
 Backend: FastAPI + PostgreSQL + Strands Agents + uv<br>
 Object storage: private Cloudflare R2  
-Test model: `gemini-3.5-flash`  
+Test model: `gemini-3.5-flash-lite`<br>
 Production model: `gpt-5.6-luna`
 
 ## 1. Locked boundaries
@@ -568,7 +568,7 @@ whether a finalized original is available:
     "id": "56168db1-4ef1-4d56-9572-7f9ea26bf01e",
     "status": "succeeded",
     "provider": "gemini",
-    "model_id": "gemini-3.5-flash",
+    "model_id": "gemini-3.5-flash-lite",
     "queued_at": "2026-08-12T11:55:10Z",
     "started_at": "2026-08-12T11:55:11Z",
     "completed_at": "2026-08-12T11:57:00Z",
@@ -616,6 +616,14 @@ https://developers.cloudflare.com/r2/reference/consistency/
 
 ## 8. Processing endpoints
 
+### `POST /api/v1/documents/{document_id}/retry`
+
+Queues a new run for the current environment-locked provider configuration when the latest run
+failed and the private original still exists. It does not accept a provider/model override. The
+document returns to `uploaded`, and the action creates a content-free
+`document.processing_retried` audit event. Response: `202` with `document_id`, `run_id`, and
+`status: "uploaded"`.
+
 ### `POST /api/v1/documents/{document_id}/runs`
 
 Request in development:
@@ -623,7 +631,7 @@ Request in development:
 ```json
 {
   "provider": "gemini",
-  "model_id": "gemini-3.5-flash",
+  "model_id": "gemini-3.5-flash-lite",
   "force": false
 }
 ```
@@ -667,7 +675,7 @@ Response:
   "id": "56168db1-4ef1-4d56-9572-7f9ea26bf01e",
   "document_id": "1e594754-2f6c-4ef8-a24c-36980981b511",
   "provider": "gemini",
-  "model_id": "gemini-3.5-flash",
+  "model_id": "gemini-3.5-flash-lite",
   "status": "extracting",
   "queued_at": "2026-08-12T11:55:10Z",
   "started_at": "2026-08-12T11:55:11Z",
@@ -825,7 +833,7 @@ Runs the configured Gemini and OpenAI models using the same schema and preproces
 ```json
 {
   "providers": [
-    {"provider": "gemini", "model_id": "gemini-3.5-flash"},
+    {"provider": "gemini", "model_id": "gemini-3.5-flash-lite"},
     {"provider": "openai", "model_id": "gpt-5.6-luna"}
   ]
 }
@@ -842,6 +850,7 @@ stateDiagram-v2
     [*] --> queued
     queued --> preprocessing
     preprocessing --> extracting
+    extracting --> queued: provider throttled
     extracting --> validating
     validating --> succeeded
     queued --> cancelled
@@ -858,10 +867,12 @@ a configured lease expires. Preprocessing rechecks the permanent object's size, 
 SHA-256, enforces page-count plus per-page and aggregate pixel limits, renders PDF pages to PNG with
 PDFium, normalizes JPEG/PNG input with Pillow, and deletes its opaque temporary directory at the end
 of the attempt. Provider calls require bounded timeouts and retry only rate limits, transient network
-failures, and provider 5xx responses. Invalid generic structure fails visibly rather than being
-coerced into a document-family schema. Provider timeouts and retries must fit inside the PostgreSQL lease;
-the configuration validator reserves a 30-second persistence margin and disables Strands' second
-retry layer.
+failures, and provider 5xx responses. A provider throttle requeues the same PostgreSQL run for 60
+seconds later, up to three total attempts, instead of holding the single worker or immediately
+marking the document failed. Invalid generic structure fails visibly rather than being coerced into
+a document-family schema. Provider timeouts and retries must fit inside the PostgreSQL lease; the
+configuration validator reserves a 30-second persistence margin and disables Strands' second retry
+layer.
 
 The local and container worker entry point is `cassist-worker`. It runs one polling loop and awaits
 each complete claim/process/persist attempt before claiming another document, so initial concurrency
@@ -875,7 +886,7 @@ applying expiry to finalized originals.
 
 The extraction adapter is implemented behind one provider-neutral protocol. Development and test
 may use Strands `GeminiModel` with the verified Google AI Studio model identifier
-`gemini-3.5-flash`. Production is locked to Strands `OpenAIResponsesModel`, with stateless Responses
+`gemini-3.5-flash-lite`. Production is locked to Strands `OpenAIResponsesModel`, with stateless Responses
 API calls to the verified model identifier `gpt-5.6-luna`; production cannot select Gemini or supply
 a provider/model override. Credentials remain environment-only.
 
@@ -1000,8 +1011,8 @@ explicit approval action. Conflicts refresh the result instead of silently overw
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. The document
 screen has a compact `Actions` section: `Open original` appears only while the file exists, and one
-`Delete` action offers either `Delete file, keep extraction` or `Delete file and extraction`. After
-file-only deletion, the open action disappears and the remaining delete choice removes extraction
+`Delete` action opens a shadcn dialog offering either `Delete File, Keep Data` or `Delete File and
+Data`. After file-only deletion, the open action disappears and the remaining delete choice removes
 data. Full deletion returns to the dashboard after R2 deletion and the PostgreSQL cascade complete.
 
 ## 14. MVP implementation order

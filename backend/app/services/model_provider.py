@@ -9,6 +9,7 @@ from strands.models.gemini import GeminiModel
 from strands.models.model import Model
 from strands.models.openai_responses import OpenAIResponsesModel
 from strands.multiagent import GraphBuilder
+from strands.types.exceptions import ModelThrottledException
 
 from app.core.config import Settings
 from app.schemas.extraction import (
@@ -69,6 +70,10 @@ class ProviderConfigurationError(Exception):
 
 
 class ProviderExtractionError(Exception):
+    pass
+
+
+class ProviderRateLimitError(ProviderExtractionError):
     pass
 
 
@@ -201,6 +206,8 @@ class StrandsExtractionProvider:
                 page_paths,
                 quality_review,
             )
+        except ModelThrottledException as exc:
+            raise ProviderRateLimitError("The model provider rate limit was reached") from exc
         except ProviderExtractionError:
             raise
         except Exception as exc:

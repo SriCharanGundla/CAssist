@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -63,3 +64,9 @@ class RunDetailResponse(RunSummaryResponse):
 class ViewOriginalResponse(BaseModel):
     url: str
     expires_at: datetime
+
+
+class RetryDocumentResponse(BaseModel):
+    document_id: UUID
+    run_id: UUID
+    status: Literal["uploaded"] = "uploaded"

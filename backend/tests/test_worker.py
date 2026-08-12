@@ -34,7 +34,11 @@ from app.schemas.extraction import (
     GenericDocumentExtraction,
     QualityIssue,
 )
-from app.services.model_provider import ProviderExtraction, ProviderExtractionError
+from app.services.model_provider import (
+    ProviderExtraction,
+    ProviderExtractionError,
+    ProviderRateLimitError,
+)
 from app.services.object_storage import ObjectNotFoundError, PresignedUpload, StoredObject
 from app.workers.processor import ClaimedRun, claim_next_run, process_next_document
 
@@ -76,14 +80,17 @@ class WorkerObjectStorage:
 
 
 class FakeExtractionProvider:
-    def __init__(self, *, should_fail: bool = False) -> None:
+    def __init__(self, *, should_fail: bool = False, rate_limited: bool = False) -> None:
         self.should_fail = should_fail
+        self.rate_limited = rate_limited
         self.observed_paths: tuple[Path, ...] = ()
 
     def extract_document(self, page_paths, page_text) -> ProviderExtraction:
         self.observed_paths = tuple(page_paths)
         assert all(path.exists() for path in self.observed_paths)
         assert tuple(page_text) == (None,)
+        if self.rate_limited:
+            raise ProviderRateLimitError("simulated provider rate limit")
         if self.should_fail:
             raise ProviderExtractionError("simulated provider failure")
         return ProviderExtraction(
@@ -472,6 +479,57 @@ async def test_provider_failure_is_safe_and_does_not_persist_partial_result(
             )
             is None
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_rate_limit_requeues_with_a_bounded_delay(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+) -> None:
+    factory, user_id, workspace_id, settings = worker_database
+    content = _png_bytes()
+    object_key = "originals/provider-rate-limit"
+    document_id, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        content,
+        "image/png",
+        object_key,
+    )
+    storage = WorkerObjectStorage()
+    storage.objects[object_key] = (content, "image/png")
+    before_processing = datetime.now(UTC)
+
+    assert await process_next_document(
+        session_factory=factory,
+        app_settings=settings,
+        storage=storage,
+        extraction_provider=FakeExtractionProvider(rate_limited=True),
+        worker_id="worker-provider-rate-limit",
+    )
+
+    async with factory() as session:
+        document = await session.get(Document, document_id)
+        run = await session.get(ProcessingRun, run_id)
+        assert document is not None and document.status == DocumentStatus.UPLOADED
+        assert run is not None and run.status == RunStatus.QUEUED
+        assert run.worker_id is None
+        assert run.lease_expires_at is None
+        assert run.attempt_count == 1
+        assert run.queued_at >= before_processing + timedelta(
+            seconds=settings.provider_rate_limit_retry_seconds - 1
+        )
+        assert run.error_code == "PROVIDER_RATE_LIMITED"
+        assert run.error_message_safe == "The model provider is busy; retrying automatically"
+
+    async with factory() as session:
+        claim = await claim_next_run(
+            session,
+            "worker-too-early",
+            lease_seconds=settings.worker_lease_seconds,
+            current_time=before_processing,
+        )
+        assert claim is None
 
 
 @pytest.mark.asyncio

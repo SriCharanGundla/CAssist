@@ -5,6 +5,7 @@ import pytest
 from PIL import Image
 from strands.models.gemini import GeminiModel
 from strands.models.openai_responses import OpenAIResponsesModel
+from strands.types.exceptions import ModelThrottledException
 
 from app.core.config import Settings
 from app.schemas.extraction import (
@@ -17,6 +18,7 @@ from app.services.document_text_tools import DocumentTextTools
 from app.services.model_provider import (
     ModelSelection,
     ProviderConfigurationError,
+    ProviderRateLimitError,
     StrandsExtractionProvider,
     create_extraction_provider,
     resolve_model_selection,
@@ -41,7 +43,7 @@ def test_verified_model_identifiers_and_production_selection_are_locked() -> Non
 
     assert resolve_model_selection(development) == ModelSelection(
         provider="gemini",
-        model_id="gemini-3.5-flash",
+        model_id="gemini-3.5-flash-lite",
     )
     assert resolve_model_selection(production) == ModelSelection(
         provider="openai",
@@ -66,13 +68,13 @@ def test_factory_uses_strands_responses_api_for_openai_and_gemini_only_outside_p
     )
     gemini_provider = create_extraction_provider(
         development,
-        ModelSelection(provider="gemini", model_id="gemini-3.5-flash"),
+        ModelSelection(provider="gemini", model_id="gemini-3.5-flash-lite"),
     )
     assert isinstance(gemini_provider.model, GeminiModel)
     with pytest.raises(ProviderConfigurationError):
         create_extraction_provider(
             _production_settings(),
-            ModelSelection(provider="gemini", model_id="gemini-3.5-flash"),
+            ModelSelection(provider="gemini", model_id="gemini-3.5-flash-lite"),
         )
 
 
@@ -81,7 +83,7 @@ def test_provider_requires_the_selected_api_key() -> None:
     with pytest.raises(ProviderConfigurationError, match="Gemini"):
         create_extraction_provider(
             settings,
-            ModelSelection(provider="gemini", model_id="gemini-3.5-flash"),
+            ModelSelection(provider="gemini", model_id="gemini-3.5-flash-lite"),
         )
     with pytest.raises(ProviderConfigurationError, match="OpenAI"):
         create_extraction_provider(
@@ -93,7 +95,7 @@ def test_provider_requires_the_selected_api_key() -> None:
 def test_agent_graph_has_bounded_specialists_and_only_native_text_tools() -> None:
     provider = create_extraction_provider(
         Settings(app_env="test", _env_file=None, gemini_api_key="test-key"),
-        ModelSelection(provider="gemini", model_id="gemini-3.5-flash"),
+        ModelSelection(provider="gemini", model_id="gemini-3.5-flash-lite"),
     )
     graph = provider._build_graph(DocumentTextTools((None,)))  # type: ignore[attr-defined]
 
@@ -264,3 +266,18 @@ def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Pat
     assert extraction.document.fields[0].value == "1NV-1O2"
     assert extraction.quality_issues[0].target_id == "field-0001"
     assert extraction.quality_issues[0].suggested_value == "INV-102"
+
+
+def test_provider_preserves_throttling_as_a_safe_retryable_error(tmp_path: Path) -> None:
+    page_path = tmp_path / "page.png"
+    Image.new("RGB", (120, 80), "white").save(page_path)
+
+    class ThrottledGraph:
+        def __call__(self, _prompt):
+            raise ModelThrottledException("provider details must not escape")
+
+    provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
+    provider._build_graph = lambda _tools: ThrottledGraph()  # type: ignore[method-assign]
+
+    with pytest.raises(ProviderRateLimitError, match="rate limit"):
+        provider.extract_document([page_path], (None,))
