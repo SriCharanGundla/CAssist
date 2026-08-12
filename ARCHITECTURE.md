@@ -467,7 +467,8 @@ contents, extracted financial values, hashes, or provider output.
 
 Creates a pending document and a short-lived presigned R2 upload URL.
 
-The MVP accepts PDF, JPEG, and PNG originals up to 25 MiB. The authenticated user's private
+The MVP accepts PDF, JPEG, PNG, CSV, and XLSX originals up to 25 MiB each. Legacy XLS and ZIP are
+not accepted. The authenticated user's private
 workspace is selected server-side. The presigned upload targets `incoming/<random 128-bit value>`
 and never contains the original filename or identity data. It expires after five minutes and signs
 the exact `Content-Type`. The incoming key is not the permanent original key, so reusing an unexpired
@@ -508,7 +509,8 @@ Confirms upload completion, verifies and finalizes the original, and queues proc
 
 The trusted completion service streams the private incoming object into a bounded temporary buffer,
 checks the stored and streamed sizes against the database and 25 MiB limit, checks the stored
-`Content-Type`, validates the PDF/JPEG/PNG file signature, and computes SHA-256. It then writes those
+`Content-Type`, validates binary signatures, rejects binary CSV content, and verifies that XLSX is
+a bounded, unencrypted OOXML workbook rather than an arbitrary ZIP. It then computes SHA-256 and writes those
 verified bytes to a new `originals/<random 128-bit value>` key that was never exposed to the browser.
 Temporary data is closed and deleted after the request.
 
@@ -876,7 +878,10 @@ stateDiagram-v2
 The worker claims jobs using `SELECT ... FOR UPDATE SKIP LOCKED`. A crashed job may be reclaimed after
 a configured lease expires. Preprocessing rechecks the permanent object's size, type, and trusted
 SHA-256, enforces page-count plus per-page and aggregate pixel limits, renders PDF pages to PNG with
-PDFium, normalizes JPEG/PNG input with Pillow, and deletes its opaque temporary directory at the end
+PDFium, normalizes JPEG/PNG input with Pillow, and converts bounded CSV/XLSX cells into temporary
+tabular page images plus native page text. XLSX uses read-only `openpyxl` with `defusedxml`; formulas
+are never executed. Spreadsheet input is capped at 10,000 source rows, 64 source columns, 4,000
+characters per cell, and the same 50-page rendered limit. The worker deletes its opaque temporary directory at the end
 of the attempt. Provider calls require bounded timeouts and retry only rate limits, transient network
 failures, and provider 5xx responses. A provider throttle requeues the same PostgreSQL run for 60
 seconds later, up to three total attempts, instead of holding the single worker or immediately
@@ -909,7 +914,7 @@ stage order and an auditable failure boundary.
 
 ```mermaid
 flowchart LR
-    PRE["Render page images and extract native PDF text"] --> CLASSIFY["Classification agent"]
+    PRE["Render page images and extract native document text"] --> CLASSIFY["Classification agent"]
     CLASSIFY --> EXTRACT["Generic extraction agent"]
     EXTRACT --> CHECK["Deterministic suspicion checks"]
     CHECK -->|"suspicious output only"| QUALITY["Quality-review agent"]
@@ -935,9 +940,9 @@ acceptance of a suggestion creates a normal append-only correction.
 The agents have no shell, arbitrary filesystem, network, database, R2, page-cropping, or
 general-purpose code-execution tool. The extraction and quality-review agents may use only:
 
-1. `read_document_text(page_number)` — returns bounded native PDF text for one temporary page when a
-   text layer exists. Image uploads and scanned PDFs report text as unavailable; model vision remains
-   the primary extraction path.
+1. `read_document_text(page_number)` — returns bounded native text for one temporary page when a PDF
+   text layer or spreadsheet cell projection exists. Image uploads and scanned PDFs report text as
+   unavailable; model vision remains the primary extraction path.
 2. `search_document_text(query)` — returns bounded matches with page numbers from the same temporary
    native text. It is useful for long PDFs and returns no document-external information.
 
@@ -1011,7 +1016,8 @@ Suggested frontend data layer:
 - shadcn/ui for upload, table, dialog, tabs, form, badge, progress, and alert components.
 
 The first implemented frontend slice protects all application routes with the backend Auth0 session.
-`/upload` accepts one PDF, JPEG, or PNG up to 25 MiB, obtains a fresh CSRF token for each mutating
+`/upload` accepts up to ten PDF, JPEG, PNG, CSV, or XLSX files per selection, each up to 25 MiB. It
+obtains a fresh CSRF token for each mutating
 API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
 only after R2 succeeds. It then returns to the dashboard, including when completion reports an
 existing document from deduplication. The dashboard polls document and run status every two seconds

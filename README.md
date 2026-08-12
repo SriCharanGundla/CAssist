@@ -4,6 +4,9 @@ CAssist is a side-tool for Chartered Accountants to upload accounting documents 
 the labels, values, tables, and text actually present, review or copy them, and export reviewed data.
 Extraction is document-led: it does not require an invoice template or invent missing fields.
 
+Uploads support PDF, JPEG, PNG, CSV, and XLSX files up to 25 MiB each. The upload screen accepts up to
+ten files at once; legacy XLS and ZIP files are not supported.
+
 ## Structure
 
 ```text

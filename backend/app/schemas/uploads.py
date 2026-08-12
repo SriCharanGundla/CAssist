@@ -4,7 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-AllowedUploadMimeType = Literal["application/pdf", "image/jpeg", "image/png"]
+AllowedUploadMimeType = Literal[
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "text/csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]
 
 
 class CreateUploadRequest(BaseModel):

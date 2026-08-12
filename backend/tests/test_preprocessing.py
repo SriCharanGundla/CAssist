@@ -4,6 +4,7 @@ from typing import BinaryIO
 
 import pypdfium2 as pdfium
 import pytest
+from openpyxl import Workbook
 from PIL import Image
 
 from app.services.object_storage import PresignedUpload, StoredObject
@@ -65,6 +66,18 @@ def _pdf_bytes(page_count: int) -> bytes:
         document.close()
 
 
+def _xlsx_bytes() -> bytes:
+    output = BytesIO()
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Invoices"
+    worksheet.append(["Invoice No.", "Amount", "Paid"])
+    worksheet.append(["INV-1", "1180.00", True])
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
+
 def test_image_preprocessing_normalizes_to_rgb_png_and_cleans_temporary_files() -> None:
     content = _png_bytes()
     preprocessed = preprocess_document(
@@ -117,6 +130,46 @@ def test_pdf_preprocessing_renders_each_page_at_configured_resolution() -> None:
             with Image.open(page_path) as image:
                 assert image.mode == "RGB"
                 assert image.size == (1224, 1584)
+
+
+@pytest.mark.parametrize(
+    ("content", "mime_type", "expected_source"),
+    [
+        (
+            b"Invoice No.,Amount\r\nINV-1,1180.00\r\n",
+            "text/csv",
+            "Source: CSV",
+        ),
+        (
+            _xlsx_bytes(),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Source: Worksheet: Invoices",
+        ),
+    ],
+)
+def test_spreadsheet_preprocessing_renders_values_and_native_text(
+    content: bytes,
+    mime_type: str,
+    expected_source: str,
+) -> None:
+    with preprocess_document(
+        MemoryObjectStorage(content, mime_type),
+        "originals/opaque",
+        len(content),
+        hashlib.sha256(content).hexdigest(),
+        mime_type,
+        maximum_pages=10,
+        render_dpi=144,
+        maximum_pixels=3_000_000,
+        maximum_total_pixels=6_000_000,
+    ) as preprocessed:
+        assert preprocessed.page_count == 1
+        assert expected_source in (preprocessed.page_text[0] or "")
+        assert "Invoice No." in (preprocessed.page_text[0] or "")
+        assert "1180.00" in (preprocessed.page_text[0] or "")
+        with Image.open(preprocessed.page_paths[0]) as image:
+            assert image.format == "PNG"
+            assert image.mode == "RGB"
 
 
 @pytest.mark.parametrize(

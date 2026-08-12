@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     allow_provider_override: bool = True
     prompt_version: str = "generic-document-v1"
     schema_version: str = "generic-extraction-v1"
-    preprocessing_version: str = "document-native-text-v2"
+    preprocessing_version: str = "spreadsheet-pages-v3"
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
 
