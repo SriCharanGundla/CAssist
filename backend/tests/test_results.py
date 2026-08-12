@@ -407,7 +407,7 @@ async def test_multiple_corrections_rebuild_in_request_order(
 
 
 @pytest.mark.asyncio
-async def test_approval_is_audited_and_later_correction_reopens_review(
+async def test_approved_result_requires_explicit_return_to_review_before_correction(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, session, _, user_id, _, result_id = result_client
@@ -418,15 +418,33 @@ async def test_approval_is_audited_and_later_correction_reopens_review(
     assert approved.status_code == 200
     assert approved.json()["reviewed_by_user_id"] == str(user_id)
 
-    corrected = await client.patch(
+    blocked = await client.patch(
         f"/api/v1/results/{result_id}/fields",
         json={
             "expected_version": 2,
             "changes": [{"target_id": "field-0002", "value": "INV-102"}],
         },
     )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["message"] == (
+        "Return the result to review before saving corrections"
+    )
+
+    reopened = await client.post(
+        f"/api/v1/results/{result_id}/review",
+        json={"expected_version": 2, "status": "in_review"},
+    )
+    assert reopened.status_code == 200
+
+    corrected = await client.patch(
+        f"/api/v1/results/{result_id}/fields",
+        json={
+            "expected_version": 3,
+            "changes": [{"target_id": "field-0002", "value": "INV-102"}],
+        },
+    )
     assert corrected.status_code == 200
-    assert corrected.json()["version"] == 3
+    assert corrected.json()["version"] == 4
     assert corrected.json()["review_status"] == "in_review"
     assert corrected.json()["reviewed_by_user_id"] is None
     assert corrected.json()["reviewed_at"] is None
@@ -439,6 +457,7 @@ async def test_approval_is_audited_and_later_correction_reopens_review(
         ).all()
     )
     assert [audit.action for audit in audits] == [
+        "result.review_status_changed",
         "result.review_status_changed",
         "result.corrected",
     ]

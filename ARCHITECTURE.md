@@ -1065,7 +1065,8 @@ The user can hide the original. Clicking a displayed value copies it and shows a
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
 data and provenance remain immutable. A compact changes disclosure shows correction history and the
 screen requires an explicit approval action. Conflicts refresh the result instead of silently
-overwriting another tab.
+overwriting another tab. Approved results are read-only: copying and export remain available, but
+correction controls and quality suggestions return only after an explicit `Return to review` action.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. Dashboard row

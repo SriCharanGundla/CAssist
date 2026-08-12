@@ -192,6 +192,11 @@ async def apply_result_corrections(
     if result_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
     result, run, document = result_row
+    if result.review_status == ReviewStatus.APPROVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Return the result to review before saving corrections",
+        )
     if result.version != payload.expected_version:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

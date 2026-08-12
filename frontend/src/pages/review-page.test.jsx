@@ -236,4 +236,40 @@ describe("ReviewPage", () => {
     )
     expect(api.downloadTallyExport).toHaveBeenCalledWith("result-1", 2)
   })
+
+  it("keeps approved results read-only until they return to review", async () => {
+    const user = userEvent.setup()
+    const approved = {
+      ...structuredClone(initialResult),
+      version: 2,
+      review_status: "approved",
+      reviewed_by_user_id: "user-1",
+      reviewed_at: "2026-08-12T12:00:00Z",
+    }
+    api.getResult.mockResolvedValue(approved)
+    api.updateResultReview.mockResolvedValue({
+      ...approved,
+      version: 3,
+      review_status: "in_review",
+      reviewed_by_user_id: null,
+      reviewed_at: null,
+    })
+    renderReviewPage()
+
+    expect(
+      await screen.findByRole("button", { name: "Return to review" })
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Use “INV-7”" })
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Return to review" }))
+
+    expect(await screen.findByText("Version 3 · In review")).toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: "Edit" })).not.toHaveLength(0)
+    expect(
+      screen.getByRole("button", { name: "Use “INV-7”" })
+    ).toBeInTheDocument()
+  })
 })

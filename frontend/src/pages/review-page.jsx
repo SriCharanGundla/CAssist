@@ -77,7 +77,7 @@ function CopyValue({ label, value }) {
   )
 }
 
-function QualityIssues({ issues, onUseSuggestion, saving }) {
+function QualityIssues({ canEdit, issues, onUseSuggestion, saving }) {
   if (!issues.length) return null
   return (
     <ul className="mt-2 space-y-2">
@@ -87,7 +87,7 @@ function QualityIssues({ issues, onUseSuggestion, saving }) {
           key={issue.code}
         >
           <p className="text-destructive">{issue.message}</p>
-          {issue.suggested_value !== null ? (
+          {canEdit && issue.suggested_value !== null ? (
             <Button
               className="mt-2 h-7 px-2 text-xs"
               disabled={saving}
@@ -104,6 +104,7 @@ function QualityIssues({ issues, onUseSuggestion, saving }) {
 }
 
 function EditableValue({
+  canEdit = true,
   edited = false,
   issues,
   hideLabel = false,
@@ -149,7 +150,7 @@ function EditableValue({
               </span>
             ) : null}
           </div>
-          {editing ? (
+          {canEdit && editing ? (
             <>
               <textarea
                 aria-label={label}
@@ -175,6 +176,7 @@ function EditableValue({
             </div>
           )}
           <QualityIssues
+            canEdit={canEdit}
             issues={issues}
             onUseSuggestion={(suggestion) =>
               save(suggestion, "Accepted quality-review suggestion")
@@ -182,7 +184,7 @@ function EditableValue({
             saving={saving}
           />
         </div>
-        {editing ? (
+        {canEdit && editing ? (
           <div className="flex gap-2">
             <Button disabled={saving || !draft} onClick={() => save()}>
               {saving ? "Saving…" : "Save"}
@@ -195,7 +197,7 @@ function EditableValue({
               Cancel
             </Button>
           </div>
-        ) : (
+        ) : canEdit ? (
           <Button
             onClick={() => {
               setDraft(value)
@@ -205,7 +207,7 @@ function EditableValue({
           >
             Edit
           </Button>
-        )}
+        ) : null}
       </div>
     </div>
   )
@@ -447,6 +449,7 @@ export function ReviewPage() {
       0
     )
   const editableProps = (targetId) => ({
+    canEdit: result.review_status !== "approved",
     edited: editedTargets.has(targetId),
     issues: issuesByTarget.get(targetId) || [],
     onSave: saveCorrection,
