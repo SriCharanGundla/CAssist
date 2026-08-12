@@ -236,7 +236,7 @@ function DocumentRow({ document }) {
           disabled={deleteDisabled}
           label="Delete document"
           onClick={() => setDeleteDialogOpen(true)}
-          variant="ghost"
+          variant="destructive"
         >
           <RiDeleteBinLine />
         </IconAction>

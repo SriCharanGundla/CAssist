@@ -86,9 +86,11 @@ describe("DashboardPage", () => {
     expect(
       screen.getByRole("button", { name: "Review extraction" })
     ).toHaveAttribute("href", "/results/result-1/review")
-    expect(
-      screen.getByRole("button", { name: "Delete document" })
-    ).toBeEnabled()
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete document",
+    })
+    expect(deleteButton).toBeEnabled()
+    expect(deleteButton).toHaveClass("text-destructive")
     await user.click(screen.getByRole("button", { name: "Load more" }))
     expect(await screen.findByText("invoice-two.png")).toBeInTheDocument()
     expect(api.listDocuments).toHaveBeenLastCalledWith(
