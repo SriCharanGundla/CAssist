@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, within } from "@testing-library/react"
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -148,9 +154,7 @@ describe("ReviewPage", () => {
     expect(screen.getByText("Possible character confusion")).toBeInTheDocument()
     expect(screen.getByAltText("Original document")).toBeInTheDocument()
     expect(screen.queryByText("Supplier GSTIN")).not.toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Approve" })
-    ).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled()
   })
 
   it("toggles the inline original preview", async () => {
@@ -195,6 +199,35 @@ describe("ReviewPage", () => {
     expect(editor).toHaveStyle({ height: "180px", overflowY: "hidden" })
   })
 
+  it("saves and cancels correction editing with keyboard shortcuts", async () => {
+    const user = userEvent.setup()
+    api.correctResult.mockResolvedValue(structuredClone(initialResult))
+    renderReviewPage()
+    const editButtons = await screen.findAllByRole("button", { name: "Edit" })
+
+    await user.click(editButtons[0])
+    const editor = screen.getByRole("textbox", { name: "Bill No." })
+    await user.clear(editor)
+    await user.type(editor, "INV-9")
+    fireEvent.keyDown(editor, { ctrlKey: true, key: "Enter" })
+
+    await waitFor(() =>
+      expect(api.correctResult).toHaveBeenCalledWith("result-1", 1, [
+        { target_id: "field-0001", value: "INV-9", reason: null },
+      ])
+    )
+
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Edit" }))[0]
+    )
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Bill No." }), {
+      key: "Escape",
+    })
+    expect(
+      screen.queryByRole("textbox", { name: "Bill No." })
+    ).not.toBeInTheDocument()
+  })
+
   it("copies a value by clicking it and shows brief feedback", async () => {
     const user = userEvent.setup()
     const writeText = vi.spyOn(navigator.clipboard, "writeText")
@@ -207,7 +240,9 @@ describe("ReviewPage", () => {
     expect(writeText).toHaveBeenCalledWith("INV-1")
     const copiedFeedback = screen.getByText("Copied")
     expect(copiedFeedback).toBeInTheDocument()
-    expect(copiedFeedback.parentElement?.querySelector("svg")).toBeInTheDocument()
+    expect(
+      copiedFeedback.parentElement?.querySelector("svg")
+    ).toBeInTheDocument()
     expect(screen.queryByText("Ready for your review")).not.toBeInTheDocument()
     expect(screen.queryByText("Human review required")).not.toBeInTheDocument()
   })
@@ -245,7 +280,51 @@ describe("ReviewPage", () => {
     ])
     expect(await screen.findByText("Version 2 · In review")).toBeInTheDocument()
     expect(screen.getByText("Edited")).toBeInTheDocument()
+    expect(screen.getByText("Original:")).toBeInTheDocument()
+    expect(screen.getAllByText("INV-1")).toHaveLength(2)
     expect(screen.getByText("Changes (1)")).toBeInTheDocument()
+    expect(screen.getByText("Before")).toBeInTheDocument()
+    expect(screen.getByText("After")).toBeInTheDocument()
+  })
+
+  it("separates document-level quality issues from field issues", async () => {
+    const result = structuredClone(initialResult)
+    result.quality_issues.push({
+      target_id: "document",
+      code: "totals_do_not_reconcile",
+      message: "Document totals need review",
+      suggested_value: null,
+    })
+    api.getResult.mockResolvedValue(result)
+
+    renderReviewPage()
+
+    const alerts = await screen.findByRole("region", {
+      name: "Document quality issues",
+    })
+    expect(
+      within(alerts).getByText("Document-level issues")
+    ).toBeInTheDocument()
+    expect(
+      within(alerts).getByText("Document totals need review")
+    ).toBeInTheDocument()
+  })
+
+  it("retries a failed extraction-result query", async () => {
+    const user = userEvent.setup()
+    api.getResult
+      .mockRejectedValueOnce(new Error("Unable to load extraction"))
+      .mockResolvedValueOnce(structuredClone(initialResult))
+
+    renderReviewPage()
+
+    expect(
+      await screen.findByText("Unable to load extraction")
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+    expect(
+      await screen.findByText("Review extracted document")
+    ).toBeInTheDocument()
   })
 
   it("records approval and exports only an approved result", async () => {
@@ -260,9 +339,7 @@ describe("ReviewPage", () => {
     api.downloadTallyExport.mockResolvedValue(undefined)
     renderReviewPage()
 
-    await user.click(
-      await screen.findByRole("button", { name: "Approve" })
-    )
+    await user.click(await screen.findByRole("button", { name: "Approve" }))
     await user.click(
       await screen.findByRole("button", { name: "Download Tally JSON" })
     )
@@ -297,7 +374,9 @@ describe("ReviewPage", () => {
     expect(
       await screen.findByRole("button", { name: "Return to review" })
     ).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Edit" })
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: "Use “INV-7”" })
     ).not.toBeInTheDocument()

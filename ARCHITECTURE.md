@@ -617,6 +617,13 @@ Treat the URL as a bearer credential: it is never written to application logs or
 Cloudflare R2 documents this single-operation, single-object pattern for private downloads:
 https://developers.cloudflare.com/r2/api/s3/presigned-urls/
 
+### `GET /api/v1/documents/{document_id}/spreadsheet-preview`
+
+Returns an authorized, read-only cell projection for a finalized CSV or XLSX original. The API reads
+the private object server-side and returns at most 100 rows, 30 columns, and five visible sheets,
+plus a `truncated` flag. XLSX formulas are never executed. The response uses `Cache-Control:
+no-store` and contains neither the R2 key nor a signed URL.
+
 ### `DELETE /api/v1/documents/{document_id}/original`
 
 Deletes only the R2 original. R2 deletion must succeed before the database clears the object key and
@@ -1070,14 +1077,19 @@ viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based pa
 only nearby pages, supports focused `+`/`-` zoom shortcuts, and defers sharp rerendering until
 interaction settles. Image preview supplies
 the same bounded zoom range plus clamped pan and reset controls, keeping part of the image reachable.
-CSV/XLSX review shows a short-lived action for opening the
-original spreadsheet because browsers do not provide a reliable native XLSX renderer.
+CSV/XLSX review shows a bounded, read-only cell projection from the authenticated API and retains a
+short-lived action for opening the complete original. The projection is limited to 100 rows, 30
+columns, and five visible sheets; parsing remains server-side because browsers do not provide a
+reliable native XLSX renderer.
 The user can hide the original, and that interface preference persists locally across navigation.
 Clicking a displayed value copies it and shows a shadcn popover at
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
-data and provenance remain immutable. A compact changes disclosure shows correction history and the
-screen requires an explicit approval action. Correction editors grow with their content up to a
-bounded height. Conflicts refresh the result instead of silently
+data and provenance remain immutable. Edited values retain visible original-value context, while a
+compact changes disclosure labels each correction's before and after values. Document-level quality
+issues are separated from issues attached to a specific value. The screen requires an explicit
+approval action. Correction editors grow with their content up to a bounded height and support
+`Escape` to cancel plus `Cmd/Ctrl+Enter` to save. Primary load and preview errors expose a local retry
+action. Conflicts refresh the result instead of silently
 overwriting another tab and show concise user-facing feedback without exposing concurrency details.
 Approved results are read-only: copying and export remain available, but
 correction controls and quality suggestions return only after an explicit `Return to review` action.

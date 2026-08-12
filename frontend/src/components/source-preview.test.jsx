@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -9,6 +10,12 @@ const { destroyDocument, getDocument, renderPage } = vi.hoisted(() => ({
   getDocument: vi.fn(),
   renderPage: vi.fn(() => ({ cancel: vi.fn(), promise: Promise.resolve() })),
 }))
+
+const { getSpreadsheetPreview } = vi.hoisted(() => ({
+  getSpreadsheetPreview: vi.fn(),
+}))
+
+vi.mock("@/lib/api", () => ({ getSpreadsheetPreview }))
 
 vi.mock("pdfjs-dist", () => ({
   GlobalWorkerOptions: {},
@@ -45,6 +52,18 @@ describe("SourcePreview PDF viewer", () => {
         })),
         numPages: 2,
       }),
+    })
+    getSpreadsheetPreview.mockResolvedValue({
+      sheets: [
+        {
+          name: "Invoices",
+          rows: [
+            ["Invoice", "Amount"],
+            ["INV-1", "118.00"],
+          ],
+        },
+      ],
+      truncated: false,
     })
   })
 
@@ -150,18 +169,27 @@ describe("SourcePreview PDF viewer", () => {
     expect(screen.getByText("100%")).toBeInTheDocument()
   })
 
-  it("offers the signed original for spreadsheet review", () => {
+  it("previews spreadsheet cells inline and keeps the signed original action", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
     render(
-      <SourcePreview
-        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        sourceUrl="https://download.invalid/original.xlsx"
-      />
+      <QueryClientProvider client={queryClient}>
+        <SourcePreview
+          documentId="document-1"
+          mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          sourceUrl="https://download.invalid/original.xlsx"
+        />
+      </QueryClientProvider>
     )
 
-    expect(screen.getByRole("button", { name: /Open original/ })).toHaveAttribute(
-      "href",
-      "https://download.invalid/original.xlsx"
-    )
+    expect(await screen.findByText("INV-1")).toBeInTheDocument()
+    expect(getSpreadsheetPreview).toHaveBeenCalledWith("document-1", {
+      signal: expect.any(AbortSignal),
+    })
+    expect(
+      screen.getByRole("button", { name: /Open original/ })
+    ).toHaveAttribute("href", "https://download.invalid/original.xlsx")
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
   })
 
@@ -217,5 +245,23 @@ describe("SourcePreview PDF viewer", () => {
 
     expect(screen.getByText("300%")).toBeInTheDocument()
     expect(zoomIn).toBeDisabled()
+  })
+
+  it("offers a retry action when loading the signed original fails", async () => {
+    const user = userEvent.setup()
+    const onRetry = vi.fn()
+    render(
+      <SourcePreview
+        error={new Error("Unable to load original")}
+        mimeType="image/png"
+        onRetry={onRetry}
+      />
+    )
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Unable to load original"
+    )
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+    expect(onRetry).toHaveBeenCalledOnce()
   })
 })

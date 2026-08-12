@@ -112,6 +112,7 @@ function EditableValue({
   hideLabel = false,
   label,
   onSave,
+  originalValue,
   pageNumber,
   saving,
   targetId,
@@ -138,6 +139,25 @@ function EditableValue({
       setReason("")
     } catch {
       // The page-level mutation error remains visible while this editor stays open.
+    }
+  }
+  const cancelEditing = () => {
+    setDraft(value)
+    setReason("")
+    setEditing(false)
+  }
+  const handleEditorKeyDown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault()
+      cancelEditing()
+    } else if (
+      event.key === "Enter" &&
+      (event.metaKey || event.ctrlKey) &&
+      draft &&
+      !saving
+    ) {
+      event.preventDefault()
+      save()
     }
   }
 
@@ -170,6 +190,7 @@ function EditableValue({
                 disabled={saving}
                 maxLength={20000}
                 onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={handleEditorKeyDown}
                 ref={editorRef}
                 rows={1}
                 value={draft}
@@ -180,6 +201,7 @@ function EditableValue({
                 disabled={saving}
                 maxLength={1000}
                 onChange={(event) => setReason(event.target.value)}
+                onKeyDown={handleEditorKeyDown}
                 placeholder="Reason for correction (optional)"
                 value={reason}
               />
@@ -187,6 +209,14 @@ function EditableValue({
           ) : (
             <div className="mt-1">
               <CopyValue label={label} value={value} />
+              {edited &&
+              originalValue !== undefined &&
+              originalValue !== value ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  <span className="font-medium">Original:</span>{" "}
+                  <span className="break-words">{originalValue}</span>
+                </p>
+              ) : null}
             </div>
           )}
           <QualityIssues
@@ -203,11 +233,7 @@ function EditableValue({
             <Button disabled={saving || !draft} onClick={() => save()}>
               {saving ? "Saving…" : "Save"}
             </Button>
-            <Button
-              disabled={saving}
-              onClick={() => setEditing(false)}
-              variant="ghost"
-            >
+            <Button disabled={saving} onClick={cancelEditing} variant="ghost">
               Cancel
             </Button>
           </div>
@@ -251,12 +277,20 @@ function CorrectionHistory({ corrections, targetLabels }) {
           <p className="font-medium">
             {targetLabels.get(correction.target_id) || "Extracted value"}
           </p>
-          <p className="mt-1 break-words">
-            {String(correction.previous_value)} →{" "}
-            <span className="font-medium">
-              {String(correction.corrected_value)}
-            </span>
-          </p>
+          <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-md bg-muted p-2">
+              <dt className="font-medium text-muted-foreground">Before</dt>
+              <dd className="mt-0.5 break-words">
+                {String(correction.previous_value)}
+              </dd>
+            </div>
+            <div className="rounded-md bg-secondary p-2">
+              <dt className="font-medium text-muted-foreground">After</dt>
+              <dd className="mt-0.5 font-medium break-words">
+                {String(correction.corrected_value)}
+              </dd>
+            </div>
+          </dl>
           {correction.reason ? (
             <p className="mt-1 text-muted-foreground">{correction.reason}</p>
           ) : null}
@@ -392,9 +426,18 @@ export function ReviewPage() {
     return <p className="text-sm text-muted-foreground">Loading extraction…</p>
   if (resultQuery.error)
     return (
-      <p className="text-sm text-destructive" role="alert">
-        {resultQuery.error.message}
-      </p>
+      <div>
+        <p className="text-sm text-destructive" role="alert">
+          {resultQuery.error.message}
+        </p>
+        <Button
+          className="mt-3"
+          onClick={() => resultQuery.refetch()}
+          variant="outline"
+        >
+          Retry
+        </Button>
+      </div>
     )
 
   const result = resultQuery.data
@@ -407,6 +450,17 @@ export function ReviewPage() {
   const editedTargets = new Set(
     result.corrections.map((correction) => correction.target_id)
   )
+  const originalValues = new Map(
+    result.extracted_data.fields.map((field) => [field.id, field.value])
+  )
+  for (const table of result.extracted_data.tables) {
+    table.rows.forEach((row) => {
+      row.cells.forEach((cell) => originalValues.set(cell.id, cell.value))
+    })
+  }
+  result.extracted_data.text_blocks.forEach((block) => {
+    originalValues.set(block.id, block.text)
+  })
   const targetLabels = new Map(
     data.fields.map((field) => [field.id, field.label])
   )
@@ -481,6 +535,7 @@ export function ReviewPage() {
     edited: editedTargets.has(targetId),
     issues: issuesByTarget.get(targetId) || [],
     onSave: saveCorrection,
+    originalValue: originalValues.get(targetId),
     saving: correctionMutation.isPending,
     targetId,
   })
@@ -569,14 +624,27 @@ export function ReviewPage() {
       </div>
 
       <div className="mt-4">
-        {unmappedIssues.map((issue) => (
-          <p
-            className="mt-2 text-sm text-destructive"
-            key={`${issue.target_id}-${issue.code}`}
+        {unmappedIssues.length ? (
+          <section
+            aria-label="Document quality issues"
+            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4"
           >
-            {issue.message}
-          </p>
-        ))}
+            <h2 className="text-sm font-semibold text-destructive">
+              Document-level issues
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              These checks apply to the document rather than one extracted
+              value.
+            </p>
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-destructive">
+              {unmappedIssues.map((issue) => (
+                <li key={`${issue.target_id}-${issue.code}`}>
+                  {issue.message}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         {mutationError ? (
           <p className="mt-3 text-sm text-destructive" role="alert">
             {mutationError.message}
@@ -589,9 +657,14 @@ export function ReviewPage() {
       >
         {showOriginal && result.original_available ? (
           <SourcePreview
+            documentId={result.document_id}
             error={sourceMutation.error}
             loading={sourceMutation.isPending}
             mimeType={result.original_mime_type}
+            onRetry={() => {
+              sourceMutation.reset()
+              sourceMutation.mutate(result.document_id)
+            }}
             sourceUrl={sourceMutation.data?.url}
           />
         ) : null}

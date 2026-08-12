@@ -64,6 +64,8 @@ The dashboard is the document hub: it shows processing state and provides origin
 development model comparison, and deletion actions without an intermediate document page. Review
 uses an embedded PDF.js viewer for PDFs. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
+CSV and XLSX review includes a bounded inline cell preview while preserving an action to open the
+complete private original.
 The review screen presents dynamic sections rather than storage-oriented field/table buckets. Tally
 handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
 

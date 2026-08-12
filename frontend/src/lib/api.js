@@ -10,7 +10,8 @@ async function apiRequest(path, options = {}) {
   let timedOut = false
   const abortFromCaller = () => controller.abort(options.signal?.reason)
   if (options.signal?.aborted) abortFromCaller()
-  else options.signal?.addEventListener("abort", abortFromCaller, { once: true })
+  else
+    options.signal?.addEventListener("abort", abortFromCaller, { once: true })
   const timeout = window.setTimeout(() => {
     timedOut = true
     controller.abort()
@@ -192,6 +193,17 @@ export async function getDocument(documentId, { signal } = {}) {
   const response = await apiRequest(`/documents/${documentId}`, { signal })
   if (!response.ok) {
     throw await responseError(response, "Unable to load the document.")
+  }
+  return response.json()
+}
+
+export async function getSpreadsheetPreview(documentId, { signal } = {}) {
+  const response = await apiRequest(
+    `/documents/${documentId}/spreadsheet-preview`,
+    { signal }
+  )
+  if (!response.ok) {
+    throw await responseError(response, "Unable to preview the spreadsheet.")
   }
   return response.json()
 }

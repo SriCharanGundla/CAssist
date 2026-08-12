@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useQuery } from "@tanstack/react-query"
 import {
   RiArrowDownSLine,
   RiArrowUpSLine,
@@ -13,6 +14,7 @@ import {
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url"
 
 import { Button } from "@/components/ui/button"
+import { getSpreadsheetPreview } from "@/lib/api"
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
@@ -24,15 +26,54 @@ const SPREADSHEET_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ])
 
-function SpreadsheetPreview({ sourceUrl }) {
+function PreviewError({ message, onRetry }) {
   return (
     <div className="grid flex-1 place-items-center p-6 text-center">
       <div>
-        <p className="text-sm text-muted-foreground">
-          Open the original spreadsheet to compare it with the extraction.
+        <p className="text-sm text-destructive" role="alert">
+          {message}
         </p>
+        {onRetry ? (
+          <Button className="mt-3" onClick={onRetry} variant="outline">
+            Retry
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function SpreadsheetPreview({ documentId, sourceUrl }) {
+  const [sheetIndex, setSheetIndex] = React.useState(0)
+  const previewQuery = useQuery({
+    queryKey: ["spreadsheet-preview", documentId],
+    queryFn: ({ signal }) => getSpreadsheetPreview(documentId, { signal }),
+  })
+  const sheets = previewQuery.data?.sheets || []
+  const sheet = sheets[Math.min(sheetIndex, Math.max(0, sheets.length - 1))]
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center justify-between gap-3 border-b p-2">
+        {sheets.length > 1 ? (
+          <select
+            aria-label="Worksheet"
+            className="h-7 min-w-0 rounded-md border bg-background px-2 text-xs"
+            onChange={(event) => setSheetIndex(Number(event.target.value))}
+            value={sheetIndex}
+          >
+            {sheets.map((candidate, index) => (
+              <option key={`${candidate.name}-${index}`} value={index}>
+                {candidate.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="truncate px-2 text-xs font-medium">
+            {sheet?.name || "Spreadsheet"}
+          </span>
+        )}
         <Button
-          className="mt-4"
           nativeButton={false}
           render={
             <a href={sourceUrl} rel="noreferrer" target="_blank">
@@ -42,6 +83,47 @@ function SpreadsheetPreview({ sourceUrl }) {
           variant="outline"
         />
       </div>
+      {previewQuery.isPending ? (
+        <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
+          Loading spreadsheet…
+        </div>
+      ) : previewQuery.error ? (
+        <PreviewError
+          message={previewQuery.error.message}
+          onRetry={() => previewQuery.refetch()}
+        />
+      ) : sheet?.rows.length ? (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="min-w-max border-collapse text-xs">
+            <tbody>
+              {sheet.rows.map((row, rowIndex) => (
+                <tr className="border-b" key={rowIndex}>
+                  <th className="sticky left-0 border-r bg-muted px-2 py-1.5 text-right font-normal text-muted-foreground">
+                    {rowIndex + 1}
+                  </th>
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      className="max-w-80 min-w-28 border-r px-2 py-1.5 align-top whitespace-pre-wrap"
+                      key={cellIndex}
+                    >
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {previewQuery.data.truncated ? (
+            <p className="sticky bottom-0 border-t bg-background/95 px-3 py-2 text-xs text-muted-foreground">
+              Preview limited to the first 100 rows, 30 columns, and 5 sheets.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="p-6 text-center text-sm text-muted-foreground">
+          This spreadsheet has no visible values.
+        </p>
+      )}
     </div>
   )
 }
@@ -53,25 +135,28 @@ function ImagePreview({ sourceUrl }) {
   const imageRef = React.useRef(null)
   const viewportRef = React.useRef(null)
 
-  const clampPosition = React.useCallback((nextPosition, nextZoom = zoom) => {
-    const image = imageRef.current
-    const viewport = viewportRef.current
-    if (!image || !viewport || nextZoom <= 1) return { x: 0, y: 0 }
-    const maximumX = Math.max(
-      0,
-      (viewport.clientWidth + image.offsetWidth * nextZoom) / 2 -
-        MIN_VISIBLE_IMAGE_PIXELS
-    )
-    const maximumY = Math.max(
-      0,
-      (viewport.clientHeight + image.offsetHeight * nextZoom) / 2 -
-        MIN_VISIBLE_IMAGE_PIXELS
-    )
-    return {
-      x: Math.min(maximumX, Math.max(-maximumX, nextPosition.x)),
-      y: Math.min(maximumY, Math.max(-maximumY, nextPosition.y)),
-    }
-  }, [zoom])
+  const clampPosition = React.useCallback(
+    (nextPosition, nextZoom = zoom) => {
+      const image = imageRef.current
+      const viewport = viewportRef.current
+      if (!image || !viewport || nextZoom <= 1) return { x: 0, y: 0 }
+      const maximumX = Math.max(
+        0,
+        (viewport.clientWidth + image.offsetWidth * nextZoom) / 2 -
+          MIN_VISIBLE_IMAGE_PIXELS
+      )
+      const maximumY = Math.max(
+        0,
+        (viewport.clientHeight + image.offsetHeight * nextZoom) / 2 -
+          MIN_VISIBLE_IMAGE_PIXELS
+      )
+      return {
+        x: Math.min(maximumX, Math.max(-maximumX, nextPosition.x)),
+        y: Math.min(maximumY, Math.max(-maximumY, nextPosition.y)),
+      }
+    },
+    [zoom]
+  )
 
   const reset = () => {
     setZoom(1)
@@ -174,6 +259,7 @@ function PdfPage({
   const wrapperRef = React.useRef(null)
   const [nearViewport, setNearViewport] = React.useState(false)
   const [renderError, setRenderError] = React.useState(false)
+  const [renderAttempt, setRenderAttempt] = React.useState(0)
   const [rendering, setRendering] = React.useState(false)
 
   React.useEffect(() => {
@@ -221,7 +307,7 @@ function PdfPage({
       active = false
       renderTask.cancel()
     }
-  }, [descriptor.page, nearViewport, renderView])
+  }, [descriptor.page, nearViewport, renderAttempt, renderView])
 
   const displayViewport = descriptor.page.getViewport({
     rotation,
@@ -251,8 +337,18 @@ function PdfPage({
             ref={canvasRef}
           />
           {renderError ? (
-            <span className="absolute inset-0 grid place-items-center text-xs text-destructive">
-              Could not render page {descriptor.pageNumber}.
+            <span className="absolute inset-0 grid place-items-center bg-white/95 text-xs text-destructive">
+              <span className="text-center">
+                Could not render page {descriptor.pageNumber}.
+                <Button
+                  className="mx-auto mt-2 flex"
+                  onClick={() => setRenderAttempt((current) => current + 1)}
+                  size="sm"
+                  variant="outline"
+                >
+                  Retry
+                </Button>
+              </span>
             </span>
           ) : null}
         </>
@@ -267,6 +363,7 @@ function PdfPage({
 function PdfPreview({ sourceUrl }) {
   const [pages, setPages] = React.useState([])
   const [error, setError] = React.useState(null)
+  const [loadAttempt, setLoadAttempt] = React.useState(0)
   const [zoom, setZoom] = React.useState(1)
   const [rotation, setRotation] = React.useState(0)
   const [renderView, setRenderView] = React.useState({ rotation: 0, zoom: 1 })
@@ -281,6 +378,7 @@ function PdfPreview({ sourceUrl }) {
 
     const load = async () => {
       try {
+        setError(null)
         const { GlobalWorkerOptions, getDocument } = await import("pdfjs-dist")
         if (!active) return
         GlobalWorkerOptions.workerSrc = pdfWorkerUrl
@@ -311,7 +409,7 @@ function PdfPreview({ sourceUrl }) {
       active = false
       loadingTask?.destroy()
     }
-  }, [sourceUrl])
+  }, [loadAttempt, sourceUrl])
 
   React.useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -348,7 +446,8 @@ function PdfPreview({ sourceUrl }) {
       },
       { root: scrollRoot, threshold: [0.25, 0.5, 0.75] }
     )
-    for (const element of pageElements.current.values()) observer.observe(element)
+    for (const element of pageElements.current.values())
+      observer.observe(element)
     return () => observer.disconnect()
   }, [pages, scrollRoot])
 
@@ -473,9 +572,10 @@ function PdfPreview({ sourceUrl }) {
         </span>
       </div>
       {error ? (
-        <div className="grid flex-1 place-items-center p-6 text-sm text-destructive">
-          Could not render this PDF.
-        </div>
+        <PreviewError
+          message="Could not render this PDF."
+          onRetry={() => setLoadAttempt((current) => current + 1)}
+        />
       ) : (
         <div
           aria-label="PDF document viewer"
@@ -538,7 +638,14 @@ function PdfPreview({ sourceUrl }) {
   )
 }
 
-export function SourcePreview({ error, loading, mimeType, sourceUrl }) {
+export function SourcePreview({
+  documentId,
+  error,
+  loading,
+  mimeType,
+  onRetry,
+  sourceUrl,
+}) {
   return (
     <section className="sticky top-5 flex h-[calc(100svh-7rem)] min-h-[32rem] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
       <div className="border-b px-4 py-3">
@@ -549,13 +656,11 @@ export function SourcePreview({ error, loading, mimeType, sourceUrl }) {
           Loading original…
         </div>
       ) : error ? (
-        <div className="grid flex-1 place-items-center p-6 text-sm text-destructive">
-          {error.message}
-        </div>
+        <PreviewError message={error.message} onRetry={onRetry} />
       ) : sourceUrl && mimeType === "application/pdf" ? (
         <PdfPreview sourceUrl={sourceUrl} />
       ) : sourceUrl && SPREADSHEET_MIME_TYPES.has(mimeType) ? (
-        <SpreadsheetPreview sourceUrl={sourceUrl} />
+        <SpreadsheetPreview documentId={documentId} sourceUrl={sourceUrl} />
       ) : sourceUrl ? (
         <ImagePreview sourceUrl={sourceUrl} />
       ) : null}

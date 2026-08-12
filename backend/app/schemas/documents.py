@@ -72,6 +72,16 @@ class ViewOriginalResponse(BaseModel):
     expires_at: datetime
 
 
+class SpreadsheetPreviewSheetResponse(BaseModel):
+    name: str
+    rows: list[list[str]]
+
+
+class SpreadsheetPreviewResponse(BaseModel):
+    sheets: list[SpreadsheetPreviewSheetResponse]
+    truncated: bool
+
+
 class RetryDocumentResponse(BaseModel):
     document_id: UUID
     run_id: UUID

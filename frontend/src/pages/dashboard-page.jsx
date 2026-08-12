@@ -388,9 +388,18 @@ export function DashboardPage() {
           {documentsQuery.isPending ? (
             <DocumentListSkeleton />
           ) : documentsQuery.error ? (
-            <p className="p-5 text-sm text-destructive" role="alert">
-              {documentsQuery.error.message}
-            </p>
+            <div className="p-5">
+              <p className="text-sm text-destructive" role="alert">
+                {documentsQuery.error.message}
+              </p>
+              <Button
+                className="mt-3"
+                onClick={() => documentsQuery.refetch()}
+                variant="outline"
+              >
+                Retry
+              </Button>
+            </div>
           ) : documents.length ? (
             <ul className="divide-y">
               {documents.map((document) => (

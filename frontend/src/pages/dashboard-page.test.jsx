@@ -203,6 +203,20 @@ describe("DashboardPage", () => {
     expect(screen.queryByText("Loading documents…")).not.toBeInTheDocument()
   })
 
+  it("retries a failed document-list query", async () => {
+    const user = userEvent.setup()
+    api.listDocuments
+      .mockRejectedValueOnce(new Error("Unable to load documents"))
+      .mockResolvedValueOnce({ items: [], next_cursor: null })
+    renderDashboard()
+
+    expect(
+      await screen.findByText("Unable to load documents")
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+    expect(await screen.findByText("No documents yet")).toBeInTheDocument()
+  })
+
   it("opens the original and offers both deletion choices", async () => {
     const user = userEvent.setup()
     const open = vi.spyOn(window, "open").mockImplementation(() => null)
