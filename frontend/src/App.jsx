@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
 import { DashboardPage } from "@/pages/dashboard-page"
-import { DocumentPage } from "@/pages/document-page"
 import { ReviewPage } from "@/pages/review-page"
 import { UploadPage } from "@/pages/upload-page"
 
@@ -111,7 +110,10 @@ function AuthenticatedApp({ auth }) {
         <Routes>
           <Route element={<DashboardPage />} path="/" />
           <Route element={<UploadPage />} path="/upload" />
-          <Route element={<DocumentPage />} path="/documents/:documentId" />
+          <Route
+            element={<Navigate replace to="/" />}
+            path="/documents/:documentId"
+          />
           <Route element={<ReviewPage />} path="/results/:resultId/review" />
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>

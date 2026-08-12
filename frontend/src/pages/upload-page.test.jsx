@@ -16,10 +16,7 @@ function renderUploadPage() {
     <MemoryRouter initialEntries={["/upload"]}>
       <Routes>
         <Route element={<UploadPage />} path="/upload" />
-        <Route
-          element={<p>Document status destination</p>}
-          path="/documents/:documentId"
-        />
+        <Route element={<p>Dashboard destination</p>} path="/" />
       </Routes>
     </MemoryRouter>
   )
@@ -45,7 +42,7 @@ describe("UploadPage", () => {
     )
   })
 
-  it("navigates to the document returned after upload completion", async () => {
+  it("returns to the dashboard after upload completion", async () => {
     const user = userEvent.setup()
     api.uploadDocument.mockImplementation(async (_file, { onStage }) => {
       onStage("uploading")
@@ -59,9 +56,7 @@ describe("UploadPage", () => {
     )
     await user.click(screen.getByRole("button", { name: "Upload and process" }))
 
-    expect(
-      await screen.findByText("Document status destination")
-    ).toBeInTheDocument()
+    expect(await screen.findByText("Dashboard destination")).toBeInTheDocument()
     expect(api.uploadDocument).toHaveBeenCalledWith(
       expect.objectContaining({ name: "invoice.pdf" }),
       expect.objectContaining({ onStage: expect.any(Function) })

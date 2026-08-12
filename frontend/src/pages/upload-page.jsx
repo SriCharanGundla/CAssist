@@ -59,9 +59,12 @@ export function UploadPage() {
     setError(null)
     try {
       const completed = await uploadDocument(file, { onStage: setStage })
-      navigate(`/documents/${completed.document_id}`, {
+      navigate("/", {
         replace: true,
-        state: { deduplicated: completed.deduplicated },
+        state: {
+          deduplicated: completed.deduplicated,
+          uploaded: true,
+        },
       })
     } catch (uploadError) {
       setError(uploadError.message)
