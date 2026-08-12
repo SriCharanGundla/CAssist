@@ -1,7 +1,8 @@
 # CAssist
 
-CAssist is a side-tool for Chartered Accountants to upload accounting documents,
-extract structured information, review it, and export it for downstream software.
+CAssist is a side-tool for Chartered Accountants to upload accounting documents and images, extract
+the labels, values, tables, and text actually present, review or copy them, and export reviewed data.
+Extraction is document-led: it does not require an invoice template or invent missing fields.
 
 ## Structure
 
@@ -74,7 +75,7 @@ cd backend
 uv run --locked python scripts/live_model_smoke.py
 ```
 
-The script creates its invoice image inside a temporary directory, never uploads it to R2 or stores
+The script creates its financial-document image inside a temporary directory, never uploads it to R2 or stores
 it in PostgreSQL, prints no extracted financial values or provider output, and deletes the image on
 exit. It refuses to run when `APP_ENV=production`.
 

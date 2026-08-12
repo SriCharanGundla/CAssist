@@ -1,13 +1,14 @@
-# React + TypeScript + Vite + shadcn/ui
+# CAssist frontend
 
-This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
+Vite, React JavaScript, Tailwind CSS v4, shadcn/ui, and TanStack Query frontend for uploading,
+reviewing, copying, correcting, and exporting generic accounting-document extractions.
 
 ## Adding components
 
 To add components to your app, run the following command:
 
 ```bash
-npx shadcn@latest add button
+pnpm dlx shadcn@latest add button
 ```
 
 This will place the ui components in the `src/components` directory.
@@ -16,6 +17,6 @@ This will place the ui components in the `src/components` directory.
 
 To use the components in your app, import them as follows:
 
-```tsx
+```jsx
 import { Button } from "@/components/ui/button"
 ```

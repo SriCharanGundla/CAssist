@@ -270,7 +270,10 @@ header. Deleting a user cascades their application sessions.
    never trusted. For the 25 MiB MVP limit, the completion service computes it while finalizing the
    original so synchronous workspace deduplication can return the existing document ID.
 3. Only one successful processing run exists for an identical cache configuration.
-4. Corrections are append-only. The effective reviewed document is `canonical_data` plus corrections in creation order.
+4. `canonical_data` is retained as the physical JSONB column name for migration stability, but it
+   stores document-led generic extraction data rather than a fixed accounting schema. Corrections
+   are append-only; the effective reviewed document is the extraction plus corrections in creation
+   order.
 5. Audit metadata must never contain document text, extracted financial values, hashes, or provider responses.
 
 ## 4. Authentication and authorization
@@ -411,7 +414,8 @@ non-member also return `204` rather than disclosing whether the document exists.
 
 - Requests and responses use JSON except upload/download bodies.
 - Dates use ISO 8601 UTC timestamps.
-- Monetary canonical values are decimal strings, never JSON floating-point numbers.
+- Every extracted value is preserved as a string, including monetary values; JSON floating-point
+  numbers are never used for document values.
 - List endpoints use cursor pagination.
 - Every mutation accepts an `Idempotency-Key` header.
 - Errors use the same envelope:
@@ -519,14 +523,14 @@ Query parameters:
 
 ```text
 status=ready
-document_type=tax_invoice
+document_type=invoice
 cursor=opaque_cursor
 limit=25
 ```
 
 The implemented endpoint returns newest-first frontend-safe document summaries with the latest run,
 uses an opaque `(created_at, id)` keyset cursor, accepts limits from 1 through 100, and returns
-`Cache-Control: no-store`. Status and canonical `tax_invoice` filters are supported. The dashboard
+`Cache-Control: no-store`. Status and classifier document-type filters are supported. The dashboard
 loads ten records at a time and follows `next_cursor`; it never receives hashes, R2 keys, or provider
 output.
 
@@ -682,19 +686,32 @@ Best-effort cancellation for queued or active work. Response: `202`.
 
 ### `GET /api/v1/runs/{run_id}/result`
 
-Returns the raw canonical data, validation issues, corrections, and effective corrected data. The raw provider output is excluded from ordinary frontend responses.
+Returns the immutable generic extraction, quality issues, corrections, and effective corrected
+data. Raw provider output is excluded from ordinary frontend responses.
 
 ```json
 {
   "result_id": "e3951e79-d334-46fb-91ed-56c42ff619bb",
   "run_id": "56168db1-4ef1-4d56-9572-7f9ea26bf01e",
-  "document_type": "tax_invoice",
+  "document_type": "invoice",
   "version": 1,
   "review_status": "unreviewed",
-  "canonical_data": {},
+  "extracted_data": {
+    "document_type": "invoice",
+    "fields": [
+      {
+        "id": "field-0001",
+        "label": "Bill No.",
+        "value": "A-102",
+        "page_number": 1,
+        "region": null
+      }
+    ],
+    "tables": [],
+    "text_blocks": []
+  },
   "effective_data": {},
-  "evidence": [],
-  "validation_issues": [],
+  "quality_issues": [],
   "corrections": []
 }
 ```
@@ -708,14 +725,15 @@ exclude raw provider output.
 
 ### `PATCH /api/v1/results/{result_id}/fields`
 
-Appends one or more field corrections.
+Appends one or more field corrections. Clients address fields by the stable server-assigned ID,
+not by a model-generated label or list position.
 
 ```json
 {
   "expected_version": 1,
   "changes": [
     {
-      "field_path": "/document/number",
+      "field_id": "field-0001",
       "value": "INV-1042",
       "reason": "OCR omitted the final digit"
     }
@@ -723,12 +741,13 @@ Appends one or more field corrections.
 }
 ```
 
-Use JSON Pointer paths. The backend validates corrected values against the canonical Pydantic schema and reruns deterministic validators.
-Corrections never replace `canonical_data`: each accepted field change appends a `corrections` row
+The backend resolves the ID to an internal JSON Pointer and accepts a string value. There are no
+required accounting fields and no invoice-template validation. Corrections never replace the stored
+extraction: each accepted field change appends a `corrections` row
 with its previous value, corrected value, actor, reason, and timestamp. The effective document is
 rebuilt by applying those rows in creation order. A correction moves the result to `in_review`,
 including when it was previously approved, and clears the prior approval identity and timestamp.
-The updated validation warnings are persisted on the result in the same transaction.
+Quality issues are recomputed without changing extracted values.
 
 `expected_version` provides optimistic concurrency for correction and review mutations. Each
 successful mutation increments the result version. A stale version returns `409` so two tabs cannot
@@ -756,14 +775,14 @@ Only `in_review` and `approved` are accepted from clients. The server manages th
   "expected_version": 3,
   "format": "tally_json",
   "options": {
-    "include_validation_warnings": true
+    "include_quality_issues": true
   }
 }
 ```
 
-The current implementation requires an approved result and the current optimistic-concurrency
-version. It streams the generated file with `Cache-Control: no-store`, appends an `export_events`
-row, and records a value-free audit event. Export artifacts are not retained in R2.
+Exports require an approved result and the current optimistic-concurrency version. The API streams
+the generated file with `Cache-Control: no-store`, appends an `export_events` row, and records a
+value-free audit event. Export artifacts are not retained in R2.
 
 Implemented now:
 
@@ -774,9 +793,9 @@ company and existing voucher, party-ledger, accounting-ledger or stock-item, and
 official format also requires Tally-specific request variables such as `svCurrentCompany` and
 `svVchImportFormat`. CAssist has no client/company or ledger/inventory masters in the MVP, so this
 export deliberately sets `native_import_ready` to `false` and lists the unresolved mappings instead
-of inventing them. It preserves the approved canonical decimal strings, converts an ISO invoice date
-to Tally's `YYYYMMDD` form, and provides Purchase/Sales as unresolved candidate voucher types. Direct
-native import is a later milestone after explicit company and master mapping exists. Official source:
+of inventing them. It preserves all approved original-label fields, dynamic tables, and text blocks
+as strings. It does not infer voucher numbers, dates, parties, totals, or ledger roles from labels.
+Direct native import is a later milestone after explicit human mapping exists. Official source:
 https://help.tallysolutions.com/tally-prime-integration-using-json-1/
 
 Reserved for later:
@@ -800,7 +819,9 @@ Runs the configured Gemini and OpenAI models using the same schema and preproces
 }
 ```
 
-The route does not exist in production. Comparison results report field agreement, validation failures, latency, token use, estimated cost, and later human corrections. It does not choose a winner automatically.
+The route does not exist in production. Comparison results report observation agreement, structural
+failures, quality flags, latency, token use, estimated cost, and later human corrections. It does not
+choose a winner automatically.
 
 ## 12. Worker state machine
 
@@ -825,8 +846,8 @@ a configured lease expires. Preprocessing rechecks the permanent object's size, 
 SHA-256, enforces page-count plus per-page and aggregate pixel limits, renders PDF pages to PNG with
 PDFium, normalizes JPEG/PNG input with Pillow, and deletes its opaque temporary directory at the end
 of the attempt. Provider calls require bounded timeouts and retry only rate limits, transient network
-failures, and provider 5xx responses. Schema-validation failures should trigger at most one repair
-attempt before failing visibly. Provider timeouts and retries must fit inside the PostgreSQL lease;
+failures, and provider 5xx responses. Invalid generic structure fails visibly rather than being
+coerced into a document-family schema. Provider timeouts and retries must fit inside the PostgreSQL lease;
 the configuration validator reserves a 30-second persistence margin and disables Strands' second
 retry layer.
 
@@ -854,71 +875,60 @@ stage order and an auditable failure boundary.
 
 ```mermaid
 flowchart LR
-    PRE["Preprocess and render pages"] --> CLASSIFY["Document classification agent"]
-    CLASSIFY --> CONTRACT["Select registered document contract"]
-    CONTRACT --> EXTRACT["Contract-specific extraction agent"]
-    EXTRACT --> TOOLS["Narrow document tools"]
-    TOOLS --> EXTRACT
-    EXTRACT --> VALIDATE["Deterministic validation tool"]
-    VALIDATE -->|"one bounded evidence repair"| EXTRACT
-    VALIDATE --> PERSIST["Persist evidence, canonical values, and warnings"]
+    PRE["Render page images and extract native PDF text"] --> CLASSIFY["Classification agent"]
+    CLASSIFY --> EXTRACT["Generic extraction agent"]
+    EXTRACT --> STRUCTURE["Deterministic structural validation"]
+    STRUCTURE -->|"suspicious output only"| QUALITY["Quality-review agent"]
+    STRUCTURE -->|"clean output"| PERSIST["Persist immutable extraction"]
+    QUALITY --> PERSIST
 ```
 
-The initial graph implements the invoice family. Later document families add a classifier label,
-contract, deterministic validators, and review renderer without widening the invoice contract. The
-registry starts with `tax_invoice` and `invoice`; planned independent contracts include receipt,
-credit note, debit note, cheque, bank statement, and generic financial document. Until the generic
-sparse-evidence contract is registered, an unsupported classification fails visibly and is not
-coerced into invoice semantics. Afterwards, unsupported or low-confidence classifications route to
-that generic contract.
+Classification is descriptive metadata and never selects a fixed extraction schema. The classifier
+uses broad labels such as invoice, receipt, credit note, debit note, cheque, bank statement, or
+other financial document. Every classification routes to the same generic extraction format.
 
-The extraction agent has no shell, arbitrary filesystem, network, database, R2, or general-purpose
-code-execution tool. Its per-document tools are:
+The extraction agent receives the rendered page images directly through the model's vision input.
+It preserves visible labels and values as strings, maintains table headers and row order, and emits
+unlabelled narrative content as text blocks. It does not require, infer, normalize, or default any
+accounting field.
 
-1. `inspect_page(page_number, region, scale)` returns only a bounded targeted crop; the initial full
-   pages are already in the agent context.
-2. `read_document_text(page_number)` and `search_document_text(query)` expose only temporary,
-   position-aware PDF text/OCR when available.
-3. `record_field(field_path, value, page_number, region)` accepts only paths registered by the
-   selected contract and records source evidence with the value.
-4. `record_table(rows, page_number, region)` validates a document-family table before recording it.
-5. `validate_draft()` runs deterministic accounting rules against the recorded draft and returns
-   only actionable issue codes and paths.
+The quality-review agent runs only when deterministic checks find blank labels, malformed table
+shapes, repeated observations, control characters, or likely gibberish. It may add an issue and an
+optional suggested string, but it cannot change labels, values, tables, or text blocks. Human
+acceptance of a suggestion creates a normal append-only correction.
 
-The first implementation may ship page inspection, field/table recording, and validation before
-position-aware text retrieval is added. The agent must call validation before completing. A failed
-validation permits at most one targeted evidence-repair pass; the graph has explicit node-execution,
-tool-call, and wall-clock limits. Tool inputs and outputs contain accounting data and therefore must
-not be emitted to application logs or traces. Operational telemetry is restricted to tool name,
-duration, success/failure, token counts, and non-content issue codes.
+The agents have no shell, arbitrary filesystem, network, database, R2, page-cropping, or
+general-purpose code-execution tool. The extraction and quality-review agents may use only:
 
-### Contracts, sparse evidence, and review projection
+1. `read_document_text(page_number)` — returns bounded native PDF text for one temporary page when a
+   text layer exists. Image uploads and scanned PDFs report text as unavailable; model vision remains
+   the primary extraction path.
+2. `search_document_text(query)` — returns bounded matches with page numbers from the same temporary
+   native text. It is useful for long PDFs and returns no document-external information.
 
-A document contract is an internal, versioned naming/type/validation boundary, not a supplier layout
-template and not a form shown wholesale to the user. It maps visible variants such as `Invoice No`,
-`Bill #`, or `Voucher Ref` to stable accounting paths where appropriate. Layout and supplier history
-are not required.
+`inspect_page`, `record_field`, and `record_table` are removed because full page images and one
+structured model response are cheaper and simpler. Validation is deterministic Python orchestration,
+not a model-controlled tool. Tool inputs and outputs contain accounting data and must not be logged.
 
-Each run produces two related representations:
+### Generic extraction and review projection
 
-- `evidence_data` is sparse and contains only observations actually supported by a page/region,
-  including additional detected label/value pairs that do not map to the selected contract.
-- `canonical_data` normalizes recognized observations into the selected contract for deterministic
-  validation, append-only correction, deduplication, and export. Optional absent values may remain
-  null internally but are not projected as rows in the default review UI.
+The generic result is document-led rather than contract-led:
 
-The review projection shows populated extracted values, then missing/invalid required values under
-`Needs attention`. Missing optional values stay hidden under `Add optional details`. Line items and
-transactions use compact tables containing only relevant columns. The UI may never present a schema
-default as extracted evidence; for example, currency remains absent unless observed or is visibly
-labelled as a user/application assumption.
+- `fields` contains only visible label/value pairs and assigns stable server IDs after extraction.
+- `tables` preserves visible titles, headers, cells, row order, and supporting pages.
+- `text_blocks` preserves useful unlabelled narrative content.
+- `quality_issues` references existing observations and may contain a non-destructive suggestion.
 
-The first invoice contract covers parties, line items, GST components, totals, and source evidence.
-All monetary values, quantities, prices, discounts, and rates are strict base-10 decimal strings.
-Deterministic validators check required fields, dates, PAN/GSTIN shape, GSTIN checksum, line
-arithmetic, GST components, and invoice totals with a two-paise tolerance. The canonical result,
-evidence, provider response, token counts, and warning objects are persisted atomically before the
-document is marked `ready`. A leased run can be reclaimed from any active stage and restarted safely.
+There are no required field names, document-family templates, accounting defaults, decimal
+coercions, or missing-field warnings. Deterministic checks enforce only safe structure: bounded text
+and collection sizes, page ranges, evidence-region bounds, unique server IDs, valid UTF-8 strings,
+and consistent table widths. The extraction, evidence, provider response, token counts, and quality
+issues are persisted atomically before the document is marked `ready`.
+
+The review UI renders exactly the extracted fields, tables, and text blocks. Hovering a value uses a
+pointer cursor and subtle text-color change; clicking copies the value and briefly confirms
+`Copied`. No copy icon is shown. Corrections remain append-only and never erase the original model
+observation.
 
 This design adopts two proven open-source practices: parse/render artifacts are reusable and
 extraction evidence remains linked to source spans/regions, as demonstrated by
@@ -930,12 +940,10 @@ CAssist does not copy the parallel classify/extract/validate arrangement in the
 sample because validation must depend on the extraction it validates.
 
 The development provider promotion check uses `backend/scripts/live_model_smoke.py`. It generates a
-clearly marked synthetic invoice in a temporary directory, calls the configured Gemini adapter,
-checks a bounded set of expected fields without printing their values, runs deterministic validation,
+clearly marked synthetic financial document in a temporary directory, calls the configured Gemini
+graph, checks that visible labels, values, and table content are preserved without printing them,
 and deletes the image on exit. It does not use R2 or PostgreSQL and refuses production execution.
-On 2026-08-12, Google AI Studio's `models.list` endpoint confirmed the stable identifier
-`gemini-3.5-flash` supports `generateContent`, and the live synthetic extraction gate passed with no
-deterministic validation issues. Availability must be rechecked through the same endpoint before a
+Model availability must be rechecked through Google AI Studio's `models.list` endpoint before a
 future model change: https://ai.google.dev/api/models
 
 The final local promotion gate is `backend/scripts/local_vertical_smoke.py`. It refuses production
@@ -970,14 +978,11 @@ document ID returned by deduplication. The document screen polls document and ru
 seconds until a terminal state, reports only backend-safe errors, and explicitly keeps successful
 extraction review-required. It does not invent page-level progress while extraction is active.
 
-The implemented `/results/:resultId/review` route retrieves the result directly by its authorized
-result ID, shows effective invoice data and deterministic warnings, and supports corrections to
-existing scalar invoice, party, total, tax, and line-item fields. Optional blank values are submitted
-as JSON `null`; decimal values remain JSON strings. Each save submits one append-only JSON Pointer
-correction with the current result version and an optional reason. Source-page provenance remains
-read-only. The screen shows correction history and requires an explicit approval action; approval
-does not imply bookkeeping, filing, or downstream submission. Conflicts trigger a result refresh
-instead of silently overwriting another tab's changes.
+The `/results/:resultId/review` route retrieves the authorized generic result and dynamically shows
+only extracted fields, tables, text blocks, source pages, and quality issues. Clicking a displayed
+value copies it. Field correction uses its stable ID and appends a versioned correction; extracted
+source data and provenance remain immutable. The screen shows correction history and requires an
+explicit approval action. Conflicts refresh the result instead of silently overwriting another tab.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. The document
@@ -991,10 +996,12 @@ deleted R2 data and cascaded the PostgreSQL record.
 1. Add OIDC authentication, PostgreSQL sessions, users, workspaces, and authorization dependencies.
 2. Add document uploads, private R2 access, and deletion.
 3. Add PostgreSQL job claiming and one PDF/image preprocessing path.
-4. Add provider adapters, canonical invoice extraction, validation, and review corrections.
+4. Add provider adapters, generic document extraction, quality review, and corrections.
 5. Add exports, history, audit events, and development-only provider comparison.
 
-The first end-to-end slice is complete when one authenticated user can upload an invoice, receive a cached structured result, correct a field, download JSON, reopen the original through a five-minute signed URL, and permanently delete the entire record.
+The first end-to-end slice is complete when one authenticated user can upload a financial document,
+receive a cached generic result, copy or correct a field, download reviewed JSON, reopen the original
+through a five-minute signed URL, and permanently delete the entire record.
 
 ## 15. Development and deployment topology
 
