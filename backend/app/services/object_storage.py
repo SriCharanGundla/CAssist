@@ -22,6 +22,11 @@ class PresignedUpload:
 
 
 @dataclass(frozen=True)
+class PresignedDownload:
+    url: str
+
+
+@dataclass(frozen=True)
 class StoredObject:
     body: BinaryIO
     content_length: int
@@ -35,6 +40,12 @@ class ObjectStorage(Protocol):
         content_type: str,
         expires_in: int,
     ) -> PresignedUpload: ...
+
+    def create_download_url(
+        self,
+        object_key: str,
+        expires_in: int,
+    ) -> PresignedDownload: ...
 
     def open_object(self, object_key: str) -> StoredObject: ...
 
@@ -85,6 +96,24 @@ class R2ObjectStorage:
             url=url,
             headers={"Content-Type": content_type},
         )
+
+    def create_download_url(
+        self,
+        object_key: str,
+        expires_in: int,
+    ) -> PresignedDownload:
+        try:
+            url = self.client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self.bucket_name,
+                    "Key": object_key,
+                },
+                ExpiresIn=expires_in,
+            )
+        except Exception as exc:
+            raise ObjectStorageError("Unable to create a download URL") from exc
+        return PresignedDownload(url=url)
 
     def open_object(self, object_key: str) -> StoredObject:
         try:

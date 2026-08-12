@@ -395,13 +395,14 @@ The document remains usable for copying and exporting extracted information, but
 
 `DELETE /api/v1/documents/{document_id}`
 
-1. Authorize an owner/admin or the uploader according to the final authorization policy.
+1. Authorize a workspace owner/admin or the document uploader. Other workspace members receive `403`.
 2. Delete the R2 object if it still exists.
 3. Insert a content-free `document.permanently_deleted` audit event.
 4. Hard-delete the document row; dependent runs, results, corrections, and export events cascade.
 5. Do not retain the SHA-256, filename, extracted values, or provider output.
 
-The deletion operation is idempotent. A repeated deletion returns `204 No Content`.
+The deletion operation is idempotent. A repeated deletion returns `204 No Content`; requests from a
+non-member also return `204` rather than disclosing whether the document exists.
 
 ## 6. REST conventions
 
@@ -526,15 +527,35 @@ Returns metadata, latest successful run, review status, and whether the original
 
 ### `POST /api/v1/documents/{document_id}/view-url`
 
-Returns a short-lived presigned GET URL for the private original. Suggested expiry: five minutes.
+Returns a short-lived presigned GET URL for the private original:
+
+```json
+{
+  "url": "https://signed-r2-get-url",
+  "expires_at": "2026-08-12T12:05:00Z"
+}
+```
+
+The current expiry is five minutes. Only a finalized original with a trusted server-side hash is
+eligible; an unfinished `incoming/` upload is never exposed as an original. The URL signs only
+`GetObject` for the document's one opaque R2 key and is returned with `Cache-Control: no-store`. It
+contains no filename or identity metadata.
+Treat the URL as a bearer credential: it is never written to application logs or audit metadata.
+Cloudflare R2 documents this single-operation, single-object pattern for private downloads:
+https://developers.cloudflare.com/r2/api/s3/presigned-urls/
 
 ### `DELETE /api/v1/documents/{document_id}/original`
 
-Deletes only the R2 original. Response: `204`.
+Deletes only the R2 original. R2 deletion must succeed before the database clears the object key and
+records the actor/timestamp plus a content-free audit event. Extraction, corrections, and export
+history remain available. Repeated requests return `204` without adding another audit event.
 
 ### `DELETE /api/v1/documents/{document_id}`
 
-Permanently deletes the complete record. Response: `204`.
+Permanently deletes the complete record. R2 deletion must succeed first; PostgreSQL then records a
+content-free audit event and deletes the document so runs, results, corrections, and export events
+cascade. Response: `204`. R2 S3 operations are strongly consistent, including deletion:
+https://developers.cloudflare.com/r2/reference/consistency/
 
 ## 8. Processing endpoints
 
