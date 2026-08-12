@@ -5,12 +5,45 @@ export const API_BASE_URL = (
 ).replace(/\/$/, "")
 
 async function apiRequest(path, options = {}) {
-  return fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
     ...options,
     headers: {
       Accept: "application/json",
       ...options.headers,
+    },
+  })
+  return response
+}
+
+async function responseError(response, fallbackMessage) {
+  try {
+    const payload = await response.json()
+    if (typeof payload.detail === "string") {
+      return new Error(payload.detail)
+    }
+  } catch {
+    // The fallback is intentionally safe for non-JSON upstream responses.
+  }
+  return new Error(fallbackMessage)
+}
+
+async function getCsrfToken() {
+  const response = await apiRequest("/auth/csrf")
+  if (!response.ok) {
+    throw await responseError(response, "Unable to authorize this request.")
+  }
+  const payload = await response.json()
+  return payload.csrf_token
+}
+
+async function csrfRequest(path, options = {}) {
+  const csrfToken = await getCsrfToken()
+  return apiRequest(path, {
+    ...options,
+    headers: {
+      ...options.headers,
+      "X-CSRF-Token": csrfToken,
     },
   })
 }
@@ -36,19 +69,75 @@ export async function getCurrentAuth({ signal } = {}) {
 }
 
 export async function logout() {
-  const csrfResponse = await apiRequest("/auth/csrf")
-  if (!csrfResponse.ok) {
-    throw new Error("Unable to create a logout request.")
-  }
-  const { csrf_token: csrfToken } = await csrfResponse.json()
-  const response = await apiRequest("/auth/logout", {
+  const response = await csrfRequest("/auth/logout", {
     method: "POST",
-    headers: {
-      "X-CSRF-Token": csrfToken,
-    },
   })
   if (!response.ok) {
-    throw new Error("Unable to sign out.")
+    throw await responseError(response, "Unable to sign out.")
+  }
+  return response.json()
+}
+
+export const ACCEPTED_UPLOAD_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+]
+
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+export async function uploadDocument(file, { onStage } = {}) {
+  onStage?.("creating")
+  const createResponse = await csrfRequest("/uploads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name,
+      mime_type: file.type,
+      byte_size: file.size,
+    }),
+  })
+  if (!createResponse.ok) {
+    throw await responseError(createResponse, "Unable to create the upload.")
+  }
+  const created = await createResponse.json()
+
+  onStage?.("uploading")
+  const uploadResponse = await fetch(created.upload.url, {
+    method: created.upload.method,
+    headers: created.upload.headers,
+    body: file,
+  })
+  if (!uploadResponse.ok) {
+    throw new Error("The file could not be uploaded to private storage.")
+  }
+
+  onStage?.("verifying")
+  const completeResponse = await csrfRequest(
+    `/uploads/${created.document_id}/complete`,
+    { method: "POST" }
+  )
+  if (!completeResponse.ok) {
+    throw await responseError(
+      completeResponse,
+      "The uploaded file could not be verified."
+    )
+  }
+  return completeResponse.json()
+}
+
+export async function getDocument(documentId, { signal } = {}) {
+  const response = await apiRequest(`/documents/${documentId}`, { signal })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load the document.")
+  }
+  return response.json()
+}
+
+export async function getRun(runId, { signal } = {}) {
+  const response = await apiRequest(`/runs/${runId}`, { signal })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load processing status.")
   }
   return response.json()
 }

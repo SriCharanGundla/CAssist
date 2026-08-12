@@ -845,6 +845,14 @@ Suggested frontend data layer:
 - React Hook Form for corrections.
 - shadcn/ui for upload, table, dialog, tabs, form, badge, progress, and alert components.
 
+The first implemented frontend slice protects all application routes with the backend Auth0 session.
+`/upload` accepts one PDF, JPEG, or PNG up to 25 MiB, obtains a fresh CSRF token for each mutating
+API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
+only after R2 succeeds. It then redirects to `/documents/:documentId`, including the existing
+document ID returned by deduplication. The document screen polls document and run status every two
+seconds until a terminal state, reports only backend-safe errors, and explicitly keeps successful
+extraction review-required. It does not invent page-level progress while extraction is active.
+
 ## 14. MVP implementation order
 
 1. Add OIDC authentication, PostgreSQL sessions, users, workspaces, and authorization dependencies.

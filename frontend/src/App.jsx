@@ -1,93 +1,134 @@
 import * as React from "react"
+import { useQuery } from "@tanstack/react-query"
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
+import { DocumentPage } from "@/pages/document-page"
+import { UploadPage } from "@/pages/upload-page"
 
-export function App() {
-  const [authState, setAuthState] = React.useState({
-    status: "loading",
-    data: null,
-    error: null,
-  })
+function HomePage() {
+  return (
+    <section className="rounded-2xl border bg-card p-6 shadow-sm">
+      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+        First working flow
+      </p>
+      <h2 className="mt-2 text-2xl font-semibold">Process an invoice</h2>
+      <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
+        Upload one PDF, JPEG, or PNG invoice. CAssist stores the original
+        privately, verifies it, and queues extraction for review.
+      </p>
+      <Button
+        className="mt-5"
+        nativeButton={false}
+        render={<Link to="/upload" />}
+        size="lg"
+      >
+        Upload an invoice
+      </Button>
+    </section>
+  )
+}
 
-  React.useEffect(() => {
-    const controller = new AbortController()
-    getCurrentAuth({ signal: controller.signal })
-      .then((data) => {
-        setAuthState({
-          status: data ? "authenticated" : "anonymous",
-          data,
-          error: null,
-        })
-      })
-      .catch((error) => {
-        if (error.name !== "AbortError") {
-          setAuthState({ status: "error", data: null, error: error.message })
-        }
-      })
-    return () => controller.abort()
-  }, [])
-
-  const handleLogin = () => {
-    const returnTo = `${window.location.pathname}${window.location.search}`
-    window.location.assign(loginUrl(returnTo))
-  }
+function AuthenticatedApp({ auth }) {
+  const [logoutError, setLogoutError] = React.useState(null)
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false)
 
   const handleLogout = async () => {
-    setAuthState((current) => ({ ...current, status: "loading", error: null }))
+    setIsLoggingOut(true)
+    setLogoutError(null)
     try {
       const { logout_url: providerLogoutUrl } = await logout()
       window.location.assign(providerLogoutUrl)
     } catch (error) {
-      setAuthState((current) => ({
-        ...current,
-        status: "authenticated",
-        error: error.message,
-      }))
+      setLogoutError(error.message)
+      setIsLoggingOut(false)
     }
   }
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <section className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-            CA document processing
-          </p>
-          <h1 className="mt-1 text-2xl font-semibold">CAssist</h1>
-          <p className="mt-2 text-muted-foreground">
-            Upload, extract, review, and export accounting documents.
-          </p>
-          {authState.status === "authenticated" ? (
-            <div className="mt-4 flex flex-col items-start gap-3">
-              <p className="text-muted-foreground">
-                Signed in as {authState.data.user.email}
-              </p>
-              <div className="flex gap-2">
-                <Button>Upload a document</Button>
-                <Button variant="outline" onClick={handleLogout}>
-                  Sign out
-                </Button>
-              </div>
-            </div>
-          ) : (
+    <div className="min-h-svh bg-muted/30">
+      <header className="border-b bg-background">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-4">
+          <Link className="text-lg font-semibold tracking-tight" to="/">
+            CAssist
+          </Link>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="hidden truncate text-xs text-muted-foreground sm:block">
+              {auth.user.email}
+            </span>
             <Button
-              className="mt-4"
-              disabled={authState.status === "loading"}
-              onClick={handleLogin}
+              disabled={isLoggingOut}
+              onClick={handleLogout}
+              variant="outline"
             >
-              {authState.status === "loading" ? "Checking session…" : "Sign in"}
+              {isLoggingOut ? "Signing out…" : "Sign out"}
             </Button>
-          )}
-          {authState.error ? (
-            <p className="mt-3 text-destructive" role="alert">
-              {authState.error}
-            </p>
-          ) : null}
+          </div>
         </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
+      </header>
+      <main className="mx-auto max-w-5xl px-5 py-8">
+        {logoutError ? (
+          <p className="mb-4 text-sm text-destructive" role="alert">
+            {logoutError}
+          </p>
+        ) : null}
+        <Routes>
+          <Route element={<HomePage />} path="/" />
+          <Route element={<UploadPage />} path="/upload" />
+          <Route element={<DocumentPage />} path="/documents/:documentId" />
+          <Route element={<Navigate replace to="/" />} path="*" />
+        </Routes>
+      </main>
+      <footer className="mx-auto max-w-5xl px-5 pb-6 font-mono text-xs text-muted-foreground">
+        Press <kbd>d</kbd> to toggle dark mode
+      </footer>
+    </div>
+  )
+}
+
+export function App() {
+  const location = useLocation()
+  const authQuery = useQuery({
+    queryKey: ["auth"],
+    queryFn: ({ signal }) => getCurrentAuth({ signal }),
+    retry: false,
+  })
+
+  const handleLogin = () => {
+    window.location.assign(loginUrl(`${location.pathname}${location.search}`))
+  }
+
+  if (authQuery.isPending) {
+    return (
+      <main className="grid min-h-svh place-items-center p-6 text-sm text-muted-foreground">
+        Checking your session…
+      </main>
+    )
+  }
+
+  if (authQuery.data) {
+    return <AuthenticatedApp auth={authQuery.data} />
+  }
+
+  return (
+    <main className="grid min-h-svh place-items-center p-6">
+      <section className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
+        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          CA document processing
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold">CAssist</h1>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Sign in to upload, extract, review, and export accounting documents.
+        </p>
+        <Button className="mt-5" onClick={handleLogin} size="lg">
+          Sign in
+        </Button>
+        {authQuery.error ? (
+          <p className="mt-4 text-sm text-destructive" role="alert">
+            {authQuery.error.message}
+          </p>
+        ) : null}
       </section>
     </main>
   )
