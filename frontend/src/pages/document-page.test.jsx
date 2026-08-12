@@ -59,7 +59,9 @@ describe("DocumentPage", () => {
 
     renderDocumentPage()
 
-    expect(await screen.findByText("Extraction complete")).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "Extraction complete" })
+    ).toBeInTheDocument()
     expect(
       screen.getByText(
         "Extraction finished. The result still requires human review."
@@ -158,7 +160,10 @@ describe("DocumentPage", () => {
 
     renderDocumentPage()
 
-    expect(await screen.findByText("Checking quality")).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "Checking quality..." })
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Processing status")).not.toBeInTheDocument()
     expect(screen.getByRole("status", { name: "Processing" })).toHaveClass(
       "animate-spin"
     )

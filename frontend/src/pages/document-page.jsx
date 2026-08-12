@@ -41,8 +41,23 @@ const STATUS_LABELS = {
   succeeded: "Extraction complete",
 }
 
+const PROGRESS_LABELS = {
+  queued: "Queued...",
+  preprocessing: "Preparing...",
+  preparing: "Preparing...",
+  classifying: "Classifying...",
+  extracting: "Extracting...",
+  quality_check: "Checking quality...",
+  validating: "Saving...",
+  saving: "Saving...",
+}
+
 function statusLabel(status) {
   return STATUS_LABELS[status] || status.replaceAll("_", " ")
+}
+
+function progressLabel(stage) {
+  return PROGRESS_LABELS[stage] || statusLabel(stage)
 }
 
 export function DocumentPage() {
@@ -120,6 +135,9 @@ export function DocumentPage() {
     run?.status && !TERMINAL_RUN_STATUSES.has(run.status)
   )
   const progressStage = runQuery.data?.progress?.stage || run?.status
+  const progressHeading = run
+    ? progressLabel(progressStage)
+    : "Waiting for processing..."
   const failedError = runQuery.data?.error
   const actionError =
     viewMutation.error ||
@@ -159,15 +177,15 @@ export function DocumentPage() {
               role="status"
             />
           ) : null}
-          <h2 className="font-semibold">Processing status</h2>
+          <h2 aria-live="polite" className="font-semibold">
+            {progressHeading}
+          </h2>
         </div>
-        <p aria-live="polite" className="mt-2 text-sm text-muted-foreground">
-          {isComplete
-            ? "Extraction finished. The result still requires human review."
-            : run
-              ? statusLabel(progressStage)
-              : "Waiting for the extraction job to appear…"}
-        </p>
+        {isComplete ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Extraction finished. The result still requires human review.
+          </p>
+        ) : null}
         {runQuery.data?.progress?.total_pages ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {runQuery.data.progress.completed_pages === null
