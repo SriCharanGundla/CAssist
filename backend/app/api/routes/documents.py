@@ -1,9 +1,11 @@
+import base64
+import json
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -18,17 +20,73 @@ from app.core.config import Settings
 from app.models import (
     AuditEvent,
     Document,
+    DocumentStatus,
     ExtractionResult,
     MemberRole,
     ProcessingRun,
     WorkspaceMember,
 )
-from app.schemas.documents import DocumentDetailResponse, ViewOriginalResponse
+from app.schemas.documents import (
+    DocumentDetailResponse,
+    DocumentListItemResponse,
+    DocumentListResponse,
+    ViewOriginalResponse,
+)
 from app.services.auth import CurrentAuth
 from app.services.object_storage import ObjectStorage, ObjectStorageError
 from app.services.run_status import run_summary
 
 router = APIRouter(prefix="/documents")
+
+
+def _encode_cursor(document: Document) -> str:
+    payload = json.dumps(
+        {"created_at": document.created_at.isoformat(), "id": str(document.id)},
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode())
+        created_at = datetime.fromisoformat(payload["created_at"])
+        if created_at.tzinfo is None:
+            raise ValueError
+        return created_at, UUID(payload["id"])
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid document cursor",
+        ) from exc
+
+
+def _document_response(
+    document: Document,
+    latest_run: ProcessingRun | None,
+    latest_result: ExtractionResult | None,
+) -> DocumentListItemResponse:
+    return DocumentListItemResponse(
+        id=document.id,
+        workspace_id=document.workspace_id,
+        original_filename=document.original_filename,
+        mime_type=document.mime_type,
+        byte_size=document.byte_size,
+        page_count=document.page_count,
+        status=document.status,
+        original_available=(
+            document.r2_object_key is not None
+            and document.sha256 is not None
+            and document.original_deleted_at is None
+        ),
+        original_deleted_at=document.original_deleted_at,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+        latest_run=(
+            run_summary(latest_run, latest_result) if latest_run is not None else None
+        ),
+    )
 
 
 async def _authorized_document(
@@ -49,6 +107,86 @@ async def _authorized_document(
     if lock:
         statement = statement.with_for_update(of=Document)
     return (await session.execute(statement)).one_or_none()
+
+
+@router.get("", response_model=DocumentListResponse)
+async def list_documents(
+    response: Response,
+    current_auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    document_status: Annotated[DocumentStatus | None, Query(alias="status")] = None,
+    document_type: Annotated[Literal["tax_invoice"] | None, Query()] = None,
+    cursor: Annotated[str | None, Query(min_length=1, max_length=1000)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> DocumentListResponse:
+    statement = (
+        select(Document)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Document.workspace_id)
+        .where(WorkspaceMember.user_id == current_auth.user.id)
+    )
+    if document_status is not None:
+        statement = statement.where(Document.status == document_status)
+    if document_type is not None:
+        typed_document_ids = (
+            select(ProcessingRun.document_id)
+            .join(ExtractionResult, ExtractionResult.processing_run_id == ProcessingRun.id)
+            .where(ExtractionResult.document_type == document_type)
+        )
+        statement = statement.where(Document.id.in_(typed_document_ids))
+    if cursor is not None:
+        cursor_created_at, cursor_id = _decode_cursor(cursor)
+        statement = statement.where(
+            or_(
+                Document.created_at < cursor_created_at,
+                and_(Document.created_at == cursor_created_at, Document.id < cursor_id),
+            )
+        )
+    documents = list(
+        (
+            await session.scalars(
+                statement.order_by(Document.created_at.desc(), Document.id.desc()).limit(
+                    limit + 1
+                )
+            )
+        ).all()
+    )
+    has_more = len(documents) > limit
+    documents = documents[:limit]
+
+    latest_by_document: dict[UUID, tuple[ProcessingRun, ExtractionResult | None]] = {}
+    if documents:
+        latest_rows = (
+            await session.execute(
+                select(ProcessingRun, ExtractionResult)
+                .outerjoin(
+                    ExtractionResult,
+                    ExtractionResult.processing_run_id == ProcessingRun.id,
+                )
+                .where(ProcessingRun.document_id.in_([document.id for document in documents]))
+                .order_by(
+                    ProcessingRun.document_id,
+                    ProcessingRun.queued_at.desc(),
+                    ProcessingRun.id.desc(),
+                )
+                .distinct(ProcessingRun.document_id)
+            )
+        ).all()
+        latest_by_document = {
+            run.document_id: (run, result) for run, result in latest_rows
+        }
+
+    response.headers["Cache-Control"] = "no-store"
+    return DocumentListResponse(
+        items=[
+            _document_response(
+                document,
+                latest_by_document.get(document.id, (None, None))[0],
+                latest_by_document.get(document.id, (None, None))[1],
+            )
+            for document in documents
+        ],
+        next_cursor=_encode_cursor(documents[-1]) if has_more else None,
+    )
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)

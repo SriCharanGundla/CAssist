@@ -33,6 +33,15 @@ class DocumentDetailResponse(BaseModel):
     latest_run: RunSummaryResponse | None
 
 
+class DocumentListItemResponse(DocumentDetailResponse):
+    pass
+
+
+class DocumentListResponse(BaseModel):
+    items: list[DocumentListItemResponse]
+    next_cursor: str | None
+
+
 class RunProgressResponse(BaseModel):
     stage: RunStatus
     completed_pages: int | None

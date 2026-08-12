@@ -137,6 +137,22 @@ export async function getDocument(documentId, { signal } = {}) {
   return response.json()
 }
 
+export async function listDocuments({
+  cursor,
+  limit = 25,
+  signal,
+  status,
+} = {}) {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (cursor) query.set("cursor", cursor)
+  if (status) query.set("status", status)
+  const response = await apiRequest(`/documents?${query}`, { signal })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load recent documents.")
+  }
+  return response.json()
+}
+
 export async function getRun(runId, { signal } = {}) {
   const response = await apiRequest(`/runs/${runId}`, { signal })
   if (!response.ok) {

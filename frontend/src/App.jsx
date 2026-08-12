@@ -4,38 +4,10 @@ import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
+import { DashboardPage } from "@/pages/dashboard-page"
 import { DocumentPage } from "@/pages/document-page"
 import { ReviewPage } from "@/pages/review-page"
 import { UploadPage } from "@/pages/upload-page"
-
-function HomePage() {
-  const location = useLocation()
-  return (
-    <section className="rounded-2xl border bg-card p-6 shadow-sm">
-      {location.state?.deleted ? (
-        <p className="mb-4 rounded-lg bg-muted p-3 text-sm" role="status">
-          Document permanently deleted.
-        </p>
-      ) : null}
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        First working flow
-      </p>
-      <h2 className="mt-2 text-2xl font-semibold">Process an invoice</h2>
-      <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">
-        Upload one PDF, JPEG, or PNG invoice. CAssist stores the original
-        privately, verifies it, and queues extraction for review.
-      </p>
-      <Button
-        className="mt-5"
-        nativeButton={false}
-        render={<Link to="/upload" />}
-        size="lg"
-      >
-        Upload an invoice
-      </Button>
-    </section>
-  )
-}
 
 function AuthenticatedApp({ auth }) {
   const [logoutError, setLogoutError] = React.useState(null)
@@ -81,7 +53,7 @@ function AuthenticatedApp({ auth }) {
           </p>
         ) : null}
         <Routes>
-          <Route element={<HomePage />} path="/" />
+          <Route element={<DashboardPage />} path="/" />
           <Route element={<UploadPage />} path="/upload" />
           <Route element={<DocumentPage />} path="/documents/:documentId" />
           <Route element={<ReviewPage />} path="/results/:resultId/review" />

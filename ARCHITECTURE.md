@@ -521,6 +521,12 @@ cursor=opaque_cursor
 limit=25
 ```
 
+The implemented endpoint returns newest-first frontend-safe document summaries with the latest run,
+uses an opaque `(created_at, id)` keyset cursor, accepts limits from 1 through 100, and returns
+`Cache-Control: no-store`. Status and canonical `tax_invoice` filters are supported. The dashboard
+loads ten records at a time and follows `next_cursor`; it never receives hashes, R2 keys, or provider
+output.
+
 ### `GET /api/v1/documents/{document_id}`
 
 Returns frontend-safe metadata, the latest requested run and any linked result/review status, plus

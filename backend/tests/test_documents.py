@@ -321,6 +321,77 @@ async def test_document_detail_returns_latest_frontend_safe_status(
 
 
 @pytest.mark.asyncio
+async def test_document_list_is_safe_filterable_and_cursor_paginated(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, workspace_id, ready_id, _ = document_client
+    now = datetime.now(UTC)
+    pending_documents = [
+        Document(
+            workspace_id=workspace_id,
+            uploaded_by_user_id=owner_id,
+            original_filename=f"pending-{index}.png",
+            mime_type="image/png",
+            byte_size=50,
+            page_count=None,
+            sha256=None,
+            r2_object_key=f"incoming/{uuid4().hex}",
+            status=DocumentStatus.UPLOAD_PENDING,
+            upload_expires_at=now + timedelta(minutes=5),
+            original_deleted_at=None,
+            original_deleted_by=None,
+            created_at=now + timedelta(minutes=index + 1),
+            updated_at=now + timedelta(minutes=index + 1),
+        )
+        for index in range(2)
+    ]
+    session.add_all(pending_documents)
+    await session.commit()
+
+    first_page = await client.get("/api/v1/documents", params={"limit": 1})
+    assert first_page.status_code == 200
+    assert first_page.headers["cache-control"] == "no-store"
+    assert [item["id"] for item in first_page.json()["items"]] == [
+        str(pending_documents[1].id)
+    ]
+    assert first_page.json()["next_cursor"] is not None
+
+    second_page = await client.get(
+        "/api/v1/documents",
+        params={"limit": 1, "cursor": first_page.json()["next_cursor"]},
+    )
+    assert second_page.status_code == 200
+    assert [item["id"] for item in second_page.json()["items"]] == [
+        str(pending_documents[0].id)
+    ]
+
+    ready = await client.get(
+        "/api/v1/documents",
+        params={"status": "ready", "document_type": "tax_invoice"},
+    )
+    assert ready.status_code == 200
+    assert [item["id"] for item in ready.json()["items"]] == [str(ready_id)]
+    assert ready.json()["items"][0]["latest_run"]["result_id"] is not None
+    assert "sha256" not in ready.text
+    assert "r2_object_key" not in ready.text
+
+    invalid_cursor = await client.get(
+        "/api/v1/documents", params={"cursor": "not-a-cursor"}
+    )
+    assert invalid_cursor.status_code == 422
+    assert invalid_cursor.json()["detail"] == "Invalid document cursor"
+
+
+@pytest.mark.asyncio
 async def test_pending_document_detail_has_no_run_or_original(
     document_client: tuple[
         AsyncClient,
