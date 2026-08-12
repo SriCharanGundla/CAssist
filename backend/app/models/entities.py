@@ -197,6 +197,11 @@ class ProcessingRun(Base):
             "estimated_cost_usd IS NULL OR estimated_cost_usd >= 0",
             name="processing_runs_estimated_cost_nonnegative",
         ),
+        CheckConstraint(
+            "cancellation_requested_at IS NULL OR "
+            "status IN ('preprocessing', 'extracting', 'validating', 'cancelled')",
+            name="processing_runs_cancellation_terminal_state",
+        ),
         Index(
             "processing_runs_success_cache_idx",
             "document_id",

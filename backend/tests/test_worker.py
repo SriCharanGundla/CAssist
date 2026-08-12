@@ -175,6 +175,23 @@ class CancellableExtractionProvider(FakeExtractionProvider):
         raise ProviderCancellationError("cancelled")
 
 
+class CancellationIgnoringExtractionProvider(FakeExtractionProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.cancelled = threading.Event()
+        self.release = threading.Event()
+
+    def cancel(self) -> None:
+        self.cancelled.set()
+
+    def extract_document(self, page_paths, page_text, on_stage=None) -> ProviderExtraction:
+        self.started.set()
+        if not self.release.wait(timeout=5):
+            raise AssertionError("Test did not release the provider")
+        return super().extract_document(page_paths, page_text, on_stage)
+
+
 @pytest_asyncio.fixture
 async def worker_database() -> AsyncIterator[
     tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings]
@@ -467,6 +484,57 @@ async def test_worker_forwards_cancellation_to_provider_and_acknowledges_stop(
         assert run.progress_stage == ProcessingStage.CANCELLED.value
         assert run.worker_id is None
         assert run.completed_at is not None
+        assert document is not None and document.status == DocumentStatus.FAILED
+        assert result is None
+
+
+@pytest.mark.asyncio
+async def test_worker_discards_result_when_provider_ignores_cancellation(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+) -> None:
+    factory, user_id, workspace_id, settings = worker_database
+    content = _png_bytes()
+    object_key = "originals/cancel-ignored"
+    document_id, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        content,
+        "image/png",
+        object_key,
+    )
+    storage = WorkerObjectStorage()
+    storage.objects[object_key] = (content, "image/png")
+    provider = CancellationIgnoringExtractionProvider()
+
+    processing = asyncio.create_task(
+        process_next_document(
+            session_factory=factory,
+            app_settings=settings,
+            storage=storage,
+            extraction_provider=provider,
+            worker_id="worker-cancel-ignored",
+        )
+    )
+    assert await asyncio.to_thread(provider.started.wait, 5)
+    async with factory() as session:
+        run = await session.get(ProcessingRun, run_id)
+        assert run is not None
+        run.cancellation_requested_at = datetime.now(UTC)
+        run.progress_stage = ProcessingStage.STOPPING.value
+        await session.commit()
+    assert await asyncio.to_thread(provider.cancelled.wait, 5)
+    provider.release.set()
+
+    assert await processing is False
+    async with factory() as session:
+        document = await session.get(Document, document_id)
+        run = await session.get(ProcessingRun, run_id)
+        result = await session.scalar(
+            select(ExtractionResult).where(ExtractionResult.processing_run_id == run_id)
+        )
+        assert run is not None and run.status == RunStatus.CANCELLED
+        assert run.progress_stage == ProcessingStage.CANCELLED.value
         assert document is not None and document.status == DocumentStatus.FAILED
         assert result is None
 

@@ -182,6 +182,9 @@ export async function uploadDocument(
   { onProgress, onStage, signal } = {}
 ) {
   const mimeType = uploadMimeType(file)
+  if (signal?.aborted) {
+    throw new DOMException("Upload cancelled", "AbortError")
+  }
   onStage?.("creating")
   const createResponse = await csrfRequest("/uploads", {
     method: "POST",
@@ -191,30 +194,57 @@ export async function uploadDocument(
       mime_type: mimeType,
       byte_size: file.size,
     }),
-    signal,
   })
   if (!createResponse.ok) {
     throw await responseError(createResponse, "Unable to create the upload.")
   }
   const created = await createResponse.json()
 
-  onStage?.("uploading")
-  onProgress?.(0)
-  await uploadToPrivateStorage(file, created.upload, { onProgress, signal })
-  onProgress?.(100)
+  try {
+    if (signal?.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError")
+    }
+    onStage?.("uploading")
+    onProgress?.(0)
+    await uploadToPrivateStorage(file, created.upload, { onProgress, signal })
+    onProgress?.(100)
 
-  onStage?.("verifying")
-  const completeResponse = await csrfRequest(
-    `/uploads/${created.document_id}/complete`,
-    { method: "POST", signal }
-  )
-  if (!completeResponse.ok) {
-    throw await responseError(
-      completeResponse,
-      "The uploaded file could not be verified."
+    if (signal?.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError")
+    }
+    onStage?.("verifying")
+    // Do not abort an ambiguous completion request. If the user cancels while it
+    // is in flight, wait for it and then remove the resulting queued document.
+    const completeResponse = await csrfRequest(
+      `/uploads/${created.document_id}/complete`,
+      { method: "POST" }
     )
+    if (!completeResponse.ok) {
+      throw await responseError(
+        completeResponse,
+        "The uploaded file could not be verified."
+      )
+    }
+    const result = await completeResponse.json()
+    if (signal?.aborted) {
+      throw new DOMException("Upload cancelled", "AbortError")
+    }
+    return result
+  } catch (error) {
+    if (error.name === "AbortError") {
+      const cancelResponse = await csrfRequest(
+        `/uploads/${created.document_id}`,
+        { method: "DELETE" }
+      )
+      if (!cancelResponse.ok) {
+        throw await responseError(
+          cancelResponse,
+          "Upload cancellation could not be confirmed."
+        )
+      }
+    }
+    throw error
   }
-  return completeResponse.json()
 }
 
 export async function getDocument(documentId, { signal } = {}) {

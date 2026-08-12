@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -15,6 +15,7 @@ from app.api.dependencies import (
 )
 from app.core.config import Settings
 from app.models import (
+    AuditEvent,
     Document,
     DocumentStatus,
     ModelProvider,
@@ -34,6 +35,87 @@ from app.services.object_storage import ObjectNotFoundError, ObjectStorage, Obje
 from app.services.upload_verification import UploadValidationError, verify_upload
 
 router = APIRouter(prefix="/uploads")
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_upload(
+    document_id: UUID,
+    current_auth: Annotated[CurrentAuth, Depends(require_csrf)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    storage: Annotated[ObjectStorage, Depends(get_object_storage)],
+) -> Response:
+    """Cancel an unfinished upload and remove its object and database record."""
+    workspace_id = await session.scalar(
+        select(Document.workspace_id)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Document.workspace_id)
+        .where(
+            Document.id == document_id,
+            WorkspaceMember.user_id == current_auth.user.id,
+        )
+    )
+    if workspace_id is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # Upload completion uses the same lock order, making cancellation authoritative
+    # even when it races the verification request.
+    await session.scalar(select(Workspace.id).where(Workspace.id == workspace_id).with_for_update())
+    document = await session.scalar(
+        select(Document)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Document.workspace_id)
+        .where(
+            Document.id == document_id,
+            WorkspaceMember.user_id == current_auth.user.id,
+        )
+        .with_for_update(of=Document)
+    )
+    if document is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    runs = list(
+        (
+            await session.scalars(
+                select(ProcessingRun)
+                .where(ProcessingRun.document_id == document.id)
+                .with_for_update()
+            )
+        ).all()
+    )
+    is_pending = document.status == DocumentStatus.UPLOAD_PENDING
+    is_completed_but_unclaimed = (
+        document.status == DocumentStatus.UPLOADED
+        and bool(runs)
+        and all(run.status == RunStatus.QUEUED for run in runs)
+    )
+    if not is_pending and not is_completed_but_unclaimed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The upload has already started processing",
+        )
+
+    object_key = document.r2_object_key
+    if object_key is not None:
+        try:
+            await run_in_threadpool(storage.delete_object, object_key)
+        except ObjectStorageError as exc:
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Object storage is temporarily unavailable",
+            ) from exc
+
+    session.add(
+        AuditEvent(
+            workspace_id=document.workspace_id,
+            actor_user_id=current_auth.user.id,
+            action="document.upload_cancelled",
+            entity_type="document",
+            entity_id=document.id,
+            metadata_={},
+        )
+    )
+    await session.delete(document)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("", response_model=CreateUploadResponse, status_code=status.HTTP_201_CREATED)

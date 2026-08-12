@@ -491,6 +491,8 @@ async def process_next_document(
         await _acknowledge_cancellation(session_factory, claim, worker_id)
         return True
     except ProviderConfigurationError:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         await _fail_run(
             session_factory,
             claim,
@@ -500,6 +502,8 @@ async def process_next_document(
         )
         return True
     except ProviderRateLimitError:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         if claim.attempt_count < app_settings.provider_rate_limit_max_attempts:
             await _requeue_rate_limited_run(
                 session_factory,
@@ -517,6 +521,8 @@ async def process_next_document(
             )
         return True
     except ProviderExtractionError:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         await _fail_run(
             session_factory,
             claim,
@@ -526,6 +532,8 @@ async def process_next_document(
         )
         return True
     except ObjectNotFoundError:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         await _fail_run(
             session_factory,
             claim,
@@ -535,6 +543,8 @@ async def process_next_document(
         )
         return True
     except ObjectStorageError:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         await _fail_run(
             session_factory,
             claim,
@@ -544,6 +554,8 @@ async def process_next_document(
         )
         return True
     except PreprocessingError as exc:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         await _fail_run(
             session_factory,
             claim,
@@ -553,6 +565,8 @@ async def process_next_document(
         )
         return True
     except Exception:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
         await _fail_run(
             session_factory,
             claim,

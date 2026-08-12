@@ -149,7 +149,12 @@ CREATE TABLE processing_runs (
     error_message_safe      text,
     worker_id               text,
     lease_expires_at        timestamptz,
-    cancellation_requested_at timestamptz,
+    cancellation_requested_at timestamptz CHECK (
+                                cancellation_requested_at IS NULL
+                                OR status IN (
+                                    'preprocessing', 'extracting', 'validating', 'cancelled'
+                                )
+                            ),
     queued_at               timestamptz NOT NULL DEFAULT now(),
     started_at              timestamptz,
     completed_at            timestamptz,
@@ -547,6 +552,14 @@ If the verified hash already exists in the workspace, the backend deletes the du
 }
 ```
 
+### `DELETE /api/v1/uploads/{document_id}`
+
+Cancels an unfinished browser upload. The backend serializes cancellation against upload completion,
+deletes the incoming or finalized private R2 object, and removes the pending document and any queued
+run. The browser does not report cancellation until this server cleanup succeeds. A repeated request
+returns `204 No Content`. Once a worker has claimed the run, this endpoint returns `409`; active run
+cancellation uses `POST /api/v1/runs/{run_id}/cancel` instead.
+
 ### `GET /api/v1/documents`
 
 Query parameters:
@@ -722,7 +735,9 @@ schema versions, worker identity, and lease timestamps remain internal.
 Queued work becomes `cancelled` immediately. Active work records a durable cancellation request,
 keeps its worker lease, and returns `{"status":"stopping"}` until that worker acknowledges it. The
 worker calls Strands `Agent.cancel()` on the executing graph node and prevents later graph nodes from
-starting. Partial output is discarded. File/data deletion returns `409` while a run remains queued
+starting. Partial output is discarded even if a provider ignores cooperative cancellation. A
+database constraint prevents a cancellation-requested run from becoming `succeeded`, `failed`, or
+queued again. File/data deletion returns `409` while a run remains queued
 or active, so deletion cannot race a worker that still owns the document. Response: `202`.
 Official cancellation behavior: https://strandsagents.com/docs/user-guide/concepts/agents/agent-loop/#cancellation
 

@@ -188,7 +188,8 @@ describe("uploadDocument", () => {
         )
       }
     )
-    vi.spyOn(globalThis, "fetch")
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf" }))
       .mockResolvedValueOnce(
         jsonResponse(
@@ -203,6 +204,8 @@ describe("uploadDocument", () => {
           { status: 201 }
         )
       )
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "cancel-csrf" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
 
     const upload = uploadDocument(
       new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" }),
@@ -212,6 +215,64 @@ describe("uploadDocument", () => {
     controller.abort()
 
     await expect(upload).rejects.toMatchObject({ name: "AbortError" })
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      `${API_BASE_URL}/uploads/document-1`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({
+          "X-CSRF-Token": "cancel-csrf",
+        }),
+      })
+    )
+  })
+
+  it("finishes an in-flight completion before cancelling its queued document", async () => {
+    const controller = new AbortController()
+    let resolveCompletion
+    const completion = new Promise((resolve) => {
+      resolveCompletion = resolve
+    })
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "create-csrf" }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            document_id: "document-1",
+            upload: {
+              method: "PUT",
+              url: "https://storage.example/upload",
+              headers: { "Content-Type": "application/pdf" },
+            },
+          },
+          { status: 201 }
+        )
+      )
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "complete-csrf" }))
+      .mockImplementationOnce(() => completion)
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "cancel-csrf" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    const upload = uploadDocument(
+      new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" }),
+      { signal: controller.signal }
+    )
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    controller.abort()
+    resolveCompletion(
+      jsonResponse(
+        { document_id: "document-1", status: "uploaded" },
+        { status: 202 }
+      )
+    )
+
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" })
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `${API_BASE_URL}/uploads/document-1`,
+      expect.objectContaining({ method: "DELETE" })
+    )
   })
 })
 

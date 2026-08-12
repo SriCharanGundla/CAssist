@@ -318,6 +318,102 @@ async def test_create_upload_requires_authentication() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_upload_removes_pending_object_and_database_record(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, session, storage, _ = authenticated_upload_client
+    response = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "cancelled.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": 10,
+        },
+    )
+    document = await session.get(Document, response.json()["document_id"])
+    assert document is not None and document.r2_object_key is not None
+    object_key = document.r2_object_key
+    storage.objects[object_key] = (b"unfinished", "application/pdf")
+
+    cancel_response = await client.delete(f"/api/v1/uploads/{document.id}")
+
+    assert cancel_response.status_code == 204
+    assert await session.get(Document, document.id) is None
+    assert object_key in storage.deleted_keys
+    assert object_key not in storage.objects
+
+
+@pytest.mark.asyncio
+async def test_cancel_upload_removes_completed_upload_before_worker_claims_it(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, session, storage, _ = authenticated_upload_client
+    content = b"%PDF-1.7\n1 0 obj\n%%EOF"
+    create_response = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "cancelled-after-verification.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": len(content),
+        },
+    )
+    document_id = create_response.json()["document_id"]
+    document = await session.get(Document, document_id)
+    assert document is not None and document.r2_object_key is not None
+    storage.objects[document.r2_object_key] = (content, "application/pdf")
+    assert (await client.post(f"/api/v1/uploads/{document_id}/complete")).status_code == 202
+    await session.refresh(document)
+    permanent_key = document.r2_object_key
+    assert permanent_key is not None
+
+    cancel_response = await client.delete(f"/api/v1/uploads/{document_id}")
+
+    assert cancel_response.status_code == 204
+    assert await session.get(Document, document.id) is None
+    assert permanent_key in storage.deleted_keys
+    assert (
+        await session.scalar(
+            select(ProcessingRun.id).where(ProcessingRun.document_id == document.id)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_upload_refuses_a_document_already_claimed_by_worker(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, session, storage, _ = authenticated_upload_client
+    content = b"%PDF-1.7\n1 0 obj\n%%EOF"
+    create_response = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "already-processing.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": len(content),
+        },
+    )
+    document_id = create_response.json()["document_id"]
+    document = await session.get(Document, document_id)
+    assert document is not None and document.r2_object_key is not None
+    storage.objects[document.r2_object_key] = (content, "application/pdf")
+    assert (await client.post(f"/api/v1/uploads/{document_id}/complete")).status_code == 202
+    run = await session.scalar(
+        select(ProcessingRun).where(ProcessingRun.document_id == document.id)
+    )
+    assert run is not None
+    run.status = RunStatus.EXTRACTING
+    document.status = DocumentStatus.PROCESSING
+    await session.commit()
+
+    cancel_response = await client.delete(f"/api/v1/uploads/{document_id}")
+
+    assert cancel_response.status_code == 409
+    assert await session.get(Document, document.id) is not None
+    assert document.r2_object_key not in storage.deleted_keys
+
+
+@pytest.mark.asyncio
 async def test_complete_upload_verifies_hash_moves_original_and_queues_run(
     authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
 ) -> None:
