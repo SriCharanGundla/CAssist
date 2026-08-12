@@ -21,8 +21,8 @@ const STATUS_LABELS = {
   failed: "Processing failed",
   queued: "Queued",
   preprocessing: "Preparing pages",
-  extracting: "Extracting invoice fields",
-  validating: "Validating totals and tax fields",
+  extracting: "Extracting document values",
+  validating: "Checking extracted structure",
   succeeded: "Extraction complete",
 }
 
@@ -150,16 +150,10 @@ export function DocumentPage() {
         ) : null}
       </div>
 
-      <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+      <dl className="mt-5 text-sm">
         <div className="rounded-lg border bg-card p-4">
           <dt className="text-xs text-muted-foreground">File type</dt>
           <dd className="mt-1 font-medium">{document.mime_type}</dd>
-        </div>
-        <div className="rounded-lg border bg-card p-4">
-          <dt className="text-xs text-muted-foreground">Original</dt>
-          <dd className="mt-1 font-medium">
-            {document.original_available ? "Stored privately" : "Unavailable"}
-          </dd>
         </div>
       </dl>
 
@@ -182,59 +176,52 @@ export function DocumentPage() {
       </div>
 
       <section className="mt-8 rounded-2xl border bg-card p-5 shadow-sm">
-        <h2 className="font-semibold">Original and retention</h2>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Viewing creates a five-minute private link. Deleting only the original
-          keeps extraction and audit history; permanent deletion removes the
-          full record.
-        </p>
+        <h2 className="font-semibold">Actions</h2>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button
-            disabled={!document.original_available || viewMutation.isPending}
-            onClick={() => viewMutation.mutate()}
-            variant="outline"
-          >
-            {viewMutation.isPending ? "Opening…" : "Open original"}
-          </Button>
           {document.original_available ? (
             <Button
-              onClick={() => setConfirming("original")}
-              variant="destructive"
+              disabled={viewMutation.isPending}
+              onClick={() => viewMutation.mutate()}
+              variant="outline"
             >
-              Delete original only
+              {viewMutation.isPending ? "Opening…" : "Open original"}
             </Button>
           ) : null}
-          <Button
-            onClick={() => setConfirming("permanent")}
-            variant="destructive"
-          >
-            Permanently delete record
+          <Button onClick={() => setConfirming("delete")} variant="destructive">
+            Delete
           </Button>
         </div>
         {confirming ? (
           <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
-            <p className="text-sm font-medium">
-              {confirming === "original"
-                ? "Delete the private original file? Extraction and history will remain."
-                : "Permanently delete this document, its extraction, corrections, and export history?"}
-            </p>
-            <div className="mt-3 flex gap-2">
+            <p className="text-sm font-medium">What should be deleted?</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {document.original_available ? (
+                <Button
+                  disabled={
+                    originalDeleteMutation.isPending ||
+                    permanentDeleteMutation.isPending
+                  }
+                  onClick={() => originalDeleteMutation.mutate()}
+                  variant="outline"
+                >
+                  {originalDeleteMutation.isPending
+                    ? "Deleting…"
+                    : "Delete file, keep extraction"}
+                </Button>
+              ) : null}
               <Button
                 disabled={
                   originalDeleteMutation.isPending ||
                   permanentDeleteMutation.isPending
                 }
-                onClick={() =>
-                  confirming === "original"
-                    ? originalDeleteMutation.mutate()
-                    : permanentDeleteMutation.mutate()
-                }
+                onClick={() => permanentDeleteMutation.mutate()}
                 variant="destructive"
               >
-                {originalDeleteMutation.isPending ||
-                permanentDeleteMutation.isPending
+                {permanentDeleteMutation.isPending
                   ? "Deleting…"
-                  : "Confirm deletion"}
+                  : document.original_available
+                    ? "Delete file and extraction"
+                    : "Delete extraction data"}
               </Button>
               <Button onClick={() => setConfirming(null)} variant="ghost">
                 Cancel

@@ -999,10 +999,10 @@ explicit approval action. Conflicts refresh the result instead of silently overw
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. The document
-screen opens originals only through a newly requested five-minute signed URL and presents separate
-confirmations for original-only deletion and permanent record deletion. Original-only deletion
-preserves extraction history; permanent deletion returns to the dashboard after the backend has
-deleted R2 data and cascaded the PostgreSQL record.
+screen has a compact `Actions` section: `Open original` appears only while the file exists, and one
+`Delete` action offers either `Delete file, keep extraction` or `Delete file and extraction`. After
+file-only deletion, the open action disappears and the remaining delete choice removes extraction
+data. Full deletion returns to the dashboard after R2 deletion and the PostgreSQL cascade complete.
 
 ## 14. MVP implementation order
 

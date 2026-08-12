@@ -35,7 +35,7 @@ export function DashboardPage() {
     <section>
       {location.state?.deleted ? (
         <p className="mb-5 rounded-lg bg-muted p-3 text-sm" role="status">
-          Document permanently deleted.
+          Document and extraction data deleted.
         </p>
       ) : null}
       <div className="flex flex-wrap items-start justify-between gap-4">

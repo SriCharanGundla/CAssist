@@ -100,16 +100,25 @@ describe("DocumentPage", () => {
     )
   })
 
-  it("requires confirmation before deleting only the original", async () => {
+  it("offers file-only deletion and then removes the open-original action", async () => {
     const user = userEvent.setup()
-    api.getDocument.mockResolvedValue({
-      id: "document-1",
-      original_filename: "invoice.pdf",
-      mime_type: "application/pdf",
-      status: "ready",
-      original_available: true,
-      latest_run: { id: "run-1", status: "succeeded" },
-    })
+    api.getDocument
+      .mockResolvedValueOnce({
+        id: "document-1",
+        original_filename: "invoice.pdf",
+        mime_type: "application/pdf",
+        status: "ready",
+        original_available: true,
+        latest_run: { id: "run-1", status: "succeeded" },
+      })
+      .mockResolvedValue({
+        id: "document-1",
+        original_filename: "invoice.pdf",
+        mime_type: "application/pdf",
+        status: "ready",
+        original_available: false,
+        latest_run: { id: "run-1", status: "succeeded" },
+      })
     api.getRun.mockResolvedValue({
       id: "run-1",
       status: "succeeded",
@@ -120,18 +129,24 @@ describe("DocumentPage", () => {
     api.deleteDocumentOriginal.mockResolvedValue(undefined)
     renderDocumentPage()
 
-    await user.click(
-      await screen.findByRole("button", { name: "Delete original only" })
-    )
-    expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
     expect(
-      screen.getByText(/Delete the private original file/)
-    ).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Confirm deletion" }))
+      await screen.findByRole("button", { name: "Open original" })
+    ).toBeEnabled()
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+    expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
+    expect(screen.getByText("What should be deleted?")).toBeInTheDocument()
+    await user.click(
+      screen.getByRole("button", { name: "Delete file, keep extraction" })
+    )
     expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Open original" })
+      ).not.toBeInTheDocument()
+    )
   })
 
-  it("requires confirmation before permanently deleting the database record and original", async () => {
+  it("offers deleting both the file and extraction data", async () => {
     const user = userEvent.setup()
     api.getDocument.mockResolvedValue({
       id: "document-1",
@@ -153,17 +168,48 @@ describe("DocumentPage", () => {
 
     await user.click(
       await screen.findByRole("button", {
-        name: "Permanently delete record",
+        name: "Delete",
       })
     )
     expect(api.permanentlyDeleteDocument).not.toHaveBeenCalled()
-    expect(
-      screen.getByText(/Permanently delete this document/)
-    ).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Confirm deletion" }))
+    await user.click(
+      screen.getByRole("button", { name: "Delete file and extraction" })
+    )
 
     await waitFor(() =>
       expect(api.permanentlyDeleteDocument).toHaveBeenCalledWith("document-1")
     )
+  })
+
+  it("shows only extraction deletion after the original file is gone", async () => {
+    const user = userEvent.setup()
+    api.getDocument.mockResolvedValue({
+      id: "document-1",
+      original_filename: "invoice.pdf",
+      mime_type: "application/pdf",
+      status: "ready",
+      original_available: false,
+      latest_run: { id: "run-1", status: "succeeded" },
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "succeeded",
+      result_id: "result-1",
+      error: null,
+      progress: { completed_pages: 1, total_pages: 1 },
+    })
+    renderDocumentPage()
+
+    await user.click(await screen.findByRole("button", { name: "Delete" }))
+
+    expect(
+      screen.queryByRole("button", { name: "Open original" })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Delete file, keep extraction" })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Delete extraction data" })
+    ).toBeEnabled()
   })
 })
