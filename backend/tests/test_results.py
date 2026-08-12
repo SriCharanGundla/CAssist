@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,6 +17,8 @@ from app.models import (
     Correction,
     Document,
     DocumentStatus,
+    ExportEvent,
+    ExportFormat,
     ExtractionResult,
     ModelProvider,
     ProcessingRun,
@@ -376,6 +379,148 @@ async def test_result_operations_hide_other_workspaces(
             json={"expected_version": 1, "status": "approved"},
         )
     ).status_code == 404
+    assert (
+        await client.post(
+            f"/api/v1/results/{result_id}/exports",
+            json={"expected_version": 1, "format": "tally_json"},
+        )
+    ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_tally_handoff_requires_approved_current_result(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, session, _, _, _, result_id = result_client
+    unapproved = await client.post(
+        f"/api/v1/results/{result_id}/exports",
+        json={"expected_version": 1, "format": "tally_json"},
+    )
+    assert unapproved.status_code == 409
+    assert unapproved.json()["detail"] == "Result must be approved before export"
+
+    approved = await client.post(
+        f"/api/v1/results/{result_id}/review",
+        json={"expected_version": 1, "status": "approved"},
+    )
+    assert approved.status_code == 200
+    stale = await client.post(
+        f"/api/v1/results/{result_id}/exports",
+        json={"expected_version": 1, "format": "tally_json"},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Result changed; reload before exporting"
+    assert (
+        await session.scalar(
+            select(func.count())
+            .select_from(ExportEvent)
+            .where(ExportEvent.extraction_result_id == result_id)
+        )
+        == 0
+    )
+
+    current = await client.post(
+        f"/api/v1/results/{result_id}/exports",
+        json={"expected_version": 2, "format": "tally_json"},
+    )
+    assert current.status_code == 200
+    assert {issue["code"] for issue in current.json()["validation_warnings"]} == {
+        "MISSING_PARTY_NAME",
+        "NO_LINE_ITEMS",
+    }
+
+
+def _contains_float(value: Any) -> bool:
+    if isinstance(value, float):
+        return True
+    if isinstance(value, dict):
+        return any(_contains_float(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_float(item) for item in value)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_tally_handoff_exports_effective_strings_and_records_safe_events(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, session, _, user_id, _, result_id = result_client
+    corrected = await client.patch(
+        f"/api/v1/results/{result_id}/fields",
+        json={
+            "expected_version": 1,
+            "changes": [{"field_path": "/buyer/name", "value": "Buyer Ltd"}],
+        },
+    )
+    assert corrected.status_code == 200
+    approved = await client.post(
+        f"/api/v1/results/{result_id}/review",
+        json={"expected_version": 2, "status": "approved"},
+    )
+    assert approved.status_code == 200
+
+    response = await client.post(
+        f"/api/v1/results/{result_id}/exports",
+        json={
+            "expected_version": 3,
+            "format": "tally_json",
+            "options": {"include_validation_warnings": False},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["content-disposition"] == (
+        f'attachment; filename="cassist-tally-{result_id}.json"'
+    )
+    payload = response.json()
+    assert payload["format"] == "cassist.tally_handoff"
+    assert payload["schema_version"] == "tally-handoff-v1"
+    assert payload["tally_compatibility"] == {
+        "target": "TallyPrime 7.0+",
+        "native_import_ready": False,
+        "reason_code": "COMPANY_AND_MASTER_MAPPING_REQUIRED",
+    }
+    assert payload["source"]["review_status"] == "approved"
+    assert payload["source"]["result_version"] == 3
+    assert payload["voucher_draft"]["date"] == "20260812"
+    assert payload["voucher_draft"]["buyer"]["name"] == "Buyer Ltd"
+    assert payload["voucher_draft"]["totals"]["grand_total"] == "100.00"
+    assert "validation_warnings" not in payload
+    assert not _contains_float(payload)
+    assert {mapping["code"] for mapping in payload["required_mappings"]} == {
+        "TARGET_COMPANY",
+        "TRANSACTION_ROLE",
+        "PARTY_LEDGER",
+        "ACCOUNTING_MODE",
+        "LINE_MASTERS",
+    }
+
+    export_event = await session.scalar(
+        select(ExportEvent).where(ExportEvent.extraction_result_id == result_id)
+    )
+    audit = await session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.entity_id == result_id,
+            AuditEvent.action == "result.exported",
+        )
+    )
+    assert export_event is not None
+    assert export_event.exported_by_user_id == user_id
+    assert export_event.format == ExportFormat.TALLY_JSON
+    assert export_event.exporter_version == "tally-handoff-v1"
+    assert export_event.options == {
+        "include_validation_warnings": False,
+        "result_version": 3,
+        "native_import_ready": False,
+    }
+    assert audit is not None
+    assert audit.metadata_ == {
+        "format": "tally_json",
+        "exporter_version": "tally-handoff-v1",
+        "result_version": 3,
+    }
 
 
 @pytest.mark.parametrize(

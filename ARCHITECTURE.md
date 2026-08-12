@@ -670,25 +670,37 @@ Only `in_review` and `approved` are accepted from clients. The server manages th
 
 ```json
 {
-  "format": "xlsx",
+  "expected_version": 3,
+  "format": "tally_json",
   "options": {
-    "include_evidence": false,
     "include_validation_warnings": true
   }
 }
 ```
 
-Response streams the generated file and adds an `export_events` row. Export artifacts are not retained in R2.
+The current implementation requires an approved result and the current optimistic-concurrency
+version. It streams the generated file with `Cache-Control: no-store`, appends an `export_events`
+row, and records a value-free audit event. Export artifacts are not retained in R2.
 
-Supported now:
+Implemented now:
+
+- `tally_json` — CAssist Tally-oriented handoff JSON
+
+The TallyPrime 7.0 native JSON format can directly create vouchers, but it requires the target
+company and existing voucher, party-ledger, accounting-ledger or stock-item, and unit masters. The
+official format also requires Tally-specific request variables such as `svCurrentCompany` and
+`svVchImportFormat`. CAssist has no client/company or ledger/inventory masters in the MVP, so this
+export deliberately sets `native_import_ready` to `false` and lists the unresolved mappings instead
+of inventing them. It preserves the approved canonical decimal strings, converts an ISO invoice date
+to Tally's `YYYYMMDD` form, and provides Purchase/Sales as unresolved candidate voucher types. Direct
+native import is a later milestone after explicit company and master mapping exists. Official source:
+https://help.tallysolutions.com/tally-prime-integration-using-json-1/
+
+Reserved for later:
 
 - `json`
 - `csv`
 - `xlsx`
-
-Reserved for later:
-
-- `tally_json`
 
 ## 11. Development-only comparison endpoint
 
