@@ -216,7 +216,7 @@ class ProcessingRun(Base):
         Index(
             "processing_runs_reclaim_idx",
             "lease_expires_at",
-            postgresql_where=text("status = 'preprocessing'"),
+            postgresql_where=text("status IN ('preprocessing', 'extracting', 'validating')"),
         ),
     )
 

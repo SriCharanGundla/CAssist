@@ -164,7 +164,7 @@ CREATE INDEX processing_runs_queue_idx
 
 CREATE INDEX processing_runs_reclaim_idx
     ON processing_runs (lease_expires_at)
-    WHERE status = 'preprocessing';
+    WHERE status IN ('preprocessing', 'extracting', 'validating');
 
 CREATE TABLE extraction_results (
     id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -716,8 +716,24 @@ SHA-256, enforces page-count plus per-page and aggregate pixel limits, renders P
 PDFium, normalizes JPEG/PNG input with Pillow, and deletes its opaque temporary directory at the end
 of the attempt. Provider calls require bounded timeouts and retry only rate limits, transient network
 failures, and provider 5xx responses. Schema-validation failures should trigger at most one repair
-attempt before failing visibly. This milestone stops after successful preprocessing with the run in
-`extracting`; no provider request is made until the extraction adapter slice is implemented.
+attempt before failing visibly. Provider timeouts and retries must fit inside the PostgreSQL lease;
+the configuration validator reserves a 30-second persistence margin and disables Strands' second
+retry layer.
+
+The extraction adapter is implemented behind one provider-neutral protocol. Development and test
+may use Strands `GeminiModel` with the verified Google AI Studio model identifier
+`gemini-3.5-flash`. Production is locked to Strands `OpenAIResponsesModel`, with stateless Responses
+API calls to the verified model identifier `gpt-5.6-luna`; production cannot select Gemini or supply
+a provider/model override. Page PNGs and extraction instructions are sent to the provider, while
+credentials remain environment-only.
+
+The first canonical schema covers Indian tax-invoice parties, line items, GST components, totals,
+and source-page references. All monetary values, quantities, prices, discounts, and rates are strict
+base-10 decimal strings. Provider output is parsed into the canonical Pydantic model, then
+deterministic validators check required fields, dates, PAN/GSTIN shape, GSTIN checksum, line
+arithmetic, GST components, and invoice totals with a two-paise tolerance. The canonical result,
+provider response, token counts, and warning objects are persisted atomically before the document is
+marked `ready`. A leased run can be reclaimed from any active stage and restarted safely.
 
 ## 13. Frontend route map
 

@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     preprocessing_render_dpi: int = 144
     preprocessing_max_pixels: int = 40_000_000
     preprocessing_max_total_pixels: int = 200_000_000
+    provider_timeout_seconds: int = 120
+    provider_max_retries: int = 1
 
     @model_validator(mode="after")
     def enforce_production_model(self) -> "Settings":
@@ -72,6 +74,15 @@ class Settings(BaseSettings):
         if self.preprocessing_max_total_pixels < self.preprocessing_max_pixels:
             raise ValueError(
                 "PREPROCESSING_MAX_TOTAL_PIXELS must be at least PREPROCESSING_MAX_PIXELS"
+            )
+        if self.provider_timeout_seconds <= 0:
+            raise ValueError("PROVIDER_TIMEOUT_SECONDS must be positive")
+        if not 0 <= self.provider_max_retries <= 5:
+            raise ValueError("PROVIDER_MAX_RETRIES must be between 0 and 5")
+        minimum_lease_seconds = self.provider_timeout_seconds * (self.provider_max_retries + 1) + 30
+        if self.worker_lease_seconds < minimum_lease_seconds:
+            raise ValueError(
+                "WORKER_LEASE_SECONDS must cover all provider attempts plus a 30-second margin"
             )
 
         if self.app_env == "production":

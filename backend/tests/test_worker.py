@@ -17,6 +17,7 @@ from app.core.config import Settings
 from app.models import (
     Document,
     DocumentStatus,
+    ExtractionResult,
     MemberRole,
     ModelProvider,
     ProcessingRun,
@@ -25,6 +26,14 @@ from app.models import (
     Workspace,
     WorkspaceMember,
 )
+from app.schemas.extraction import (
+    CanonicalInvoice,
+    InvoiceLineItem,
+    InvoiceTotals,
+    Party,
+    TaxAmounts,
+)
+from app.services.model_provider import ProviderExtraction, ProviderExtractionError
 from app.services.object_storage import ObjectNotFoundError, PresignedUpload, StoredObject
 from app.workers.processor import ClaimedRun, claim_next_run, process_next_document
 
@@ -63,6 +72,47 @@ class WorkerObjectStorage:
 
     def delete_object(self, object_key: str) -> None:
         raise NotImplementedError
+
+
+class FakeExtractionProvider:
+    def __init__(self, *, should_fail: bool = False) -> None:
+        self.should_fail = should_fail
+        self.observed_paths: tuple[Path, ...] = ()
+
+    def extract_invoice(self, page_paths) -> ProviderExtraction:
+        self.observed_paths = tuple(page_paths)
+        assert all(path.exists() for path in self.observed_paths)
+        if self.should_fail:
+            raise ProviderExtractionError("simulated provider failure")
+        return ProviderExtraction(
+            invoice=CanonicalInvoice(
+                invoice_number="INV-100",
+                invoice_date="2026-08-12",
+                supplier=Party(name="Supplier", gstin="27AAPFU0939F1ZV"),
+                buyer=Party(),
+                line_items=[
+                    InvoiceLineItem(
+                        description="Professional services",
+                        quantity="1",
+                        unit_price="100.00",
+                        taxable_value="100.00",
+                        gst_rate="18",
+                        tax_amounts=TaxAmounts(cgst="9.00", sgst="9.00"),
+                        total="118.00",
+                        source_pages=[1],
+                    )
+                ],
+                totals=InvoiceTotals(
+                    taxable_amount="100.00",
+                    cgst_amount="9.00",
+                    sgst_amount="9.00",
+                    grand_total="118.00",
+                ),
+            ),
+            raw_provider_output={"provider_response": "structured"},
+            input_tokens=120,
+            output_tokens=80,
+        )
 
 
 @pytest_asyncio.fixture
@@ -248,7 +298,7 @@ async def test_skip_locked_claims_the_next_available_run(
 
 
 @pytest.mark.asyncio
-async def test_processes_one_image_to_extracting_and_removes_temporary_pages(
+async def test_processes_one_image_to_result_and_removes_temporary_pages(
     worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
 ) -> None:
     factory, user_id, workspace_id, settings = worker_database
@@ -264,6 +314,7 @@ async def test_processes_one_image_to_extracting_and_removes_temporary_pages(
     )
     storage = WorkerObjectStorage()
     storage.objects[object_key] = (content, "image/png")
+    provider = FakeExtractionProvider()
     observed_paths: tuple[Path, ...] = ()
 
     async def inspect_preprocessed(_: ClaimedRun, preprocessed) -> None:
@@ -276,6 +327,7 @@ async def test_processes_one_image_to_extracting_and_removes_temporary_pages(
         session_factory=factory,
         app_settings=settings,
         storage=storage,
+        extraction_provider=provider,
         worker_id="worker-image",
         on_preprocessed=inspect_preprocessed,
     )
@@ -287,11 +339,21 @@ async def test_processes_one_image_to_extracting_and_removes_temporary_pages(
         document = await session.get(Document, document_id)
         run = await session.get(ProcessingRun, run_id)
         assert document is not None and document.page_count == 1
-        assert document.status == DocumentStatus.PROCESSING
-        assert run is not None and run.status == RunStatus.EXTRACTING
+        assert document.status == DocumentStatus.READY
+        assert run is not None and run.status == RunStatus.SUCCEEDED
         assert run.worker_id is None
         assert run.lease_expires_at is None
         assert run.attempt_count == 1
+        assert run.input_tokens == 120
+        assert run.output_tokens == 80
+        result = await session.scalar(
+            select(ExtractionResult).where(ExtractionResult.processing_run_id == run.id)
+        )
+        assert result is not None
+        assert result.document_type == "tax_invoice"
+        assert result.canonical_data["totals"]["grand_total"] == "118.00"
+        assert result.raw_provider_output == {"provider_response": "structured"}
+        assert [issue["code"] for issue in result.validation_issues] == ["MISSING_PARTY_NAME"]
 
 
 @pytest.mark.asyncio
@@ -316,6 +378,7 @@ async def test_preprocessing_failure_is_safe_and_terminal(
         session_factory=factory,
         app_settings=settings,
         storage=storage,
+        extraction_provider=FakeExtractionProvider(),
         worker_id="worker-failure",
     )
 
@@ -343,7 +406,89 @@ async def test_process_next_document_returns_false_when_queue_is_empty(
             session_factory=factory,
             app_settings=settings,
             storage=WorkerObjectStorage(),
+            extraction_provider=FakeExtractionProvider(),
             worker_id="worker-empty",
         )
         is False
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_is_safe_and_does_not_persist_partial_result(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+) -> None:
+    factory, user_id, workspace_id, settings = worker_database
+    content = _png_bytes()
+    object_key = "originals/provider-failure"
+    document_id, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        content,
+        "image/png",
+        object_key,
+    )
+    storage = WorkerObjectStorage()
+    storage.objects[object_key] = (content, "image/png")
+
+    assert await process_next_document(
+        session_factory=factory,
+        app_settings=settings,
+        storage=storage,
+        extraction_provider=FakeExtractionProvider(should_fail=True),
+        worker_id="worker-provider-failure",
+    )
+
+    async with factory() as session:
+        document = await session.get(Document, document_id)
+        run = await session.get(ProcessingRun, run_id)
+        assert document is not None and document.status == DocumentStatus.FAILED
+        assert run is not None and run.status == RunStatus.FAILED
+        assert run.error_code == "PROVIDER_EXTRACTION_FAILED"
+        assert run.error_message_safe == "The model provider could not extract this document"
+        assert (
+            await session.scalar(
+                select(ExtractionResult.id).where(ExtractionResult.processing_run_id == run_id)
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_missing_provider_key_fails_safely_after_preprocessing(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+) -> None:
+    factory, user_id, workspace_id, settings = worker_database
+    content = _png_bytes()
+    object_key = "originals/provider-not-configured"
+    document_id, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        content,
+        "image/png",
+        object_key,
+    )
+    storage = WorkerObjectStorage()
+    storage.objects[object_key] = (content, "image/png")
+
+    assert await process_next_document(
+        session_factory=factory,
+        app_settings=settings,
+        storage=storage,
+        worker_id="worker-provider-not-configured",
+    )
+
+    async with factory() as session:
+        document = await session.get(Document, document_id)
+        run = await session.get(ProcessingRun, run_id)
+        assert document is not None and document.status == DocumentStatus.FAILED
+        assert run is not None and run.status == RunStatus.FAILED
+        assert run.error_code == "PROVIDER_NOT_CONFIGURED"
+        assert run.error_message_safe == "The configured model provider is unavailable"
+        assert (
+            await session.scalar(
+                select(ExtractionResult.id).where(ExtractionResult.processing_run_id == run_id)
+            )
+            is None
+        )
