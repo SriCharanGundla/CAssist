@@ -34,7 +34,7 @@ const STATUS_LABELS = {
   preparing: "Preparing pages",
   classifying: "Classifying document",
   extracting: "Extracting document values",
-  quality_check: "Performing quality check",
+  quality_check: "Checking quality",
   validating: "Checking extracted structure",
   saving: "Saving extraction",
   complete: "Extraction complete",
