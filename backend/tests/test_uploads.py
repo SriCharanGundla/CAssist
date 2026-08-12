@@ -115,6 +115,7 @@ async def authenticated_upload_client(
         auth_client_id="client-id",
         auth_client_secret="client-secret",
         auth_state_secret="x" * 32,
+        auth_allowed_emails={"upload-owner@example.test"},
         r2_endpoint_url="https://r2.invalid",
         r2_access_key_id="access-key",
         r2_secret_access_key="secret-key",
@@ -126,7 +127,7 @@ async def authenticated_upload_client(
         VerifiedIdentity(
             issuer="https://identity.example/",
             subject=identity_id,
-            email=f"{identity_id}@example.com",
+            email="upload-owner@example.test",
             display_name="Upload Tester",
             return_to="/",
         ),

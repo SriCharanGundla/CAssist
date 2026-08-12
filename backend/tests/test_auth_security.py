@@ -10,10 +10,26 @@ from app.services.auth import (
     CurrentAuth,
     create_opaque_token,
     hash_token,
+    is_allowed_user_email,
     validate_return_to,
     verify_csrf,
     verify_request_origin,
 )
+
+
+def test_user_email_allowlist_is_exact_and_case_insensitive() -> None:
+    settings = Settings(app_env="development", _env_file=None)
+    assert is_allowed_user_email("owner@example.test", settings)
+    assert is_allowed_user_email("REVIEWER@EXAMPLE.TEST", settings)
+    assert not is_allowed_user_email("someone@example.test", settings)
+    assert not is_allowed_user_email("owner+test@example.test", settings)
+
+    with pytest.raises(ValueError, match="AUTH_ALLOWED_EMAILS"):
+        Settings(
+            app_env="development",
+            _env_file=None,
+            auth_allowed_emails={"someone@example.test"},
+        )
 
 
 def make_request(*, origin: str, csrf_header: str) -> Request:
@@ -55,7 +71,7 @@ def test_csrf_requires_origin_header_and_stored_hash() -> None:
         user=User(
             id=uuid4(),
             external_auth_id="test",
-            email="user@example.com",
+            email="owner@example.test",
         ),
         csrf_token_hash=hash_token(token),
     )

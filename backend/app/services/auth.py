@@ -26,6 +26,10 @@ class AccountLinkRequired(Exception):
     pass
 
 
+class AccessRestricted(Exception):
+    pass
+
+
 class CsrfValidationError(Exception):
     pass
 
@@ -49,6 +53,10 @@ def hash_token(token: str) -> str:
 
 def create_opaque_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def is_allowed_user_email(email: str, settings: Settings) -> bool:
+    return email.strip().casefold() in settings.auth_allowed_emails
 
 
 def external_auth_id(identity: VerifiedIdentity) -> str:
@@ -82,6 +90,9 @@ async def establish_session(
     settings: Settings,
     now: datetime | None = None,
 ) -> tuple[User, SessionCredentials]:
+    if not is_allowed_user_email(identity.email, settings):
+        raise AccessRestricted("This account is not allowed to use CAssist")
+
     current_time = now or datetime.now(UTC)
     auth_id = external_auth_id(identity)
 
@@ -175,6 +186,11 @@ async def resolve_session(
         raise AuthenticationRequired("Authentication is required")
 
     auth_session, user = row
+    if not is_allowed_user_email(user.email, settings):
+        if auth_session.revoked_at is None:
+            auth_session.revoked_at = current_time
+            await session.commit()
+        raise AccessRestricted("This account is not allowed to use CAssist")
     if (
         auth_session.revoked_at is not None
         or auth_session.idle_expires_at <= current_time

@@ -11,6 +11,7 @@ from app.core.config import Settings, settings
 from app.core.database import async_session_factory
 from app.models import MemberRole, WorkspaceMember
 from app.services.auth import (
+    AccessRestricted,
     AuthenticationRequired,
     CsrfValidationError,
     CurrentAuth,
@@ -67,6 +68,11 @@ async def get_current_auth(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication is required",
+        ) from exc
+    except AccessRestricted as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to CAssist is restricted",
         ) from exc
 
 

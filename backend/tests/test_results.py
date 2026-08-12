@@ -49,6 +49,7 @@ async def result_client() -> AsyncIterator[
         auth_client_id="client-id",
         auth_client_secret="client-secret",
         auth_state_secret="x" * 32,
+        auth_allowed_emails={"result-owner@example.test", "result-other@example.test"},
     )
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     try:
@@ -69,7 +70,7 @@ async def result_client() -> AsyncIterator[
         VerifiedIdentity(
             issuer="https://identity.example/",
             subject=identity,
-            email=f"review-{identity}@example.com",
+            email="result-owner@example.test",
             display_name="Review Tester",
             return_to="/",
         ),
@@ -401,7 +402,7 @@ async def test_result_operations_hide_other_workspaces(
         VerifiedIdentity(
             issuer="https://identity.example/",
             subject=identity,
-            email=f"outsider-{identity}@example.com",
+            email="result-other@example.test",
             display_name="Other Workspace",
             return_to="/",
         ),

@@ -99,10 +99,11 @@ export function App() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold">CAssist</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Sign in to upload, extract, review, and export accounting documents.
+          Continue with an authorized Google account to upload, extract, review,
+          and export accounting documents.
         </p>
         <Button className="mt-5" onClick={handleLogin} size="lg">
-          Sign in
+          Continue with Google
         </Button>
         {authQuery.error ? (
           <p className="mt-4 text-sm text-destructive" role="alert">

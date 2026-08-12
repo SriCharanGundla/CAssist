@@ -4,6 +4,10 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+LOCKED_ALLOWED_USER_EMAILS = frozenset(
+    {"owner@example.test", "reviewer@example.test"}
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -29,6 +33,9 @@ class Settings(BaseSettings):
     auth_session_idle_seconds: int = 8 * 60 * 60
     auth_session_absolute_seconds: int = 7 * 24 * 60 * 60
     auth_session_cookie_name: str = "cassist_session"
+    auth_allowed_emails: frozenset[str] = Field(
+        default_factory=lambda: LOCKED_ALLOWED_USER_EMAILS
+    )
 
     model_provider: Literal["openai", "gemini"] = "gemini"
     model_id: str = "gemini-3.5-flash"
@@ -56,6 +63,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def enforce_production_model(self) -> "Settings":
+        self.auth_allowed_emails = frozenset(
+            email.strip().casefold() for email in self.auth_allowed_emails
+        )
+        if self.app_env != "test" and self.auth_allowed_emails != LOCKED_ALLOWED_USER_EMAILS:
+            raise ValueError("AUTH_ALLOWED_EMAILS is locked outside tests")
         if self.auth_session_idle_seconds <= 0:
             raise ValueError("AUTH_SESSION_IDLE_SECONDS must be positive")
         if self.auth_session_absolute_seconds < self.auth_session_idle_seconds:

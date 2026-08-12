@@ -56,8 +56,9 @@ Open `http://localhost:5173`. API documentation is at
 
 ## Configure authentication
 
-CAssist uses Auth0 Universal Login through the FastAPI backend. Create an Auth0
-Regular Web Application and configure these development URLs:
+CAssist uses Auth0 through the FastAPI backend and forces Google OAuth. In the Auth0 Regular Web
+Application, enable the `google-oauth2` social connection and disable the database, passwordless,
+and every other social connection for this application. Configure these development URLs:
 
 ```text
 Allowed Callback URL: http://localhost:8000/api/v1/auth/callback
@@ -69,6 +70,10 @@ Set `AUTH_ISSUER_URL`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, and a random
 uses `http://localhost:8000/api/v1` by default; override it with
 `VITE_API_BASE_URL` in `frontend/.env` when needed. Credentials and tokens must
 never be committed.
+
+FastAPI independently accepts only the verified Google accounts `owner@example.test` and
+`reviewer@example.test`. This server-side allowlist also blocks or revokes sessions even if another
+Auth0 connection is accidentally enabled later.
 
 To verify the development model adapter with generated synthetic data only:
 

@@ -92,7 +92,9 @@ async def _set_client_identity(
         VerifiedIdentity(
             issuer="https://identity.example/",
             subject=identity,
-            email=f"{label}-{identity}@example.com",
+            email="document-owner@example.test"
+            if label == "Document Owner"
+            else "document-other@example.test",
             display_name=label,
             return_to="/",
         ),
@@ -125,6 +127,10 @@ async def document_client() -> AsyncIterator[
         auth_client_id="client-id",
         auth_client_secret="client-secret",
         auth_state_secret="x" * 32,
+        auth_allowed_emails={
+            "document-owner@example.test",
+            "document-other@example.test",
+        },
         r2_endpoint_url="https://r2.invalid",
         r2_access_key_id="access-key",
         r2_secret_access_key="secret-key",

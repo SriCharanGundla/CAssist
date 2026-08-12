@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import UUID, uuid4
@@ -12,12 +13,21 @@ import httpx
 from live_model_smoke import _synthetic_invoice
 from sqlalchemy import delete, func, select
 
+from app.api.dependencies import get_current_auth
 from app.core.config import Settings
 from app.core.database import async_session_factory, engine
 from app.main import app
-from app.models import Document, ProcessingRun, RunStatus, User, Workspace, WorkspaceMember
-from app.services.auth import establish_session
-from app.services.identity_provider import VerifiedIdentity
+from app.models import (
+    AuthSession,
+    Document,
+    MemberRole,
+    ProcessingRun,
+    RunStatus,
+    User,
+    Workspace,
+    WorkspaceMember,
+)
+from app.services.auth import CurrentAuth, create_opaque_token, hash_token
 from app.services.object_storage import ObjectStorageError, R2ObjectStorage
 from app.workers.processor import process_next_document
 
@@ -85,22 +95,44 @@ async def run() -> int:
                 return 2
 
             marker = uuid4().hex
-            user, credentials = await establish_session(
-                session,
-                VerifiedIdentity(
-                    issuer="https://synthetic-smoke.invalid/",
-                    subject=marker,
-                    email=f"synthetic-smoke-{marker}@example.invalid",
-                    display_name="Synthetic Smoke Test",
-                    return_to="/",
-                ),
-                settings,
+            current_time = datetime.now(UTC)
+            user = User(
+                external_auth_id=f"synthetic-smoke|{marker}",
+                email=f"synthetic-smoke-{marker}@example.invalid",
+                display_name="Synthetic Smoke Test",
+                last_seen_at=current_time,
             )
+            session.add(user)
+            await session.flush()
+            workspace = Workspace(name="Synthetic Smoke Test", created_by_user_id=user.id)
+            session.add(workspace)
+            await session.flush()
+            session.add(
+                WorkspaceMember(
+                    workspace_id=workspace.id,
+                    user_id=user.id,
+                    role=MemberRole.OWNER,
+                )
+            )
+            auth_session = AuthSession(
+                user_id=user.id,
+                token_hash=hash_token(create_opaque_token()),
+                csrf_token_hash=hash_token(create_opaque_token()),
+                last_seen_at=current_time,
+                idle_expires_at=current_time + timedelta(hours=1),
+                absolute_expires_at=current_time + timedelta(hours=1),
+            )
+            session.add(auth_session)
+            await session.commit()
             user_id = user.id
-            workspace_id = await session.scalar(
-                select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id)
+            workspace_id = workspace.id
+            smoke_auth = CurrentAuth(
+                session_id=auth_session.id,
+                user=user,
+                csrf_token_hash=auth_session.csrf_token_hash,
             )
-            assert workspace_id is not None
+
+        app.dependency_overrides[get_current_auth] = lambda: smoke_auth
 
         with TemporaryDirectory(prefix="cassist-vertical-smoke-") as directory:
             stage = "fixture_generation"
@@ -115,7 +147,6 @@ async def run() -> int:
                 headers={"Origin": "http://localhost:5173"},
             ) as client:
                 stage = "upload_creation"
-                client.cookies.set(settings.auth_session_cookie_name, credentials.session_token)
                 create = await client.post(
                     "/api/v1/uploads",
                     headers=await _csrf(client),
@@ -243,6 +274,7 @@ async def run() -> int:
         print(f"FAILED: vertical smoke stage={stage}; error_type={type(exc).__name__}")
         return 1
     finally:
+        app.dependency_overrides.pop(get_current_auth, None)
         await _cleanup(workspace_id, user_id, settings)
         await engine.dispose()
 

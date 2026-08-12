@@ -288,17 +288,24 @@ header. Deleting a user cascades their application sessions.
 - Auth0 Universal Login is the initial identity provider.
 - FastAPI is the confidential OIDC client and uses Authlib behind an `IdentityProvider` adapter.
 - Use Authorization Code flow with PKCE (`S256`), `state`, and `nonce` validation.
-- Request only `openid profile email`. A login is accepted only when the ID token is valid and
-  `email_verified` is true.
+- Request only `openid profile email`. Every authorization request forces Auth0's
+  `google-oauth2` connection, and a callback is accepted only when the ID token is valid, the
+  subject is a Google identity, and `email_verified` is true.
+- Application access is locked to the verified addresses `owner@example.test` and
+  `reviewer@example.test`. FastAPI enforces this allowlist both when creating a session and on every
+  session resolution; a previously issued session is revoked if its user is no longer allowed.
 - `external_auth_id` is derived from the verified issuer and subject claims. Email addresses are
   profile data and are never used as the authentication key or for automatic account linking.
 - Provider credentials, the OIDC state-cookie signing secret, and callback URLs come only from
   environment variables or deployment secrets.
 - Production has no development login, header-based identity override, or authentication bypass.
 
-The provider adapter owns discovery, authorization redirects, callback exchange, ID-token validation,
-and provider logout URL construction. Route dependencies consume only a provider-neutral verified
-identity containing issuer, subject, verified email, and optional display name.
+The Auth0 application enables only the Google social connection; database, passwordless, and other
+social connections remain disabled for this application. The provider adapter also passes the
+connection explicitly, so the app skips the provider-choice screen and goes directly to Google.
+It owns discovery, authorization redirects, callback exchange, ID-token validation, and provider
+logout URL construction. Route dependencies consume only a provider-neutral verified identity
+containing issuer, subject, verified email, and optional display name.
 
 ### Backend-owned session
 

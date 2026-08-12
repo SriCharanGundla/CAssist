@@ -31,13 +31,24 @@ class FakeIdentityProvider:
         return VerifiedIdentity(
             issuer="https://identity.example/",
             subject="user-123",
-            email="user@example.com",
+            email="auth-flow@example.test",
             display_name="Example User",
             return_to="/documents",
         )
 
     def logout_url(self, return_to: str) -> str:
         return f"https://identity.example/logout?return_to={return_to}"
+
+
+class RestrictedIdentityProvider(FakeIdentityProvider):
+    async def complete_login(self, request: Request) -> VerifiedIdentity:
+        return VerifiedIdentity(
+            issuer="https://identity.example/",
+            subject="user-456",
+            email="someone-else@example.test",
+            display_name="Restricted User",
+            return_to="/",
+        )
 
 
 @pytest_asyncio.fixture
@@ -72,6 +83,7 @@ async def test_callback_me_and_csrf_protected_logout(
         auth_client_id="client-id",
         auth_client_secret="client-secret",
         auth_state_secret="x" * 32,
+        auth_allowed_emails={"auth-flow@example.test"},
     )
 
     async def override_database_session() -> AsyncIterator[AsyncSession]:
@@ -97,7 +109,7 @@ async def test_callback_me_and_csrf_protected_logout(
             assert me.json() == {
                 "user": {
                     "id": me.json()["user"]["id"],
-                    "email": "user@example.com",
+                    "email": "auth-flow@example.test",
                     "display_name": "Example User",
                 },
                 "workspaces": [
@@ -144,3 +156,33 @@ async def test_unauthenticated_me_is_rejected() -> None:
         response = await client.get("/api/v1/auth/me")
 
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_callback_rejects_an_email_outside_the_locked_allowlist(
+) -> None:
+    test_settings = Settings(
+        app_env="development",
+        _env_file=None,
+        auth_issuer_url="https://identity.example/",
+        auth_client_id="client-id",
+        auth_client_secret="client-secret",
+        auth_state_secret="x" * 32,
+    )
+
+    async def override_database_session() -> AsyncIterator[AsyncSession]:
+        yield None  # type: ignore[misc]
+
+    app.dependency_overrides[get_database_session] = override_database_session
+    app.dependency_overrides[get_app_settings] = lambda: test_settings
+    app.dependency_overrides[get_identity_provider] = RestrictedIdentityProvider
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            callback = await client.get("/api/v1/auth/callback")
+
+        assert callback.status_code == 403
+        assert callback.json()["detail"] == "Access to CAssist is restricted"
+        assert client.cookies.get("cassist_session") is None
+    finally:
+        app.dependency_overrides.clear()

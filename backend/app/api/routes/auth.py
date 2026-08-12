@@ -23,6 +23,7 @@ from app.schemas.auth import (
     WorkspaceMembershipResponse,
 )
 from app.services.auth import (
+    AccessRestricted,
     AccountLinkRequired,
     CsrfValidationError,
     CurrentAuth,
@@ -102,6 +103,11 @@ async def callback(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed",
+        ) from exc
+    except AccessRestricted as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to CAssist is restricted",
         ) from exc
     except AccountLinkRequired as exc:
         raise HTTPException(

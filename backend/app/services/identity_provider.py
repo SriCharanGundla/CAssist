@@ -10,6 +10,7 @@ from starlette.responses import Response
 from app.core.config import Settings
 
 RETURN_TO_SESSION_KEY = "cassist_auth_return_to"
+AUTH0_GOOGLE_CONNECTION = "google-oauth2"
 
 
 class IdentityProviderError(Exception):
@@ -66,7 +67,11 @@ class Auth0IdentityProvider:
         return_to: str,
     ) -> Response:
         request.session[RETURN_TO_SESSION_KEY] = return_to
-        return await self.client.authorize_redirect(request, redirect_uri)
+        return await self.client.authorize_redirect(
+            request,
+            redirect_uri,
+            connection=AUTH0_GOOGLE_CONNECTION,
+        )
 
     async def complete_login(self, request: Request) -> VerifiedIdentity:
         try:
@@ -82,7 +87,13 @@ class Auth0IdentityProvider:
         subject = claims.get("sub")
         email = claims.get("email")
         email_verified = claims.get("email_verified")
-        if issuer != self.issuer or not subject or not email or email_verified is not True:
+        if (
+            issuer != self.issuer
+            or not subject
+            or not subject.startswith(f"{AUTH0_GOOGLE_CONNECTION}|")
+            or not email
+            or email_verified is not True
+        ):
             raise IdentityProviderError("The verified identity is incomplete")
 
         display_name = claims.get("name")
