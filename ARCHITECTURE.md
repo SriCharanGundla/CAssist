@@ -523,7 +523,39 @@ limit=25
 
 ### `GET /api/v1/documents/{document_id}`
 
-Returns metadata, latest successful run, review status, and whether the original is available. It never returns an R2 key or provider credentials.
+Returns frontend-safe metadata, the latest requested run and any linked result/review status, plus
+whether a finalized original is available:
+
+```json
+{
+  "id": "1e594754-2f6c-4ef8-a24c-36980981b511",
+  "workspace_id": "833a84a7-f906-4223-9506-b7c3c02d545d",
+  "original_filename": "invoice.pdf",
+  "mime_type": "application/pdf",
+  "byte_size": 483921,
+  "page_count": 4,
+  "status": "ready",
+  "original_available": true,
+  "original_deleted_at": null,
+  "created_at": "2026-08-12T11:55:00Z",
+  "updated_at": "2026-08-12T11:57:00Z",
+  "latest_run": {
+    "id": "56168db1-4ef1-4d56-9572-7f9ea26bf01e",
+    "status": "succeeded",
+    "provider": "gemini",
+    "model_id": "gemini-3.5-flash",
+    "queued_at": "2026-08-12T11:55:10Z",
+    "started_at": "2026-08-12T11:55:11Z",
+    "completed_at": "2026-08-12T11:57:00Z",
+    "result_id": "e3951e79-d334-46fb-91ed-56c42ff619bb",
+    "review_status": "unreviewed"
+  }
+}
+```
+
+An upload-pending document has `original_available: false` and may have `latest_run: null`. The
+response uses `Cache-Control: no-store`. It never returns the trusted hash, R2 key, provider output,
+worker identity/lease, provider credentials, or internal cache configuration.
 
 ### `POST /api/v1/documents/{document_id}/view-url`
 
@@ -612,14 +644,26 @@ Response:
   "provider": "gemini",
   "model_id": "gemini-3.5-flash",
   "status": "extracting",
+  "queued_at": "2026-08-12T11:55:10Z",
+  "started_at": "2026-08-12T11:55:11Z",
+  "completed_at": null,
+  "result_id": null,
+  "review_status": null,
+  "attempt_count": 1,
   "progress": {
     "stage": "extracting",
-    "completed_pages": 2,
+    "completed_pages": null,
     "total_pages": 4
   },
   "error": null
 }
 ```
+
+The response uses `Cache-Control: no-store`. `completed_pages` remains `null` while queued,
+preprocessing, or extracting because the PostgreSQL job record does not track per-page model
+progress; it becomes the document page count after extraction reaches validation or succeeds. Failed
+runs expose only the worker's safe error code and message. Provider output, tokens, cost, prompt and
+schema versions, worker identity, and lease timestamps remain internal.
 
 ### `POST /api/v1/runs/{run_id}/cancel`
 

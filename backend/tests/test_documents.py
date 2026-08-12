@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import BinaryIO
 from uuid import UUID, uuid4
@@ -260,7 +260,7 @@ async def test_view_url_is_short_lived_narrow_and_not_cached(
         UUID,
     ],
 ) -> None:
-    client, session, storage, settings, _, _, document_id, _ = document_client
+    client, session, storage, settings, _, _, document_id, result_id = document_client
     document = await session.get(Document, document_id)
     assert document is not None and document.r2_object_key is not None
 
@@ -276,6 +276,235 @@ async def test_view_url_is_short_lived_narrow_and_not_cached(
         (document.r2_object_key, settings.r2_presigned_url_ttl_seconds)
     ]
     assert document.original_filename not in response.text
+
+
+@pytest.mark.asyncio
+async def test_document_detail_returns_latest_frontend_safe_status(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, _, workspace_id, document_id, result_id = document_client
+    result = await session.get(ExtractionResult, result_id)
+    assert result is not None
+
+    response = await client.get(f"/api/v1/documents/{document_id}")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert payload["id"] == str(document_id)
+    assert payload["workspace_id"] == str(workspace_id)
+    assert payload["original_filename"] == "private-invoice.pdf"
+    assert payload["mime_type"] == "application/pdf"
+    assert payload["original_available"] is True
+    assert payload["latest_run"]["id"] == str(result.processing_run_id)
+    assert payload["latest_run"]["status"] == "succeeded"
+    assert payload["latest_run"]["result_id"] == str(result_id)
+    assert payload["latest_run"]["review_status"] == "unreviewed"
+    for private_field in (
+        "sha256",
+        "r2_object_key",
+        "raw_provider_output",
+        "worker_id",
+        "lease_expires_at",
+    ):
+        assert private_field not in response.text
+    assert "provider data" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_pending_document_detail_has_no_run_or_original(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, workspace_id, _, _ = document_client
+    pending = Document(
+        workspace_id=workspace_id,
+        uploaded_by_user_id=owner_id,
+        original_filename="pending.png",
+        mime_type="image/png",
+        byte_size=50,
+        page_count=None,
+        sha256=None,
+        r2_object_key=f"incoming/{uuid4().hex}",
+        status=DocumentStatus.UPLOAD_PENDING,
+        upload_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        original_deleted_at=None,
+        original_deleted_by=None,
+    )
+    session.add(pending)
+    await session.commit()
+    await session.refresh(pending)
+
+    response = await client.get(f"/api/v1/documents/{pending.id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "upload_pending"
+    assert response.json()["original_available"] is False
+    assert response.json()["latest_run"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_detail_reports_safe_progress_and_result_link(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, _, _, document_id, result_id = document_client
+    result = await session.get(ExtractionResult, result_id)
+    assert result is not None
+
+    response = await client.get(f"/api/v1/runs/{result.processing_run_id}")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert payload["document_id"] == str(document_id)
+    assert payload["status"] == "succeeded"
+    assert payload["provider"] == "gemini"
+    assert payload["result_id"] == str(result_id)
+    assert payload["review_status"] == "unreviewed"
+    assert payload["progress"] == {
+        "stage": "succeeded",
+        "completed_pages": 1,
+        "total_pages": 1,
+    }
+    assert payload["error"] is None
+    for private_field in (
+        "worker_id",
+        "lease_expires_at",
+        "prompt_version",
+        "schema_version",
+        "preprocessing_version",
+        "input_tokens",
+        "output_tokens",
+    ):
+        assert private_field not in payload
+
+
+@pytest.mark.asyncio
+async def test_document_uses_newest_run_and_exposes_only_safe_failure(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, _, document_id, result_id = document_client
+    result = await session.get(ExtractionResult, result_id)
+    assert result is not None
+    successful_run = await session.get(ProcessingRun, result.processing_run_id)
+    assert successful_run is not None
+    failed_run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="retry-model",
+        prompt_version="retry-prompt",
+        schema_version="retry-schema",
+        preprocessing_version="retry-preprocessing",
+        status=RunStatus.FAILED,
+        attempt_count=2,
+        error_code="PROVIDER_EXTRACTION_FAILED",
+        error_message_safe="The model provider could not extract this document",
+        queued_at=successful_run.queued_at + timedelta(seconds=1),
+        started_at=successful_run.queued_at + timedelta(seconds=1),
+        completed_at=successful_run.queued_at + timedelta(seconds=2),
+    )
+    session.add(failed_run)
+    await session.commit()
+    await session.refresh(failed_run)
+
+    document_response = await client.get(f"/api/v1/documents/{document_id}")
+    run_response = await client.get(f"/api/v1/runs/{failed_run.id}")
+
+    assert document_response.status_code == 200
+    assert document_response.json()["latest_run"]["id"] == str(failed_run.id)
+    assert document_response.json()["latest_run"]["status"] == "failed"
+    assert document_response.json()["latest_run"]["result_id"] is None
+    assert run_response.status_code == 200
+    assert run_response.json()["attempt_count"] == 2
+    assert run_response.json()["error"] == {
+        "code": "PROVIDER_EXTRACTION_FAILED",
+        "message": "The model provider could not extract this document",
+    }
+    assert run_response.json()["progress"] == {
+        "stage": "failed",
+        "completed_pages": None,
+        "total_pages": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_active_run_reports_stage_without_inventing_page_progress(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, _, document_id, _ = document_client
+    active_run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="active-model",
+        prompt_version="active-prompt",
+        schema_version="active-schema",
+        preprocessing_version="active-preprocessing",
+        status=RunStatus.EXTRACTING,
+        attempt_count=1,
+        started_at=datetime.now(UTC),
+    )
+    session.add(active_run)
+    await session.commit()
+    await session.refresh(active_run)
+
+    response = await client.get(f"/api/v1/runs/{active_run.id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "extracting"
+    assert response.json()["result_id"] is None
+    assert response.json()["review_status"] is None
+    assert response.json()["progress"] == {
+        "stage": "extracting",
+        "completed_pages": None,
+        "total_pages": 1,
+    }
+    assert response.json()["error"] is None
 
 
 @pytest.mark.asyncio
@@ -472,9 +701,13 @@ async def test_nonmembers_cannot_observe_or_delete_document(
         UUID,
     ],
 ) -> None:
-    client, session, storage, settings, _, _, document_id, _ = document_client
+    client, session, storage, settings, _, _, document_id, result_id = document_client
+    result = await session.get(ExtractionResult, result_id)
+    assert result is not None
     await _set_client_identity(client, session, settings, label="Outsider")
 
+    assert (await client.get(f"/api/v1/documents/{document_id}")).status_code == 404
+    assert (await client.get(f"/api/v1/runs/{result.processing_run_id}")).status_code == 404
     assert (await client.post(f"/api/v1/documents/{document_id}/view-url")).status_code == 404
     assert (await client.delete(f"/api/v1/documents/{document_id}/original")).status_code == 204
     assert (await client.delete(f"/api/v1/documents/{document_id}")).status_code == 204
