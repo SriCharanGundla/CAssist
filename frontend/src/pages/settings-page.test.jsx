@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest"
 import { SettingsPage } from "@/pages/settings-page"
 
 describe("SettingsPage", () => {
-  it("shows the authenticated profile, workspace, and retention behavior", () => {
+  it("shows only the authenticated profile and workspace", () => {
     render(
       <MemoryRouter>
         <SettingsPage
@@ -27,6 +27,7 @@ describe("SettingsPage", () => {
     ).toBeInTheDocument()
     expect(screen.getByText("Alex Morgan")).toBeInTheDocument()
     expect(screen.getByText("My workspace")).toBeInTheDocument()
-    expect(screen.getByText(/Originals remain private/)).toBeInTheDocument()
+    expect(screen.queryByText("Original files")).not.toBeInTheDocument()
+    expect(screen.queryByText("Extraction data")).not.toBeInTheDocument()
   })
 })

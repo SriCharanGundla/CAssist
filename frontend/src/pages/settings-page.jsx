@@ -53,15 +53,6 @@ export function SettingsPage({ auth }) {
             </div>
           ))}
         </SettingCard>
-        <SettingCard title="Original files">
-          Originals remain private and are retained until you explicitly delete
-          them. Temporary processing files are removed after each attempt.
-        </SettingCard>
-        <SettingCard title="Extraction data">
-          Deleting only a file keeps its reviewed extraction, corrections, audit
-          history, and exports. Deleting file and data permanently removes the
-          document record.
-        </SettingCard>
       </div>
     </section>
   )
