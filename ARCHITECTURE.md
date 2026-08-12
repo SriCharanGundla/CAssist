@@ -1031,7 +1031,8 @@ only extracted fields, tables, text blocks, source pages, and quality issues. It
 original beside the editable extraction through a fresh short-lived signed URL. A PDF.js canvas
 viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based panning; it renders
 only nearby pages and defers sharp rerendering until interaction settles. Image preview supplies
-bounded zoom, pan, and reset controls.
+bounded zoom, pan, and reset controls. CSV/XLSX review shows a short-lived action for opening the
+original spreadsheet because browsers do not provide a reliable native XLSX renderer.
 The user can hide the original. Clicking a displayed value copies it and shows a shadcn popover at
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
 data and provenance remain immutable. The screen shows correction history and requires an explicit

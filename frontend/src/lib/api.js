@@ -89,18 +89,44 @@ export const ACCEPTED_UPLOAD_TYPES = [
   "application/pdf",
   "image/jpeg",
   "image/png",
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]
 
+export const ACCEPTED_UPLOAD_EXTENSIONS = [
+  ".pdf",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".csv",
+  ".xlsx",
+]
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+export const MAX_UPLOAD_FILES = 10
+
+const UPLOAD_MIME_TYPE_BY_EXTENSION = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".csv": "text/csv",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+export function uploadMimeType(file) {
+  const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
+  return UPLOAD_MIME_TYPE_BY_EXTENSION[extension] || file.type
+}
 
 export async function uploadDocument(file, { onStage } = {}) {
+  const mimeType = uploadMimeType(file)
   onStage?.("creating")
   const createResponse = await csrfRequest("/uploads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       filename: file.name,
-      mime_type: file.type,
+      mime_type: mimeType,
       byte_size: file.size,
     }),
   })

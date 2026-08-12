@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   RiDragMove2Line,
+  RiExternalLinkLine,
   RiRestartLine,
   RiZoomInLine,
   RiZoomOutLine,
@@ -12,6 +13,32 @@ import { Button } from "@/components/ui/button"
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const ZOOM_STEP = 0.25
+const SPREADSHEET_MIME_TYPES = new Set([
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+])
+
+function SpreadsheetPreview({ sourceUrl }) {
+  return (
+    <div className="grid flex-1 place-items-center p-6 text-center">
+      <div>
+        <p className="text-sm text-muted-foreground">
+          Open the original spreadsheet to compare it with the extraction.
+        </p>
+        <Button
+          className="mt-4"
+          nativeButton={false}
+          render={
+            <a href={sourceUrl} rel="noreferrer" target="_blank">
+              Open original <RiExternalLinkLine />
+            </a>
+          }
+          variant="outline"
+        />
+      </div>
+    </div>
+  )
+}
 
 function ImagePreview({ sourceUrl }) {
   const [zoom, setZoom] = React.useState(1)
@@ -362,6 +389,8 @@ export function SourcePreview({ error, loading, mimeType, sourceUrl }) {
         </div>
       ) : sourceUrl && mimeType === "application/pdf" ? (
         <PdfPreview sourceUrl={sourceUrl} />
+      ) : sourceUrl && SPREADSHEET_MIME_TYPES.has(mimeType) ? (
+        <SpreadsheetPreview sourceUrl={sourceUrl} />
       ) : sourceUrl ? (
         <ImagePreview sourceUrl={sourceUrl} />
       ) : null}

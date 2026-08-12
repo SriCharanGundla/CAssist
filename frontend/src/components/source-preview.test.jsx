@@ -70,4 +70,19 @@ describe("SourcePreview PDF viewer", () => {
     expect(screen.getByText("125%")).toBeInTheDocument()
     await waitFor(() => expect(renderPage).toHaveBeenCalledTimes(4))
   })
+
+  it("offers the signed original for spreadsheet review", () => {
+    render(
+      <SourcePreview
+        mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        sourceUrl="https://download.invalid/original.xlsx"
+      />
+    )
+
+    expect(screen.getByRole("button", { name: /Open original/ })).toHaveAttribute(
+      "href",
+      "https://download.invalid/original.xlsx"
+    )
+    expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
+  })
 })

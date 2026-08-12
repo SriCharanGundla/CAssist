@@ -1,11 +1,14 @@
 import * as React from "react"
-import { RiArrowLeftSLine } from "@remixicon/react"
+import { RiArrowLeftSLine, RiCloseLine } from "@remixicon/react"
 import { Link, useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import {
   ACCEPTED_UPLOAD_TYPES,
+  ACCEPTED_UPLOAD_EXTENSIONS,
   MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_FILES,
+  uploadMimeType,
   uploadDocument,
 } from "@/lib/api"
 
@@ -13,11 +16,12 @@ const STAGE_LABELS = {
   creating: "Creating a secure upload…",
   uploading: "Uploading to private storage…",
   verifying: "Verifying the file and queuing extraction…",
+  complete: "Queued for extraction",
 }
 
 function validateFile(file) {
-  if (!ACCEPTED_UPLOAD_TYPES.includes(file.type)) {
-    return "Choose a PDF, JPEG, or PNG file."
+  if (!ACCEPTED_UPLOAD_TYPES.includes(uploadMimeType(file))) {
+    return "Choose a PDF, JPEG, PNG, CSV, or XLSX file."
   }
   if (file.size > MAX_UPLOAD_BYTES) {
     return "Choose a file smaller than 25 MiB."
@@ -38,39 +42,93 @@ function formatBytes(bytes) {
 export function UploadPage() {
   const navigate = useNavigate()
   const inputRef = React.useRef(null)
-  const [file, setFile] = React.useState(null)
+  const [items, setItems] = React.useState([])
   const [error, setError] = React.useState(null)
-  const [stage, setStage] = React.useState(null)
+  const [uploading, setUploading] = React.useState(false)
 
-  const selectFile = (selectedFile) => {
-    if (!selectedFile) {
+  const selectFiles = (selectedFiles) => {
+    const files = Array.from(selectedFiles || [])
+    if (!files.length) {
       return
     }
-    const validationError = validateFile(selectedFile)
-    setError(validationError)
-    setFile(validationError ? null : selectedFile)
+    if (files.length > MAX_UPLOAD_FILES) {
+      setError(`Choose no more than ${MAX_UPLOAD_FILES} files at once.`)
+      setItems([])
+      return
+    }
+    const invalid = files
+      .map((file) => ({ file, message: validateFile(file) }))
+      .find(({ message }) => message)
+    if (invalid) {
+      setError(`${invalid.file.name}: ${invalid.message}`)
+      setItems([])
+      return
+    }
+    setError(null)
+    setItems(
+      files.map((file, index) => ({
+        id: `${file.name}-${file.size}-${file.lastModified}-${index}`,
+        file,
+        stage: null,
+        result: null,
+        error: null,
+      }))
+    )
+  }
+
+  const updateItem = (id, changes) => {
+    setItems((current) =>
+      current.map((item) => (item.id === id ? { ...item, ...changes } : item))
+    )
   }
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    if (!file || stage) {
+    const pendingItems = items.filter((item) => !item.result)
+    if (!pendingItems.length || uploading) {
       return
     }
     setError(null)
-    try {
-      const completed = await uploadDocument(file, { onStage: setStage })
+    setUploading(true)
+    const outcomes = await Promise.all(
+      pendingItems.map(async (item) => {
+        updateItem(item.id, { error: null })
+        try {
+          const result = await uploadDocument(item.file, {
+            onStage: (stage) => updateItem(item.id, { stage }),
+          })
+          updateItem(item.id, { result, stage: "complete" })
+          return { result }
+        } catch (uploadError) {
+          updateItem(item.id, { error: uploadError.message, stage: null })
+          return { error: uploadError }
+        }
+      })
+    )
+    setUploading(false)
+    const failedCount = outcomes.filter((outcome) => outcome.error).length
+    if (!failedCount) {
+      const completedResults = [
+        ...items.flatMap((item) => (item.result ? [item.result] : [])),
+        ...outcomes.map((outcome) => outcome.result),
+      ]
       navigate("/", {
         replace: true,
         state: {
-          deduplicated: completed.deduplicated,
+          deduplicated: completedResults.every((result) => result.deduplicated),
+          uploadCount: completedResults.length,
           uploaded: true,
         },
       })
-    } catch (uploadError) {
-      setError(uploadError.message)
-      setStage(null)
+    } else {
+      setError(
+        `${failedCount} of ${outcomes.length} files failed. Retry the failed files.`
+      )
     }
   }
+
+  const pendingCount = items.filter((item) => !item.result).length
+  const completedCount = items.length - pendingCount
 
   return (
     <section className="mx-auto max-w-2xl">
@@ -86,11 +144,11 @@ export function UploadPage() {
         New document
       </p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-        Upload one invoice
+        Upload documents
       </h1>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        PDF, JPEG, or PNG, up to 25 MiB. The original stays private and is not
-        treated as accounting-ready until you review the extraction.
+        Up to 10 PDF, JPEG, PNG, CSV, or XLSX files, 25 MiB each. Originals stay
+        private and require review after extraction.
       </p>
 
       <form className="mt-7 space-y-5" onSubmit={handleSubmit}>
@@ -99,37 +157,78 @@ export function UploadPage() {
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault()
-            if (!stage) selectFile(event.dataTransfer.files[0])
+            if (!uploading) selectFiles(event.dataTransfer.files)
           }}
         >
           <input
-            accept={ACCEPTED_UPLOAD_TYPES.join(",")}
+            accept={[
+              ...ACCEPTED_UPLOAD_TYPES,
+              ...ACCEPTED_UPLOAD_EXTENSIONS,
+            ].join(",")}
             className="sr-only"
-            disabled={Boolean(stage)}
-            onChange={(event) => selectFile(event.target.files[0])}
+            disabled={uploading}
+            multiple
+            onChange={(event) => {
+              selectFiles(event.target.files)
+              event.target.value = ""
+            }}
             ref={inputRef}
             type="file"
           />
-          {file ? (
+          {items.length ? (
             <div>
-              <p className="text-sm font-medium break-all">{file.name}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {formatBytes(file.size)}
-              </p>
-              {!stage ? (
+              <ul className="space-y-2 text-left">
+                {items.map((item) => (
+                  <li
+                    className="flex items-center justify-between gap-3 rounded-lg bg-muted px-3 py-2"
+                    key={item.id}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {item.file.name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {item.error ||
+                          STAGE_LABELS[item.stage] ||
+                          formatBytes(item.file.size)}
+                      </p>
+                    </div>
+                    {!uploading && !item.result ? (
+                      <Button
+                        aria-label={`Remove ${item.file.name}`}
+                        onClick={() =>
+                          setItems((current) =>
+                            current.filter(
+                              (candidate) => candidate.id !== item.id
+                            )
+                          )
+                        }
+                        size="icon"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <RiCloseLine />
+                      </Button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              {!uploading ? (
                 <Button
                   className="mt-4"
                   onClick={() => inputRef.current?.click()}
                   type="button"
                   variant="outline"
                 >
-                  Choose another file
+                  Choose different files
                 </Button>
               ) : null}
             </div>
           ) : (
             <div>
-              <p className="text-sm font-medium">Drop an invoice here</p>
+              <p className="text-sm font-medium">
+                Drop up to 10 documents here
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">or</p>
               <Button
                 className="mt-3"
@@ -137,15 +236,15 @@ export function UploadPage() {
                 type="button"
                 variant="outline"
               >
-                Choose a file
+                Choose files
               </Button>
             </div>
           )}
         </div>
 
-        {stage ? (
+        {uploading ? (
           <div aria-live="polite" className="rounded-lg bg-muted p-4 text-sm">
-            <p className="font-medium">{STAGE_LABELS[stage]}</p>
+            <p className="font-medium">Uploading {items.length} files…</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Keep this page open until verification finishes.
             </p>
@@ -157,8 +256,12 @@ export function UploadPage() {
           </p>
         ) : null}
 
-        <Button disabled={!file || Boolean(stage)} size="lg" type="submit">
-          {stage ? "Uploading…" : "Upload and process"}
+        <Button disabled={!pendingCount || uploading} size="lg" type="submit">
+          {uploading
+            ? "Uploading…"
+            : completedCount
+              ? `Retry ${pendingCount} failed ${pendingCount === 1 ? "file" : "files"}`
+              : `Upload and process${pendingCount > 1 ? ` ${pendingCount} files` : ""}`}
         </Button>
       </form>
     </section>

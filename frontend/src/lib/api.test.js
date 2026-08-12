@@ -7,6 +7,7 @@ import {
   permanentlyDeleteDocument,
   retryDocumentProcessing,
   uploadDocument,
+  uploadMimeType,
 } from "@/lib/api"
 
 function jsonResponse(payload, init = {}) {
@@ -20,6 +21,15 @@ function jsonResponse(payload, init = {}) {
 describe("uploadDocument", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it("normalizes spreadsheet MIME types from safe filename extensions", () => {
+    expect(uploadMimeType(new File(["Invoice,Amount"], "invoices.csv"))).toBe(
+      "text/csv"
+    )
+    expect(uploadMimeType(new File(["PK"], "invoices.xlsx"))).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
   })
 
   it("creates, uploads, verifies, and completes a private upload", async () => {

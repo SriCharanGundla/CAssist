@@ -76,6 +76,9 @@ function fileTypeLabel(mimeType) {
       "application/pdf": "PDF",
       "image/jpeg": "JPEG",
       "image/png": "PNG",
+      "text/csv": "CSV",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        "XLSX",
     }[mimeType] || mimeType
   )
 }
@@ -318,7 +321,9 @@ export function DashboardPage() {
           </p>
         ) : location.state?.uploaded ? (
           <p className="mb-5 rounded-lg bg-muted p-3 text-sm" role="status">
-            Document uploaded and queued for extraction.
+            {location.state.uploadCount > 1
+              ? `${location.state.uploadCount} documents uploaded and queued for extraction.`
+              : "Document uploaded and queued for extraction."}
           </p>
         ) : null}
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -363,7 +368,7 @@ export function DashboardPage() {
             <div className="p-8 text-center">
               <p className="text-sm font-medium">No documents yet</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Upload one invoice to start the review workflow.
+                Upload documents to start the review workflow.
               </p>
             </div>
           )}
