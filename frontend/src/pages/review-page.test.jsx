@@ -10,6 +10,7 @@ import { ReviewPage } from "@/pages/review-page"
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal()),
   getResult: vi.fn(),
+  createOriginalViewUrl: vi.fn(),
   correctResult: vi.fn(),
   downloadTallyExport: vi.fn(),
   updateResultReview: vi.fn(),
@@ -58,6 +59,9 @@ const extraction = {
 const initialResult = {
   result_id: "result-1",
   run_id: "run-1",
+  document_id: "document-1",
+  original_mime_type: "image/png",
+  original_available: true,
   document_type: "tax_invoice",
   version: 1,
   review_status: "unreviewed",
@@ -95,6 +99,9 @@ describe("ReviewPage", () => {
   beforeEach(() => {
     vi.resetAllMocks()
     api.getResult.mockResolvedValue(structuredClone(initialResult))
+    api.createOriginalViewUrl.mockResolvedValue({
+      url: "https://download.invalid/original?signature=test",
+    })
   })
 
   it("renders only extracted generic fields, tables, and text", async () => {
@@ -106,12 +113,24 @@ describe("ReviewPage", () => {
     expect(screen.getByText("Bill No.")).toBeInTheDocument()
     expect(screen.getByText("Items")).toBeInTheDocument()
     expect(screen.getByText("Professional services")).toBeInTheDocument()
+    expect(screen.queryByText("Description, row 1")).not.toBeInTheDocument()
     expect(screen.getByText("Thank you")).toBeInTheDocument()
     expect(screen.getByText("Possible character confusion")).toBeInTheDocument()
+    expect(screen.getByAltText("Original document")).toBeInTheDocument()
     expect(screen.queryByText("Supplier GSTIN")).not.toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Approve extraction" })
     ).toBeEnabled()
+  })
+
+  it("toggles the inline original preview", async () => {
+    const user = userEvent.setup()
+    renderReviewPage()
+
+    expect(await screen.findByAltText("Original document")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Hide original" }))
+    expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Show original" })).toBeEnabled()
   })
 
   it("copies a value by clicking it and shows brief feedback", async () => {
@@ -125,6 +144,8 @@ describe("ReviewPage", () => {
 
     expect(writeText).toHaveBeenCalledWith("INV-1")
     expect(screen.getByText("Copied")).toBeInTheDocument()
+    expect(screen.queryByText("Ready for your review")).not.toBeInTheDocument()
+    expect(screen.queryByText("Human review required")).not.toBeInTheDocument()
   })
 
   it("saves an append-only correction by stable target id", async () => {

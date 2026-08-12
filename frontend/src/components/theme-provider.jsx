@@ -31,17 +31,6 @@ function disableTransitionsTemporarily() {
   }
 }
 
-function isEditableTarget(target) {
-  if (!(target instanceof HTMLElement)) {
-    return false
-  }
-
-  return Boolean(
-    target.isContentEditable ||
-      target.closest("input, textarea, select, [contenteditable='true']")
-  )
-}
-
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -90,32 +79,6 @@ export function ThemeProvider({
     mediaQuery.addEventListener("change", handleChange)
     return () => mediaQuery.removeEventListener("change", handleChange)
   }, [theme, applyTheme])
-
-  React.useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (
-        event.repeat ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isEditableTarget(event.target) ||
-        event.key.toLowerCase() !== "d"
-      ) {
-        return
-      }
-
-      setThemeState((currentTheme) => {
-        const currentResolvedTheme =
-          currentTheme === "system" ? getSystemTheme() : currentTheme
-        const nextTheme = currentResolvedTheme === "dark" ? "light" : "dark"
-        localStorage.setItem(storageKey, nextTheme)
-        return nextTheme
-      })
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [storageKey])
 
   React.useEffect(() => {
     const handleStorageChange = (event) => {

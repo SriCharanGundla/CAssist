@@ -1,8 +1,25 @@
 import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
+import {
+  RiComputerLine,
+  RiLogoutBoxRLine,
+  RiMoonLine,
+  RiSunLine,
+} from "@remixicon/react"
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom"
 
+import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
 import { DashboardPage } from "@/pages/dashboard-page"
 import { DocumentPage } from "@/pages/document-page"
@@ -10,6 +27,7 @@ import { ReviewPage } from "@/pages/review-page"
 import { UploadPage } from "@/pages/upload-page"
 
 function AuthenticatedApp({ auth }) {
+  const { setTheme, theme } = useTheme()
   const [logoutError, setLogoutError] = React.useState(null)
   const [isLoggingOut, setIsLoggingOut] = React.useState(false)
 
@@ -25,28 +43,81 @@ function AuthenticatedApp({ auth }) {
     }
   }
 
+  const displayName = auth.user.display_name || auth.user.email
+  const initials = displayName
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase()
+  const ThemeIcon =
+    theme === "dark"
+      ? RiMoonLine
+      : theme === "light"
+        ? RiSunLine
+        : RiComputerLine
+
   return (
     <div className="min-h-svh bg-muted/30">
       <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4">
           <Link className="text-lg font-semibold tracking-tight" to="/">
             CAssist
           </Link>
           <div className="flex min-w-0 items-center gap-3">
-            <span className="hidden truncate text-xs text-muted-foreground sm:block">
-              {auth.user.email}
-            </span>
-            <Button
-              disabled={isLoggingOut}
-              onClick={handleLogout}
-              variant="outline"
-            >
-              {isLoggingOut ? "Signing out…" : "Sign out"}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Choose color theme"
+                render={<Button size="icon" variant="ghost" />}
+              >
+                <ThemeIcon className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuLabel>Theme</DropdownMenuLabel>
+                <DropdownMenuRadioGroup onValueChange={setTheme} value={theme}>
+                  <DropdownMenuRadioItem value="light">
+                    <RiSunLine /> Light
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="dark">
+                    <RiMoonLine /> Dark
+                  </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="system">
+                    <RiComputerLine /> System
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Open account menu"
+                className="grid size-9 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                {initials}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel className="space-y-0.5 py-2">
+                  <span className="block truncate font-medium text-foreground">
+                    {displayName}
+                  </span>
+                  <span className="block truncate font-normal">
+                    {auth.user.email}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={isLoggingOut}
+                  onClick={handleLogout}
+                  variant="destructive"
+                >
+                  <RiLogoutBoxRLine />
+                  {isLoggingOut ? "Signing out…" : "Sign out"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-5 py-8">
+      <main className="mx-auto max-w-7xl px-5 py-8">
         {logoutError ? (
           <p className="mb-4 text-sm text-destructive" role="alert">
             {logoutError}
@@ -60,9 +131,6 @@ function AuthenticatedApp({ auth }) {
           <Route element={<Navigate replace to="/" />} path="*" />
         </Routes>
       </main>
-      <footer className="mx-auto max-w-5xl px-5 pb-6 font-mono text-xs text-muted-foreground">
-        Press <kbd>d</kbd> to toggle dark mode
-      </footer>
     </div>
   )
 }

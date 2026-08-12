@@ -89,6 +89,7 @@ async def _corrections_for_result(
 def _response(
     result: ExtractionResult,
     run: ProcessingRun,
+    document: Document,
     corrections: list[Correction],
 ) -> ResultResponse:
     effective_stored = apply_corrections(result.canonical_data, corrections)
@@ -109,6 +110,11 @@ def _response(
     return ResultResponse(
         result_id=result.id,
         run_id=run.id,
+        document_id=document.id,
+        original_mime_type=document.mime_type,
+        original_available=(
+            document.r2_object_key is not None and document.original_deleted_at is None
+        ),
         document_type=result.document_type,
         version=result.version,
         review_status=result.review_status,
@@ -142,10 +148,10 @@ async def get_result(
     result_row = await _authorized_result_for_run(session, run_id, current_auth.user.id)
     if result_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
-    result, run, _ = result_row
+    result, run, document = result_row
     corrections = await _corrections_for_result(session, result.id)
     response.headers["Cache-Control"] = "no-store"
-    return _response(result, run, corrections)
+    return _response(result, run, document, corrections)
 
 
 @router.get("/results/{result_id}", response_model=ResultResponse)
@@ -158,10 +164,10 @@ async def get_result_by_id(
     result_row = await _authorized_result_by_id(session, result_id, current_auth.user.id)
     if result_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
-    result, run, _ = result_row
+    result, run, document = result_row
     corrections = await _corrections_for_result(session, result.id)
     response.headers["Cache-Control"] = "no-store"
-    return _response(result, run, corrections)
+    return _response(result, run, document, corrections)
 
 
 @router.patch("/results/{result_id}/fields", response_model=ResultResponse)
@@ -242,7 +248,12 @@ async def apply_result_corrections(
     )
     await session.flush()
     await session.commit()
-    return _response(result, run, [*existing_corrections, *pending_corrections])
+    return _response(
+        result,
+        run,
+        document,
+        [*existing_corrections, *pending_corrections],
+    )
 
 
 @router.post("/results/{result_id}/review", response_model=ResultResponse)
@@ -270,7 +281,7 @@ async def review_result(
     requested_status = ReviewStatus(payload.status)
     corrections = await _corrections_for_result(session, result.id)
     if result.review_status == requested_status:
-        return _response(result, run, corrections)
+        return _response(result, run, document, corrections)
 
     changed_at = datetime.now(UTC)
     result.review_status = requested_status
@@ -294,4 +305,4 @@ async def review_result(
         )
     )
     await session.commit()
-    return _response(result, run, corrections)
+    return _response(result, run, document, corrections)

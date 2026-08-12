@@ -1,5 +1,6 @@
 import * as React from "react"
-import { useNavigate } from "react-router-dom"
+import { RiArrowLeftSLine } from "@remixicon/react"
+import { Link, useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -70,6 +71,14 @@ export function UploadPage() {
 
   return (
     <section className="mx-auto max-w-2xl">
+      <Button
+        className="mb-5 -ml-2"
+        nativeButton={false}
+        render={<Link to="/" />}
+        variant="ghost"
+      >
+        <RiArrowLeftSLine /> Back
+      </Button>
       <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
         New document
       </p>

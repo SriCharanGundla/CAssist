@@ -205,6 +205,9 @@ async def test_get_result_returns_generic_data_without_provider_output(
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["document_id"]
+    assert payload["original_mime_type"] == "image/png"
+    assert payload["original_available"] is True
     assert payload["version"] == 1
     assert payload["review_status"] == "unreviewed"
     assert payload["extracted_data"] == payload["effective_data"]

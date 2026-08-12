@@ -44,6 +44,9 @@ class CorrectionResponse(BaseModel):
 class ResultResponse(BaseModel):
     result_id: UUID
     run_id: UUID
+    document_id: UUID
+    original_mime_type: str
+    original_available: bool
     document_type: str
     version: int
     review_status: Literal["unreviewed", "in_review", "approved"]

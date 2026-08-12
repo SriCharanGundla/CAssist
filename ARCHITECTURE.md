@@ -1015,17 +1015,21 @@ seconds until a terminal state, reports only backend-safe errors, and explicitly
 extraction review-required. It does not invent page-level progress while extraction is active.
 
 The `/results/:resultId/review` route retrieves the authorized generic result and dynamically shows
-only extracted fields, tables, text blocks, source pages, and quality issues. Clicking a displayed
-value copies it. Field correction uses its stable ID and appends a versioned correction; extracted
-source data and provenance remain immutable. The screen shows correction history and requires an
-explicit approval action. Conflicts refresh the result instead of silently overwriting another tab.
+only extracted fields, tables, text blocks, source pages, and quality issues. It embeds the private
+original beside the editable extraction through a fresh short-lived signed URL; the native browser
+PDF viewer supplies PDF controls, while image preview supplies bounded zoom, pan, and reset controls.
+The user can hide the original. Clicking a displayed value copies it and shows a shadcn popover at
+that value. Field correction uses its stable ID and appends a versioned correction; extracted source
+data and provenance remain immutable. The screen shows correction history and requires an explicit
+approval action. Conflicts refresh the result instead of silently overwriting another tab.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. The document
-screen has a compact `Actions` section: `Open original` appears only while the file exists, and one
-`Delete` action opens a shadcn dialog offering either `Delete File, Keep Data` or `Delete File and
-Data`. After file-only deletion, the open action disappears and the remaining delete choice removes
-data. Full deletion returns to the dashboard after R2 deletion and the PostgreSQL cascade complete.
+screen keeps `Review extraction`, `Open`, and `Delete` together in the processing-status card.
+`Delete` is disabled while processing. It opens a shadcn dialog offering either `Delete File, Keep
+Data` or `Delete File and Data`. After file-only deletion, the open action disappears and the
+remaining delete choice removes data. Full deletion returns to the dashboard after R2 deletion and
+the PostgreSQL cascade complete.
 
 ## 14. MVP implementation order
 

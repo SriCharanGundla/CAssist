@@ -63,13 +63,13 @@ describe("DocumentPage", () => {
       await screen.findByRole("heading", { name: "Extraction complete" })
     ).toBeInTheDocument()
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Extraction finished. The result still requires human review."
       )
-    ).toBeInTheDocument()
-    expect(await screen.findByText("2 of 2 pages complete")).toBeInTheDocument()
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText("2 of 2 pages complete")).not.toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Review extraction" })
+      await screen.findByRole("button", { name: "Review extraction" })
     ).toHaveAttribute("href", "/results/result-1/review")
   })
 
@@ -167,6 +167,10 @@ describe("DocumentPage", () => {
     expect(screen.getByRole("status", { name: "Processing" })).toHaveClass(
       "animate-spin"
     )
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled()
+    expect(
+      screen.queryByRole("button", { name: "Upload another" })
+    ).not.toBeInTheDocument()
   })
 
   it("offers file-only deletion and then removes the open-original action", async () => {
@@ -198,9 +202,7 @@ describe("DocumentPage", () => {
     api.deleteDocumentOriginal.mockResolvedValue(undefined)
     renderDocumentPage()
 
-    expect(
-      await screen.findByRole("button", { name: "Open original" })
-    ).toBeEnabled()
+    expect(await screen.findByRole("button", { name: "Open" })).toBeEnabled()
     await user.click(screen.getByRole("button", { name: "Delete" }))
     expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
     expect(
@@ -212,7 +214,7 @@ describe("DocumentPage", () => {
     expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
     await waitFor(() =>
       expect(
-        screen.queryByRole("button", { name: "Open original" })
+        screen.queryByRole("button", { name: "Open" })
       ).not.toBeInTheDocument()
     )
   })
@@ -274,7 +276,7 @@ describe("DocumentPage", () => {
     await user.click(await screen.findByRole("button", { name: "Delete" }))
 
     expect(
-      screen.queryByRole("button", { name: "Open original" })
+      screen.queryByRole("button", { name: "Open" })
     ).not.toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: "Delete File, Keep Data" })

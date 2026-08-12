@@ -39,6 +39,10 @@ describe("UploadPage", () => {
       "Choose a PDF, JPEG, or PNG file."
     )
     expect(api.uploadDocument).not.toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: "Back" })).toHaveAttribute(
+      "href",
+      "/"
+    )
   })
 
   it("navigates to the document returned after upload completion", async () => {

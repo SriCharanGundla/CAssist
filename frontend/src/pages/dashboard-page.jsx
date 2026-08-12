@@ -12,6 +12,16 @@ const STATUS_LABELS = {
   failed: "Failed",
 }
 
+function statusBadgeClass(status) {
+  if (status === "ready") {
+    return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+  }
+  if (status === "failed") {
+    return "bg-destructive/15 text-destructive"
+  }
+  return "bg-secondary text-secondary-foreground"
+}
+
 function formatDate(value) {
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
@@ -83,7 +93,9 @@ export function DashboardPage() {
                       {formatDate(document.created_at)}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-secondary px-3 py-1 text-xs font-medium">
+                  <span
+                    className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClass(document.status)}`}
+                  >
                     {STATUS_LABELS[document.status] || document.status}
                   </span>
                 </Link>

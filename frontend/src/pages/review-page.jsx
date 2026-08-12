@@ -1,10 +1,18 @@
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { RiArrowLeftSLine, RiEyeLine, RiEyeOffLine } from "@remixicon/react"
 import { Link, useParams } from "react-router-dom"
 
+import { SourcePreview } from "@/components/source-preview"
 import { Button } from "@/components/ui/button"
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
   correctResult,
+  createOriginalViewUrl,
   downloadTallyExport,
   getResult,
   updateResultReview,
@@ -23,17 +31,38 @@ function documentTypeLabel(value) {
     .join(" ")
 }
 
-function CopyValue({ label, onCopied, value }) {
+function CopyValue({ label, value }) {
+  const [feedback, setFeedback] = React.useState("")
+  const [open, setOpen] = React.useState(false)
+  const timer = React.useRef(null)
+  React.useEffect(() => () => window.clearTimeout(timer.current), [])
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setFeedback("Copied")
+    } catch {
+      setFeedback("Could not copy")
+    }
+    setOpen(true)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setOpen(false), 1200)
+  }
+
   return (
-    <button
-      aria-label={`Copy ${label}: ${value}`}
-      className="cursor-pointer text-left text-sm font-medium break-words transition-colors hover:text-muted-foreground"
-      onClick={() => onCopied(value)}
-      title="Click to copy"
-      type="button"
-    >
-      {value}
-    </button>
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger
+        aria-label={`Copy ${label}: ${value}`}
+        className="cursor-pointer text-left text-sm font-medium break-words transition-colors hover:text-muted-foreground"
+        onClick={copy}
+        title="Click to copy"
+      >
+        {value}
+      </PopoverTrigger>
+      <PopoverContent className="w-auto px-2.5 py-1.5" side="top">
+        {feedback}
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -65,8 +94,8 @@ function QualityIssues({ issues, onUseSuggestion, saving }) {
 
 function EditableValue({
   issues,
+  hideLabel = false,
   label,
-  onCopied,
   onSave,
   pageNumber,
   saving,
@@ -92,7 +121,11 @@ function EditableValue({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-medium text-muted-foreground">{label}</p>
+            {!hideLabel ? (
+              <p className="text-xs font-medium text-muted-foreground">
+                {label}
+              </p>
+            ) : null}
             {pageNumber ? (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                 Page {pageNumber}
@@ -121,7 +154,7 @@ function EditableValue({
             </>
           ) : (
             <div className="mt-1">
-              <CopyValue label={label} onCopied={onCopied} value={value} />
+              <CopyValue label={label} value={value} />
             </div>
           )}
           <QualityIssues
@@ -203,9 +236,7 @@ function CorrectionHistory({ corrections }) {
 export function ReviewPage() {
   const { resultId } = useParams()
   const queryClient = useQueryClient()
-  const [copyStatus, setCopyStatus] = React.useState("")
-  const copyTimer = React.useRef(null)
-  React.useEffect(() => () => window.clearTimeout(copyTimer.current), [])
+  const [showOriginal, setShowOriginal] = React.useState(true)
 
   const resultQuery = useQuery({
     queryKey: ["result", resultId],
@@ -236,6 +267,32 @@ export function ReviewPage() {
       downloadTallyExport(resultId, expectedVersion),
     onError: handleMutationError,
   })
+  const sourceMutation = useMutation({
+    mutationFn: createOriginalViewUrl,
+  })
+  const requestSource = sourceMutation.mutate
+  const sourceDocumentId = resultQuery.data?.document_id
+  const sourceAvailable = resultQuery.data?.original_available
+  React.useEffect(() => {
+    if (
+      showOriginal &&
+      sourceAvailable &&
+      sourceDocumentId &&
+      !sourceMutation.data &&
+      !sourceMutation.error &&
+      !sourceMutation.isPending
+    ) {
+      requestSource(sourceDocumentId)
+    }
+  }, [
+    requestSource,
+    showOriginal,
+    sourceAvailable,
+    sourceDocumentId,
+    sourceMutation.data,
+    sourceMutation.error,
+    sourceMutation.isPending,
+  ])
 
   if (resultQuery.isPending)
     return <p className="text-sm text-muted-foreground">Loading extraction…</p>
@@ -276,16 +333,6 @@ export function ReviewPage() {
       reason,
     })
   }
-  const copyValue = async (value) => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopyStatus("Copied")
-    } catch {
-      setCopyStatus("Could not copy")
-    }
-    window.clearTimeout(copyTimer.current)
-    copyTimer.current = window.setTimeout(() => setCopyStatus(""), 1500)
-  }
   const extractedCount =
     data.fields.length +
     data.text_blocks.length +
@@ -297,20 +344,24 @@ export function ReviewPage() {
     )
   const editableProps = (targetId) => ({
     issues: issuesByTarget.get(targetId) || [],
-    onCopied: copyValue,
     onSave: saveCorrection,
     saving: correctionMutation.isPending,
     targetId,
   })
 
   return (
-    <section className="mx-auto max-w-6xl">
+    <section className="mx-auto max-w-7xl">
+      <Button
+        className="mb-5 -ml-2"
+        nativeButton={false}
+        render={<Link to={`/documents/${result.document_id}`} />}
+        variant="ghost"
+      >
+        <RiArrowLeftSLine /> Back
+      </Button>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-            Human review required
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight">
             Review extracted document
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -328,26 +379,18 @@ export function ReviewPage() {
             </span>
           </div>
         </div>
-        <Button nativeButton={false} render={<Link to="/" />} variant="outline">
-          Back to dashboard
-        </Button>
-      </div>
-
-      <section className="mt-6 rounded-2xl border bg-card p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2 className="font-semibold">
-              {result.quality_issues.length
-                ? "Needs attention"
-                : "Ready for your review"}
-            </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Click any extracted value to copy it. Approval records your review
-              only.
-            </p>
-          </div>
+        <div className="flex flex-wrap gap-2">
+          {result.original_available ? (
+            <Button
+              onClick={() => setShowOriginal((current) => !current)}
+              variant="outline"
+            >
+              {showOriginal ? <RiEyeOffLine /> : <RiEyeLine />}
+              {showOriginal ? "Hide original" : "Show original"}
+            </Button>
+          ) : null}
           {result.review_status === "approved" ? (
-            <div className="flex flex-wrap gap-2">
+            <>
               <Button
                 disabled={exportMutation.isPending}
                 onClick={() =>
@@ -370,7 +413,7 @@ export function ReviewPage() {
               >
                 Return to review
               </Button>
-            </div>
+            </>
           ) : (
             <Button
               disabled={
@@ -387,12 +430,9 @@ export function ReviewPage() {
             </Button>
           )}
         </div>
-        <p
-          aria-live="polite"
-          className="mt-3 h-4 text-xs text-muted-foreground"
-        >
-          {copyStatus}
-        </p>
+      </div>
+
+      <div className="mt-4">
         {unmappedIssues.map((issue) => (
           <p
             className="mt-2 text-sm text-destructive"
@@ -406,94 +446,116 @@ export function ReviewPage() {
             {mutationError.message}
           </p>
         ) : null}
-      </section>
+      </div>
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-2">
-        <div className="space-y-5">
-          {data.fields.length ? (
-            <Card title="Fields">
-              {data.fields.map((field) => (
-                <EditableValue
-                  key={field.id}
-                  label={field.label}
-                  pageNumber={field.page_number}
-                  value={field.value}
-                  {...editableProps(field.id)}
-                />
-              ))}
-            </Card>
-          ) : null}
-          {data.text_blocks.length ? (
-            <Card
-              description="Useful visible text that was not presented as a labelled field."
-              title="Other text"
-            >
-              {data.text_blocks.map((block, index) => (
-                <EditableValue
-                  key={block.id}
-                  label={`Text block ${index + 1}`}
-                  pageNumber={block.page_number}
-                  value={block.text}
-                  {...editableProps(block.id)}
-                />
-              ))}
-            </Card>
-          ) : null}
-        </div>
+      <div
+        className={`mt-6 grid items-start gap-5 ${showOriginal && result.original_available ? "lg:grid-cols-2" : ""}`}
+      >
+        {showOriginal && result.original_available ? (
+          <SourcePreview
+            error={sourceMutation.error}
+            loading={sourceMutation.isPending}
+            mimeType={result.original_mime_type}
+            sourceUrl={sourceMutation.data?.url}
+          />
+        ) : null}
+        <div
+          className={
+            showOriginal && result.original_available
+              ? "space-y-5"
+              : "grid items-start gap-5 lg:grid-cols-2"
+          }
+        >
+          <div className="space-y-5">
+            {data.fields.length ? (
+              <Card title="Fields">
+                {data.fields.map((field) => (
+                  <EditableValue
+                    key={field.id}
+                    label={field.label}
+                    pageNumber={field.page_number}
+                    value={field.value}
+                    {...editableProps(field.id)}
+                  />
+                ))}
+              </Card>
+            ) : null}
+            {data.text_blocks.length ? (
+              <Card
+                description="Useful visible text that was not presented as a labelled field."
+                title="Other text"
+              >
+                {data.text_blocks.map((block, index) => (
+                  <EditableValue
+                    key={block.id}
+                    label={`Text block ${index + 1}`}
+                    pageNumber={block.page_number}
+                    value={block.text}
+                    {...editableProps(block.id)}
+                  />
+                ))}
+              </Card>
+            ) : null}
+          </div>
 
-        <div className="space-y-5">
-          {data.tables.map((table, tableIndex) => (
-            <Card
-              key={table.id}
-              description={`Source pages: ${table.page_numbers.join(", ")}`}
-              title={table.title || `Table ${tableIndex + 1}`}
-            >
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-max text-left text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      {table.headers.map((header, index) => (
-                        <th
-                          className="px-2 py-2 text-xs font-medium text-muted-foreground"
-                          key={`${header}-${index}`}
-                        >
-                          {header}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {table.rows.map((row) => (
-                      <tr className="border-b last:border-b-0" key={row.id}>
-                        {row.cells.map((cell, cellIndex) => (
-                          <td className="min-w-36 px-2 align-top" key={cell.id}>
-                            <EditableValue
-                              label={`${table.headers[cellIndex]}, row ${table.rows.indexOf(row) + 1}`}
-                              value={cell.value}
-                              {...editableProps(cell.id)}
-                            />
-                          </td>
+          <div className="space-y-5">
+            {data.tables.map((table, tableIndex) => (
+              <Card
+                key={table.id}
+                description={`Source pages: ${table.page_numbers.join(", ")}`}
+                title={table.title || `Table ${tableIndex + 1}`}
+              >
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-max text-left text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        {table.headers.map((header, index) => (
+                          <th
+                            className="px-2 py-2 text-xs font-medium text-muted-foreground"
+                            key={`${header}-${index}`}
+                          >
+                            {header}
+                          </th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {table.rows.map((row) => (
+                        <tr className="border-b last:border-b-0" key={row.id}>
+                          {row.cells.map((cell, cellIndex) => (
+                            <td
+                              className="min-w-36 px-2 align-top"
+                              key={cell.id}
+                            >
+                              <EditableValue
+                                hideLabel
+                                label={`${table.headers[cellIndex]}, row ${table.rows.indexOf(row) + 1}`}
+                                value={cell.value}
+                                {...editableProps(cell.id)}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            ))}
+            {!data.fields.length &&
+            !data.tables.length &&
+            !data.text_blocks.length ? (
+              <Card title="No visible values extracted">
+                <p className="text-sm text-muted-foreground">
+                  Review the original and retry processing if this document
+                  contains readable information.
+                </p>
+              </Card>
+            ) : null}
+            <Card title="Correction history">
+              <CorrectionHistory corrections={result.corrections} />
             </Card>
-          ))}
-          {!data.fields.length &&
-          !data.tables.length &&
-          !data.text_blocks.length ? (
-            <Card title="No visible values extracted">
-              <p className="text-sm text-muted-foreground">
-                Review the original and retry processing if this document
-                contains readable information.
-              </p>
-            </Card>
-          ) : null}
-          <Card title="Correction history">
-            <CorrectionHistory corrections={result.corrections} />
-          </Card>
+          </div>
         </div>
       </div>
     </section>

@@ -1,5 +1,6 @@
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { RiArrowLeftSLine } from "@remixicon/react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
@@ -58,6 +59,26 @@ function statusLabel(status) {
 
 function progressLabel(stage) {
   return PROGRESS_LABELS[stage] || statusLabel(stage)
+}
+
+function fileTypeLabel(mimeType) {
+  return (
+    {
+      "application/pdf": "PDF",
+      "image/jpeg": "JPEG",
+      "image/png": "PNG",
+    }[mimeType] || mimeType
+  )
+}
+
+function statusBadgeClass(status) {
+  if (["ready", "succeeded"].includes(status)) {
+    return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+  }
+  if (status === "failed") {
+    return "bg-destructive/15 text-destructive"
+  }
+  return "bg-secondary text-secondary-foreground"
 }
 
 export function DocumentPage() {
@@ -147,6 +168,14 @@ export function DocumentPage() {
 
   return (
     <section className="mx-auto max-w-2xl">
+      <Button
+        className="mb-5 -ml-2"
+        nativeButton={false}
+        render={<Link to="/" />}
+        variant="ghost"
+      >
+        <RiArrowLeftSLine /> Back
+      </Button>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -156,9 +185,16 @@ export function DocumentPage() {
             {document.original_filename}
           </h1>
         </div>
-        <span className="rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground capitalize">
-          {statusLabel(displayStatus)}
-        </span>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full border bg-card px-3 py-1 text-xs font-medium">
+            {fileTypeLabel(document.mime_type)}
+          </span>
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-medium ${statusBadgeClass(displayStatus)}`}
+          >
+            {statusLabel(displayStatus)}
+          </span>
+        </div>
       </div>
 
       {location.state?.deduplicated ? (
@@ -181,12 +217,7 @@ export function DocumentPage() {
             {progressHeading}
           </h2>
         </div>
-        {isComplete ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Extraction finished. The result still requires human review.
-          </p>
-        ) : null}
-        {runQuery.data?.progress?.total_pages ? (
+        {!isComplete && runQuery.data?.progress?.total_pages ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {runQuery.data.progress.completed_pages === null
               ? `${runQuery.data.progress.total_pages} pages detected`
@@ -203,54 +234,34 @@ export function DocumentPage() {
             {runQuery.error.message}
           </p>
         ) : null}
-      </div>
-
-      <dl className="mt-5 text-sm">
-        <div className="rounded-lg border bg-card p-4">
-          <dt className="text-xs text-muted-foreground">File type</dt>
-          <dd className="mt-1 font-medium">{document.mime_type}</dd>
-        </div>
-      </dl>
-
-      <div className="mt-6 flex gap-3">
-        {isComplete && run.result_id ? (
-          <Button
-            nativeButton={false}
-            render={<Link to={`/results/${run.result_id}/review`} />}
-          >
-            Review extraction
-          </Button>
-        ) : null}
-        {run?.status === "failed" && document.original_available ? (
-          <Button
-            disabled={retryMutation.isPending}
-            onClick={() => retryMutation.mutate()}
-          >
-            {retryMutation.isPending ? "Retrying…" : "Retry extraction"}
-          </Button>
-        ) : null}
-        <Button
-          nativeButton={false}
-          render={<Link to="/upload" />}
-          variant="outline"
-        >
-          Upload another
-        </Button>
-      </div>
-
-      <section className="mt-8 rounded-2xl border bg-card p-5 shadow-sm">
-        <h2 className="font-semibold">Actions</h2>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
+          {isComplete && run.result_id ? (
+            <Button
+              nativeButton={false}
+              render={<Link to={`/results/${run.result_id}/review`} />}
+            >
+              Review extraction
+            </Button>
+          ) : null}
+          {run?.status === "failed" && document.original_available ? (
+            <Button
+              disabled={retryMutation.isPending}
+              onClick={() => retryMutation.mutate()}
+            >
+              {retryMutation.isPending ? "Retrying…" : "Retry extraction"}
+            </Button>
+          ) : null}
           {document.original_available ? (
             <Button
               disabled={viewMutation.isPending}
               onClick={() => viewMutation.mutate()}
               variant="outline"
             >
-              {viewMutation.isPending ? "Opening…" : "Open original"}
+              {viewMutation.isPending ? "Opening…" : "Open"}
             </Button>
           ) : null}
           <Button
+            disabled={isRunning}
             onClick={() => setDeleteDialogOpen(true)}
             variant="destructive"
           >
@@ -262,7 +273,7 @@ export function DocumentPage() {
             {actionError.message}
           </p>
         ) : null}
-      </section>
+      </div>
 
       <Dialog onOpenChange={setDeleteDialogOpen} open={deleteDialogOpen}>
         <DialogContent>
