@@ -59,6 +59,18 @@ uses `http://localhost:8000/api/v1` by default; override it with
 `VITE_API_BASE_URL` in `frontend/.env` when needed. Credentials and tokens must
 never be committed.
 
+To verify the development model adapter with generated synthetic data only:
+
+```bash
+cd backend
+source .venv/bin/activate
+python scripts/live_model_smoke.py
+```
+
+The script creates its invoice image inside a temporary directory, never uploads it to R2 or stores
+it in PostgreSQL, prints no extracted financial values or provider output, and deletes the image on
+exit. It refuses to run when `APP_ENV=production`.
+
 ## Configure development object storage
 
 Create a private Cloudflare R2 bucket and an Object Read & Write API token scoped only to that

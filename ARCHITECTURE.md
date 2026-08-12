@@ -841,6 +841,15 @@ arithmetic, GST components, and invoice totals with a two-paise tolerance. The c
 provider response, token counts, and warning objects are persisted atomically before the document is
 marked `ready`. A leased run can be reclaimed from any active stage and restarted safely.
 
+The development provider promotion check uses `backend/scripts/live_model_smoke.py`. It generates a
+clearly marked synthetic invoice in a temporary directory, calls the configured Gemini adapter,
+checks a bounded set of expected fields without printing their values, runs deterministic validation,
+and deletes the image on exit. It does not use R2 or PostgreSQL and refuses production execution.
+On 2026-08-12, Google AI Studio's `models.list` endpoint confirmed the stable identifier
+`gemini-3.5-flash` supports `generateContent`, and the live synthetic extraction gate passed with no
+deterministic validation issues. Availability must be rechecked through the same endpoint before a
+future model change: https://ai.google.dev/api/models
+
 ## 13. Frontend route map
 
 ```text
