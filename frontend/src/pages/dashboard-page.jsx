@@ -1,10 +1,5 @@
 import * as React from "react"
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   RiDeleteBinLine,
   RiEditLine,
@@ -25,6 +20,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import {
   Tooltip,
   TooltipContent,
@@ -118,9 +121,9 @@ function DocumentRow({ document }) {
   })
   const run = runQuery.data || initialRun
   const isRunning = Boolean(run && !TERMINAL_RUN_STATUSES.has(run.status))
-  const deleteDisabled =
-    isRunning ||
-    ["upload_pending", "uploaded", "processing"].includes(document.status)
+  const deleteDisabled = run
+    ? isRunning
+    : ["upload_pending", "uploaded", "processing"].includes(document.status)
   const displayStatus =
     runQuery.data?.progress?.stage || run?.status || document.status
   const statusText = `${STATUS_LABELS[displayStatus] || displayStatus.replaceAll("_", " ")}${isRunning ? "…" : ""}`
@@ -290,6 +293,8 @@ function DocumentRow({ document }) {
 export function DashboardPage() {
   const location = useLocation()
   const navigate = useNavigate()
+  const [pageIndex, setPageIndex] = React.useState(0)
+  const [pageCursors, setPageCursors] = React.useState([null])
   React.useEffect(() => {
     if (location.state?.deleted) {
       toast.success("Document and extraction data deleted.")
@@ -306,24 +311,32 @@ export function DashboardPage() {
     }
     navigate(location.pathname, { replace: true, state: null })
   }, [location.pathname, location.state, navigate])
-  const documentsQuery = useInfiniteQuery({
-    queryKey: ["documents"],
-    queryFn: ({ pageParam, signal }) =>
-      listDocuments({ cursor: pageParam, limit: 10, signal }),
-    initialPageParam: null,
-    getNextPageParam: (page) => page.next_cursor || undefined,
-    refetchInterval: (query) => {
-      const documents =
-        query.state.data?.pages.flatMap((page) => page.items) || []
-      return documents.some((document) =>
-        ["upload_pending", "uploaded", "processing"].includes(document.status)
-      )
-        ? 2_000
-        : false
-    },
+  const currentCursor = pageCursors[pageIndex]
+  const documentsQuery = useQuery({
+    queryKey: ["documents", currentCursor],
+    queryFn: ({ signal }) =>
+      listDocuments({ cursor: currentCursor, limit: 10, signal }),
+    staleTime: 5_000,
   })
-  const documents =
-    documentsQuery.data?.pages.flatMap((page) => page.items) || []
+  const documents = documentsQuery.data?.items || []
+  const hasPreviousPage = pageIndex > 0
+  const nextCursor = documentsQuery.data?.next_cursor
+  const hasNextPage = Boolean(nextCursor)
+
+  const showPreviousPage = (event) => {
+    event.preventDefault()
+    setPageIndex((current) => Math.max(0, current - 1))
+  }
+
+  const showNextPage = (event) => {
+    event.preventDefault()
+    if (!nextCursor) return
+    setPageCursors((current) => {
+      if (current[pageIndex + 1] === nextCursor) return current
+      return [...current.slice(0, pageIndex + 1), nextCursor]
+    })
+    setPageIndex((current) => current + 1)
+  }
 
   return (
     <TooltipProvider>
@@ -374,16 +387,30 @@ export function DashboardPage() {
               </p>
             </div>
           )}
-          {documentsQuery.hasNextPage ? (
-            <div className="border-t p-4 text-center">
-              <Button
-                disabled={documentsQuery.isFetchingNextPage}
-                onClick={() => documentsQuery.fetchNextPage()}
-                variant="outline"
-              >
-                {documentsQuery.isFetchingNextPage ? "Loading…" : "Load more"}
-              </Button>
-            </div>
+          {hasPreviousPage || hasNextPage ? (
+            <Pagination className="border-t p-4">
+              <PaginationContent>
+                {hasPreviousPage ? (
+                  <PaginationItem>
+                    <PaginationPrevious href="#" onClick={showPreviousPage} />
+                  </PaginationItem>
+                ) : null}
+                <PaginationItem>
+                  <PaginationLink
+                    href="#"
+                    isActive
+                    onClick={(event) => event.preventDefault()}
+                  >
+                    {pageIndex + 1}
+                  </PaginationLink>
+                </PaginationItem>
+                {hasNextPage ? (
+                  <PaginationItem>
+                    <PaginationNext href="#" onClick={showNextPage} />
+                  </PaginationItem>
+                ) : null}
+              </PaginationContent>
+            </Pagination>
           ) : null}
         </div>
       </section>

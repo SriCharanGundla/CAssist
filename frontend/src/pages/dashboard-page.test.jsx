@@ -112,6 +112,12 @@ describe("DashboardPage", () => {
         ],
         next_cursor: null,
       })
+    api.getRun.mockResolvedValue({
+      id: "run-2",
+      status: "extracting",
+      result_id: null,
+      progress: { stage: "extracting" },
+    })
     renderDashboard()
 
     expect(await screen.findByText("invoice-one.pdf")).toBeInTheDocument()
@@ -127,10 +133,60 @@ describe("DashboardPage", () => {
     })
     expect(deleteButton).toBeEnabled()
     expect(deleteButton).toHaveClass("text-destructive")
-    await user.click(screen.getByRole("button", { name: "Load more" }))
+    expect(screen.getByText("1")).toHaveAttribute("aria-current", "page")
+    await user.click(screen.getByRole("button", { name: "Go to next page" }))
     expect(await screen.findByText("invoice-two.png")).toBeInTheDocument()
+    expect(screen.queryByText("invoice-one.pdf")).not.toBeInTheDocument()
+    expect(screen.getByText("2")).toHaveAttribute("aria-current", "page")
     expect(api.listDocuments).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: "opaque-cursor", limit: 10 })
+    )
+    await user.click(
+      screen.getByRole("button", { name: "Go to previous page" })
+    )
+    expect(await screen.findByText("invoice-one.pdf")).toBeInTheDocument()
+    expect(screen.queryByText("invoice-two.png")).not.toBeInTheDocument()
+  })
+
+  it("updates one processing row without refetching the dashboard page", async () => {
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-1",
+          original_filename: "invoice.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "processing",
+          created_at: "2026-08-12T12:00:00Z",
+          latest_run: {
+            id: "run-1",
+            status: "extracting",
+            result_id: null,
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "succeeded",
+      result_id: "result-1",
+      progress: { stage: "complete" },
+    })
+
+    renderDashboard()
+
+    expect(await screen.findByText("Extraction complete")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Review extraction" })
+    ).toHaveAttribute("href", "/results/result-1/review")
+    expect(
+      screen.getByRole("button", { name: "Delete document" })
+    ).toBeEnabled()
+    expect(api.listDocuments).toHaveBeenCalledTimes(1)
+    expect(api.getRun).toHaveBeenCalledWith(
+      "run-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
   })
 

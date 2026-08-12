@@ -555,8 +555,8 @@ limit=25
 The implemented endpoint returns newest-first frontend-safe document summaries with the latest run,
 uses an opaque `(created_at, id)` keyset cursor, accepts limits from 1 through 100, and returns
 `Cache-Control: no-store`. Status and classifier document-type filters are supported. The dashboard
-loads ten records at a time and follows `next_cursor`; it never receives hashes, R2 keys, or provider
-output.
+shows exactly ten records per page and uses shadcn Previous/Next controls over the opaque
+`next_cursor` chain; it never receives hashes, R2 keys, or provider output.
 
 ### `GET /api/v1/documents/{document_id}`
 
@@ -1020,8 +1020,10 @@ The first implemented frontend slice protects all application routes with the ba
 obtains a fresh CSRF token for each mutating
 API request, sends the original directly to the exact presigned R2 `PUT`, and calls upload completion
 only after R2 succeeds. It then returns to the dashboard, including when completion reports an
-existing document from deduplication. The dashboard polls document and run status every two seconds
-until terminal state, reports only backend-safe errors, and does not invent page-level progress.
+existing document from deduplication. The dashboard list itself does not poll. Each active document
+row independently polls only its processing run every two seconds until terminal state, then updates
+its own status and actions without refreshing the table. It reports only backend-safe errors and does
+not invent page-level progress.
 Filename links open originals with fresh short-lived URLs; row actions provide review, development
 comparison, and deletion without an intermediate document page. The legacy
 `/documents/:documentId` URL redirects to the dashboard.
