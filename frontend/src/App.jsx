@@ -175,8 +175,19 @@ export function App() {
 
   if (authQuery.isPending) {
     return (
-      <main className="grid min-h-svh place-items-center p-6 text-sm text-muted-foreground">
-        Checking your session…
+      <main className="grid min-h-svh place-items-center p-6">
+        <div className="text-center">
+          <p className="text-lg font-semibold tracking-tight text-foreground">
+            CAssist
+          </p>
+          <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <span
+              aria-hidden="true"
+              className="size-4 animate-spin rounded-full border-2 border-current/30 border-t-current"
+            />
+            Checking your session…
+          </p>
+        </div>
       </main>
     )
   }

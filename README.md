@@ -70,6 +70,8 @@ The review screen presents dynamic sections rather than storage-oriented field/t
 handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
 Authenticated routes use descriptive browser titles and keyboard skip navigation; compact controls
 expand their touch targets on coarse-pointer devices.
+The frontend reports offline state explicitly and restores normal operation when the browser
+reconnects.
 
 ## Configure authentication
 

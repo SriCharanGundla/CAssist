@@ -1099,6 +1099,10 @@ Authenticated pages expose a focus-visible skip-to-content link and route-aware 
 review title includes the authorized original filename. Compact controls retain their visual size but
 meet larger touch targets on coarse-pointer devices. Image and PDF viewer icon controls expose both
 accessible names and visible tooltips.
+The client distinguishes offline network failures, displays a persistent reconnect indicator while
+offline, and uses a branded spinner while the authentication session is checked. Shared buttons
+transition only visual colour, shadow, transform, and opacity properties. The document head includes
+an SVG favicon plus light- and dark-scheme mobile theme colours.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately
 revokes a temporary object URL, while the server retains only export and audit events. Dashboard row

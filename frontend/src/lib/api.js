@@ -29,6 +29,10 @@ async function apiRequest(path, options = {}) {
   } catch (error) {
     if (timedOut)
       throw new Error("The request timed out. Try again.", { cause: error })
+    if (!navigator.onLine)
+      throw new Error("You’re offline. Reconnect and try again.", {
+        cause: error,
+      })
     throw error
   } finally {
     window.clearTimeout(timeout)

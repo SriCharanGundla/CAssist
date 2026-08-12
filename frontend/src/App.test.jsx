@@ -109,4 +109,13 @@ describe("authenticated app header", () => {
       screen.getByRole("button", { name: "Open account menu" })
     ).toHaveClass("[@media(pointer:coarse)]:size-11")
   })
+
+  it("shows branded progress while checking the session", async () => {
+    api.getCurrentAuth.mockReturnValue(new Promise(() => {}))
+    const view = renderApp()
+
+    expect(await screen.findByText("CAssist")).toBeInTheDocument()
+    expect(screen.getByText("Checking your session…")).toBeInTheDocument()
+    expect(view.container.querySelector(".animate-spin")).toBeInTheDocument()
+  })
 })

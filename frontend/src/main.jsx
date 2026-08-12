@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom"
 
 import "./index.css"
 import App from "./App.jsx"
+import { ConnectionStatus } from "@/components/connection-status"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 
@@ -23,6 +24,7 @@ createRoot(document.getElementById("root")).render(
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <App />
+          <ConnectionStatus />
           <Toaster position="top-right" />
         </BrowserRouter>
       </QueryClientProvider>

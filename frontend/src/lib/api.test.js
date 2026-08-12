@@ -163,6 +163,28 @@ describe("API request timeout", () => {
   })
 })
 
+describe("offline API feedback", () => {
+  it("turns a network failure into an actionable offline message", async () => {
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: false,
+    })
+    try {
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(
+        new TypeError("Failed to fetch")
+      )
+      await expect(getCurrentAuth()).rejects.toThrow(
+        "You’re offline. Reconnect and try again."
+      )
+    } finally {
+      Object.defineProperty(navigator, "onLine", {
+        configurable: true,
+        value: true,
+      })
+    }
+  })
+})
+
 describe("correctResult", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -219,7 +241,9 @@ describe("correctResult", () => {
       .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf-1" }))
       .mockReturnValueOnce(firstMutationResponse)
       .mockResolvedValueOnce(jsonResponse({ csrf_token: "csrf-2" }))
-      .mockResolvedValueOnce(jsonResponse({ result_id: "result-2", version: 2 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ result_id: "result-2", version: 2 })
+      )
 
     const first = correctResult("result-1", 1, [
       { target_id: "field-0001", value: "A" },
