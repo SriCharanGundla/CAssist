@@ -143,7 +143,7 @@ describe("ReviewPage", () => {
     expect(screen.getByAltText("Original document")).toBeInTheDocument()
     expect(screen.queryByText("Supplier GSTIN")).not.toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Approve extraction" })
+      screen.getByRole("button", { name: "Approve" })
     ).toBeEnabled()
   })
 
@@ -223,7 +223,7 @@ describe("ReviewPage", () => {
     renderReviewPage()
 
     await user.click(
-      await screen.findByRole("button", { name: "Approve extraction" })
+      await screen.findByRole("button", { name: "Approve" })
     )
     await user.click(
       await screen.findByRole("button", { name: "Download Tally JSON" })

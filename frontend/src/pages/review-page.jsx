@@ -534,7 +534,7 @@ export function ReviewPage() {
                 })
               }
             >
-              {reviewMutation.isPending ? "Approving…" : "Approve extraction"}
+              {reviewMutation.isPending ? "Approving…" : "Approve"}
             </Button>
           )}
         </div>
