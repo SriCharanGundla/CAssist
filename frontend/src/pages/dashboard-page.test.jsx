@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { toast } from "sonner"
 
 import * as api from "@/lib/api"
 import { DashboardPage } from "@/pages/dashboard-page"
@@ -20,6 +21,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
   }
 })
 
+vi.mock("sonner", () => ({
+  toast: {
+    error: vi.fn(),
+    info: vi.fn(),
+    success: vi.fn(),
+    warning: vi.fn(),
+  },
+}))
+
 function renderDashboard(initialEntry = "/") {
   return render(
     <QueryClientProvider
@@ -36,6 +46,32 @@ function renderDashboard(initialEntry = "/") {
 
 describe("DashboardPage", () => {
   beforeEach(() => vi.resetAllMocks())
+
+  it.each([
+    [
+      { uploaded: true },
+      "success",
+      "Document uploaded and queued for extraction.",
+    ],
+    [
+      { deduplicated: true },
+      "info",
+      "Existing document and processing history reused.",
+    ],
+    [
+      { uploaded: true, uploadCount: 3 },
+      "success",
+      "3 documents uploaded and queued for extraction.",
+    ],
+  ])("shows route feedback as a typed toast", async (state, type, message) => {
+    api.listDocuments.mockResolvedValue({ items: [], next_cursor: null })
+
+    renderDashboard({ pathname: "/", state })
+
+    expect(await screen.findByText("No documents yet")).toBeInTheDocument()
+    expect(toast[type]).toHaveBeenCalledWith(message)
+    expect(screen.queryByText(message)).not.toBeInTheDocument()
+  })
 
   it("shows recent documents and follows opaque pagination", async () => {
     const user = userEvent.setup()

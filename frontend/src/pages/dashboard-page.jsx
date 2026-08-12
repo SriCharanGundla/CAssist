@@ -12,7 +12,8 @@ import {
   RiRestartLine,
   RiTestTubeLine,
 } from "@remixicon/react"
-import { Link, useLocation } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -288,6 +289,23 @@ function DocumentRow({ document }) {
 
 export function DashboardPage() {
   const location = useLocation()
+  const navigate = useNavigate()
+  React.useEffect(() => {
+    if (location.state?.deleted) {
+      toast.success("Document and extraction data deleted.")
+    } else if (location.state?.deduplicated) {
+      toast.info("Existing document and processing history reused.")
+    } else if (location.state?.uploaded) {
+      toast.success(
+        location.state.uploadCount > 1
+          ? `${location.state.uploadCount} documents uploaded and queued for extraction.`
+          : "Document uploaded and queued for extraction."
+      )
+    } else {
+      return
+    }
+    navigate(location.pathname, { replace: true, state: null })
+  }, [location.pathname, location.state, navigate])
   const documentsQuery = useInfiniteQuery({
     queryKey: ["documents"],
     queryFn: ({ pageParam, signal }) =>
@@ -310,22 +328,6 @@ export function DashboardPage() {
   return (
     <TooltipProvider>
       <section>
-        {location.state?.deleted ? (
-          <p className="mb-5 rounded-lg bg-muted p-3 text-sm" role="status">
-            Document and extraction data deleted.
-          </p>
-        ) : null}
-        {location.state?.deduplicated ? (
-          <p className="mb-5 rounded-lg bg-muted p-3 text-sm" role="status">
-            Existing document and processing history reused.
-          </p>
-        ) : location.state?.uploaded ? (
-          <p className="mb-5 rounded-lg bg-muted p-3 text-sm" role="status">
-            {location.state.uploadCount > 1
-              ? `${location.state.uploadCount} documents uploaded and queued for extraction.`
-              : "Document uploaded and queued for extraction."}
-          </p>
-        ) : null}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
