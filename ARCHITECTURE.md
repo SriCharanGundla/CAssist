@@ -175,6 +175,7 @@ CREATE TABLE extraction_results (
     document_type           text NOT NULL,
     raw_provider_output     jsonb NOT NULL,
     canonical_data          jsonb NOT NULL,
+    evidence_data           jsonb NOT NULL DEFAULT '[]'::jsonb,
     validation_issues       jsonb NOT NULL DEFAULT '[]'::jsonb,
     review_status           review_status NOT NULL DEFAULT 'unreviewed',
     version                 integer NOT NULL DEFAULT 1,
@@ -692,6 +693,7 @@ Returns the raw canonical data, validation issues, corrections, and effective co
   "review_status": "unreviewed",
   "canonical_data": {},
   "effective_data": {},
+  "evidence": [],
   "validation_issues": [],
   "corrections": []
 }
@@ -842,16 +844,88 @@ The extraction adapter is implemented behind one provider-neutral protocol. Deve
 may use Strands `GeminiModel` with the verified Google AI Studio model identifier
 `gemini-3.5-flash`. Production is locked to Strands `OpenAIResponsesModel`, with stateless Responses
 API calls to the verified model identifier `gpt-5.6-luna`; production cannot select Gemini or supply
-a provider/model override. Page PNGs and extraction instructions are sent to the provider, while
-credentials remain environment-only.
+a provider/model override. Credentials remain environment-only.
 
-The first canonical schema covers Indian tax-invoice parties, line items, GST components, totals,
-and source-page references. All monetary values, quantities, prices, discounts, and rates are strict
-base-10 decimal strings. Provider output is parsed into the canonical Pydantic model, then
-deterministic validators check required fields, dates, PAN/GSTIN shape, GSTIN checksum, line
+### Agentic document analysis
+
+Extraction is an ordered, bounded Strands Graph rather than a model call hidden inside an `Agent`
+object. The graph is intentionally deterministic because accounting review requires reproducible
+stage order and an auditable failure boundary.
+
+```mermaid
+flowchart LR
+    PRE["Preprocess and render pages"] --> CLASSIFY["Document classification agent"]
+    CLASSIFY --> CONTRACT["Select registered document contract"]
+    CONTRACT --> EXTRACT["Contract-specific extraction agent"]
+    EXTRACT --> TOOLS["Narrow document tools"]
+    TOOLS --> EXTRACT
+    EXTRACT --> VALIDATE["Deterministic validation tool"]
+    VALIDATE -->|"one bounded evidence repair"| EXTRACT
+    VALIDATE --> PERSIST["Persist evidence, canonical values, and warnings"]
+```
+
+The initial graph implements the invoice family. Later document families add a classifier label,
+contract, deterministic validators, and review renderer without widening the invoice contract. The
+registry starts with `tax_invoice` and `invoice`; planned independent contracts include receipt,
+credit note, debit note, cheque, bank statement, and generic financial document. An unsupported or
+low-confidence classification is routed to the generic sparse-evidence contract and must not be
+coerced into invoice semantics.
+
+The extraction agent has no shell, arbitrary filesystem, network, database, R2, or general-purpose
+code-execution tool. Its per-document tools are:
+
+1. `inspect_page(page_number, region, scale)` returns only the requested temporary page or crop.
+2. `read_document_text(page_number)` and `search_document_text(query)` expose only temporary,
+   position-aware PDF text/OCR when available.
+3. `record_field(field_path, value, page_number, region)` accepts only paths registered by the
+   selected contract and records source evidence with the value.
+4. `record_table(rows, page_number, region)` validates a document-family table before recording it.
+5. `validate_draft()` runs deterministic accounting rules against the recorded draft and returns
+   only actionable issue codes and paths.
+
+The first implementation may ship page inspection, field/table recording, and validation before
+position-aware text retrieval is added. The agent must call validation before completing. A failed
+validation permits at most one targeted evidence-repair pass; the graph has explicit node-execution,
+tool-call, and wall-clock limits. Tool inputs and outputs contain accounting data and therefore must
+not be emitted to application logs or traces. Operational telemetry is restricted to tool name,
+duration, success/failure, token counts, and non-content issue codes.
+
+### Contracts, sparse evidence, and review projection
+
+A document contract is an internal, versioned naming/type/validation boundary, not a supplier layout
+template and not a form shown wholesale to the user. It maps visible variants such as `Invoice No`,
+`Bill #`, or `Voucher Ref` to stable accounting paths where appropriate. Layout and supplier history
+are not required.
+
+Each run produces two related representations:
+
+- `evidence_data` is sparse and contains only observations actually supported by a page/region,
+  including additional detected label/value pairs that do not map to the selected contract.
+- `canonical_data` normalizes recognized observations into the selected contract for deterministic
+  validation, append-only correction, deduplication, and export. Optional absent values may remain
+  null internally but are not projected as rows in the default review UI.
+
+The review projection shows populated extracted values, then missing/invalid required values under
+`Needs attention`. Missing optional values stay hidden under `Add optional details`. Line items and
+transactions use compact tables containing only relevant columns. The UI may never present a schema
+default as extracted evidence; for example, currency remains absent unless observed or is visibly
+labelled as a user/application assumption.
+
+The first invoice contract covers parties, line items, GST components, totals, and source evidence.
+All monetary values, quantities, prices, discounts, and rates are strict base-10 decimal strings.
+Deterministic validators check required fields, dates, PAN/GSTIN shape, GSTIN checksum, line
 arithmetic, GST components, and invoice totals with a two-paise tolerance. The canonical result,
-provider response, token counts, and warning objects are persisted atomically before the document is
-marked `ready`. A leased run can be reclaimed from any active stage and restarted safely.
+evidence, provider response, token counts, and warning objects are persisted atomically before the
+document is marked `ready`. A leased run can be reclaimed from any active stage and restarted safely.
+
+This design adopts two proven open-source practices: parse/render artifacts are reusable and
+extraction evidence remains linked to source spans/regions, as demonstrated by
+[LandingAI ADE](https://github.com/landing-ai/ade-cli); and document stages are specialized and
+ordered for auditability, matching the Strands workflow pattern
+[described by Leidos](https://aws.amazon.com/blogs/publicsector/how-leidos-enhanced-intelligent-document-processing-using-agentic-ai-on-aws/).
+CAssist does not copy the parallel classify/extract/validate arrangement in the
+[AWS Agentic Value Accelerator](https://github.com/aws-samples/sample-agentic-value-accelerator)
+sample because validation must depend on the extraction it validates.
 
 The development provider promotion check uses `backend/scripts/live_model_smoke.py`. It generates a
 clearly marked synthetic invoice in a temporary directory, calls the configured Gemini adapter,
