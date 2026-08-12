@@ -1051,7 +1051,9 @@ only after R2 succeeds. It then returns to the dashboard, including when complet
 existing document from deduplication, after invalidating the cached document list. The dashboard list itself does not poll. Each active document
 row independently polls only its processing run every two seconds until terminal state, then updates
 its own status and actions without refreshing the table. It reports only backend-safe errors and does
-not invent page-level progress.
+not invent page-level progress. Standard API requests use a 30-second client timeout; the direct R2
+upload is excluded because large file transfers require their own progress-aware lifecycle. The
+dashboard displays structural row placeholders while its initial document query is pending.
 Filename links open originals with fresh short-lived URLs; row actions provide review, development
 comparison, and deletion without an intermediate document page. The legacy
 `/documents/:documentId` URL redirects to the dashboard.
@@ -1062,13 +1064,15 @@ pages, and quality issues. It embeds the private
 original beside the editable extraction through a fresh short-lived signed URL. A PDF.js canvas
 viewer supplies page navigation, zoom, fit, rotation, and smooth scroll-based panning; it renders
 only nearby pages and defers sharp rerendering until interaction settles. Image preview supplies
-bounded zoom, pan, and reset controls. CSV/XLSX review shows a short-lived action for opening the
+the same bounded zoom range plus clamped pan and reset controls, keeping part of the image reachable.
+CSV/XLSX review shows a short-lived action for opening the
 original spreadsheet because browsers do not provide a reliable native XLSX renderer.
 The user can hide the original. Clicking a displayed value copies it and shows a shadcn popover at
 that value. Field correction uses its stable ID and appends a versioned correction; extracted source
 data and provenance remain immutable. A compact changes disclosure shows correction history and the
 screen requires an explicit approval action. Conflicts refresh the result instead of silently
-overwriting another tab. Approved results are read-only: copying and export remain available, but
+overwriting another tab and show concise user-facing feedback without exposing concurrency details.
+Approved results are read-only: copying and export remain available, but
 correction controls and quality suggestions return only after an explicit `Return to review` action.
 
 Approved results expose an on-demand Tally JSON download; the browser creates and immediately

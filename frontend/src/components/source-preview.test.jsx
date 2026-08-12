@@ -148,4 +148,58 @@ describe("SourcePreview PDF viewer", () => {
     )
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
   })
+
+  it("keeps a zoomed image partially inside its viewport", async () => {
+    const user = userEvent.setup()
+    render(
+      <SourcePreview
+        mimeType="image/png"
+        sourceUrl="https://download.invalid/original.png"
+      />
+    )
+
+    const viewport = screen.getByLabelText("Image document viewer")
+    const image = screen.getByAltText("Original document")
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 300 },
+      clientWidth: { configurable: true, value: 400 },
+    })
+    Object.defineProperties(image, {
+      offsetHeight: { configurable: true, value: 200 },
+      offsetWidth: { configurable: true, value: 200 },
+    })
+    viewport.setPointerCapture = vi.fn()
+
+    await user.click(screen.getByRole("button", { name: "Zoom in" }))
+    fireEvent.pointerDown(viewport, {
+      clientX: 0,
+      clientY: 0,
+      pointerId: 1,
+    })
+    fireEvent.pointerMove(viewport, {
+      clientX: 1_000,
+      clientY: 1_000,
+      pointerId: 1,
+    })
+
+    expect(image).toHaveStyle({
+      transform: "translate(277px, 227px) scale(1.25)",
+    })
+  })
+
+  it("uses the same maximum zoom for images and PDFs", async () => {
+    const user = userEvent.setup()
+    render(
+      <SourcePreview
+        mimeType="image/png"
+        sourceUrl="https://download.invalid/original.png"
+      />
+    )
+
+    const zoomIn = screen.getByRole("button", { name: "Zoom in" })
+    for (let count = 0; count < 8; count += 1) await user.click(zoomIn)
+
+    expect(screen.getByText("300%")).toBeInTheDocument()
+    expect(zoomIn).toBeDisabled()
+  })
 })

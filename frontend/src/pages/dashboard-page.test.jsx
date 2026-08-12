@@ -196,6 +196,13 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("No documents yet")).toBeInTheDocument()
   })
 
+  it("shows a structural loading state while documents load", () => {
+    api.listDocuments.mockReturnValue(new Promise(() => {}))
+    renderDashboard()
+    expect(screen.getByLabelText("Loading documents")).toBeInTheDocument()
+    expect(screen.queryByText("Loading documents…")).not.toBeInTheDocument()
+  })
+
   it("opens the original and offers both deletion choices", async () => {
     const user = userEvent.setup()
     const open = vi.spyOn(window, "open").mockImplementation(() => null)

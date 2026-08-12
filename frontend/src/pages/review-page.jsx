@@ -7,6 +7,7 @@ import {
   RiEyeOffLine,
 } from "@remixicon/react"
 import { Link, useParams } from "react-router-dom"
+import { toast } from "sonner"
 
 import { SourcePreview } from "@/components/source-preview"
 import { Button } from "@/components/ui/button"
@@ -314,8 +315,10 @@ export function ReviewPage() {
   const updateCachedResult = (result) =>
     queryClient.setQueryData(["result", resultId], result)
   const handleMutationError = (error) => {
-    if (error.status === 409)
+    if (error.status === 409) {
       queryClient.invalidateQueries({ queryKey: ["result", resultId] })
+      toast.info("A newer version was loaded. Review your change and try again.")
+    }
   }
   const correctionMutation = useMutation({
     mutationFn: ({ expectedVersion, reason, targetId, value }) =>
@@ -428,8 +431,11 @@ export function ReviewPage() {
   const unmappedIssues = result.quality_issues.filter(
     (issue) => !knownTargets.has(issue.target_id)
   )
-  const mutationError =
-    correctionMutation.error || reviewMutation.error || exportMutation.error
+  const mutationError = [
+    correctionMutation.error,
+    reviewMutation.error,
+    exportMutation.error,
+  ].find((error) => error && error.status !== 409)
   const saveCorrection = (targetId, value, reason) => {
     correctionMutation.reset()
     return correctionMutation.mutateAsync({

@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { toast } from "sonner"
 
 import * as api from "@/lib/api"
 import { ReviewPage } from "@/pages/review-page"
@@ -14,6 +15,10 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   correctResult: vi.fn(),
   downloadTallyExport: vi.fn(),
   updateResultReview: vi.fn(),
+}))
+
+vi.mock("sonner", () => ({
+  toast: { info: vi.fn() },
 }))
 
 const extraction = {
@@ -271,5 +276,24 @@ describe("ReviewPage", () => {
     expect(
       screen.getByRole("button", { name: "Use “INV-7”" })
     ).toBeInTheDocument()
+  })
+
+  it("loads the latest result with clear feedback after a version conflict", async () => {
+    const user = userEvent.setup()
+    const conflict = Object.assign(new Error("Result changed; reload"), {
+      status: 409,
+    })
+    api.correctResult.mockRejectedValue(conflict)
+    renderReviewPage()
+
+    const issue = await screen.findByText("Possible character confusion")
+    await user.click(
+      within(issue.closest("li")).getByRole("button", { name: "Use “INV-7”" })
+    )
+
+    expect(toast.info).toHaveBeenCalledWith(
+      "A newer version was loaded. Review your change and try again."
+    )
+    expect(screen.queryByText("Result changed; reload")).not.toBeInTheDocument()
   })
 })

@@ -1,19 +1,38 @@
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL
+const API_REQUEST_TIMEOUT_MS = 30_000
 
 export const API_BASE_URL = (
   configuredApiBaseUrl || "http://localhost:8000/api/v1"
 ).replace(/\/$/, "")
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    credentials: "include",
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...options.headers,
-    },
-  })
-  return response
+  const controller = new AbortController()
+  let timedOut = false
+  const abortFromCaller = () => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) abortFromCaller()
+  else options.signal?.addEventListener("abort", abortFromCaller, { once: true })
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, API_REQUEST_TIMEOUT_MS)
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, {
+      credentials: "include",
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...options.headers,
+      },
+    })
+  } catch (error) {
+    if (timedOut)
+      throw new Error("The request timed out. Try again.", { cause: error })
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+    options.signal?.removeEventListener("abort", abortFromCaller)
+  }
 }
 
 async function responseError(response, fallbackMessage) {

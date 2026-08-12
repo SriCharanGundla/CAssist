@@ -106,6 +106,25 @@ function IconAction({ label, ...buttonProps }) {
   )
 }
 
+function DocumentListSkeleton() {
+  return (
+    <div aria-label="Loading documents" className="divide-y">
+      {Array.from({ length: 3 }, (_, index) => (
+        <div
+          className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4"
+          key={index}
+        >
+          <div className="space-y-2 motion-safe:animate-pulse">
+            <div className="h-4 w-2/3 rounded bg-muted" />
+            <div className="h-3 w-28 rounded bg-muted" />
+          </div>
+          <div className="size-8 rounded-full bg-muted motion-safe:animate-pulse" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function DocumentRow({ document }) {
   const queryClient = useQueryClient()
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
@@ -367,9 +386,7 @@ export function DashboardPage() {
             </span>
           </div>
           {documentsQuery.isPending ? (
-            <p className="p-5 text-sm text-muted-foreground">
-              Loading documents…
-            </p>
+            <DocumentListSkeleton />
           ) : documentsQuery.error ? (
             <p className="p-5 text-sm text-destructive" role="alert">
               {documentsQuery.error.message}

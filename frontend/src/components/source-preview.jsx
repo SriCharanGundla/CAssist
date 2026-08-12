@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const ZOOM_STEP = 0.25
+const MIN_VISIBLE_IMAGE_PIXELS = 48
 const SHARP_RENDER_DELAY_MS = 180
 const SPREADSHEET_MIME_TYPES = new Set([
   "text/csv",
@@ -49,6 +50,28 @@ function ImagePreview({ sourceUrl }) {
   const [zoom, setZoom] = React.useState(1)
   const [position, setPosition] = React.useState({ x: 0, y: 0 })
   const drag = React.useRef(null)
+  const imageRef = React.useRef(null)
+  const viewportRef = React.useRef(null)
+
+  const clampPosition = React.useCallback((nextPosition, nextZoom = zoom) => {
+    const image = imageRef.current
+    const viewport = viewportRef.current
+    if (!image || !viewport || nextZoom <= 1) return { x: 0, y: 0 }
+    const maximumX = Math.max(
+      0,
+      (viewport.clientWidth + image.offsetWidth * nextZoom) / 2 -
+        MIN_VISIBLE_IMAGE_PIXELS
+    )
+    const maximumY = Math.max(
+      0,
+      (viewport.clientHeight + image.offsetHeight * nextZoom) / 2 -
+        MIN_VISIBLE_IMAGE_PIXELS
+    )
+    return {
+      x: Math.min(maximumX, Math.max(-maximumX, nextPosition.x)),
+      y: Math.min(maximumY, Math.max(-maximumY, nextPosition.y)),
+    }
+  }, [zoom])
 
   const reset = () => {
     setZoom(1)
@@ -56,9 +79,9 @@ function ImagePreview({ sourceUrl }) {
   }
 
   const changeZoom = (nextZoom) => {
-    const bounded = Math.min(4, Math.max(0.5, nextZoom))
+    const bounded = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom))
     setZoom(bounded)
-    if (bounded === 1) setPosition({ x: 0, y: 0 })
+    setPosition((current) => clampPosition(current, bounded))
   }
 
   return (
@@ -66,8 +89,8 @@ function ImagePreview({ sourceUrl }) {
       <div className="flex items-center gap-1 border-b p-2">
         <Button
           aria-label="Zoom out"
-          disabled={zoom <= 0.5}
-          onClick={() => changeZoom(zoom - 0.25)}
+          disabled={zoom <= MIN_ZOOM}
+          onClick={() => changeZoom(zoom - ZOOM_STEP)}
           size="icon"
           variant="ghost"
         >
@@ -78,8 +101,8 @@ function ImagePreview({ sourceUrl }) {
         </span>
         <Button
           aria-label="Zoom in"
-          disabled={zoom >= 4}
-          onClick={() => changeZoom(zoom + 0.25)}
+          disabled={zoom >= MAX_ZOOM}
+          onClick={() => changeZoom(zoom + ZOOM_STEP)}
           size="icon"
           variant="ghost"
         >
@@ -98,6 +121,7 @@ function ImagePreview({ sourceUrl }) {
         </span>
       </div>
       <div
+        aria-label="Image document viewer"
         className={`relative min-h-96 flex-1 overflow-hidden bg-muted/50 ${zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}
         onPointerDown={(event) => {
           if (zoom <= 1) return
@@ -111,19 +135,23 @@ function ImagePreview({ sourceUrl }) {
         }}
         onPointerMove={(event) => {
           if (!drag.current) return
-          setPosition({
-            x: drag.current.startX + event.clientX - drag.current.pointerX,
-            y: drag.current.startY + event.clientY - drag.current.pointerY,
-          })
+          setPosition(
+            clampPosition({
+              x: drag.current.startX + event.clientX - drag.current.pointerX,
+              y: drag.current.startY + event.clientY - drag.current.pointerY,
+            })
+          )
         }}
         onPointerUp={() => {
           drag.current = null
         }}
+        ref={viewportRef}
       >
         <img
           alt="Original document"
           className="absolute inset-0 m-auto max-h-full max-w-full object-contain transition-transform duration-100 select-none"
           draggable="false"
+          ref={imageRef}
           src={sourceUrl}
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,

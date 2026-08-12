@@ -4,6 +4,7 @@ import {
   API_BASE_URL,
   correctResult,
   deleteDocumentOriginal,
+  getCurrentAuth,
   permanentlyDeleteDocument,
   retryDocumentProcessing,
   uploadDocument,
@@ -134,6 +135,31 @@ describe("uploadDocument", () => {
       )
     ).rejects.toThrow("The file could not be uploaded to private storage.")
     expect(fetch).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe("API request timeout", () => {
+  it("aborts a standard API request after thirty seconds", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        (_url, { signal }) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError"))
+            )
+          })
+      )
+
+      const request = expect(getCurrentAuth()).rejects.toThrow(
+        "The request timed out. Try again."
+      )
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      await request
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
