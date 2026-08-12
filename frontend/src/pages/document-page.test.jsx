@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DocumentPage } from "@/pages/document-page"
 import * as api from "@/lib/api"
@@ -35,6 +35,10 @@ function renderDocumentPage() {
 }
 
 describe("DocumentPage", () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
   it("polls the linked run and marks completed extraction as review-required", async () => {
     api.getDocument.mockResolvedValue({
       id: "document-1",
@@ -125,5 +129,41 @@ describe("DocumentPage", () => {
     ).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Confirm deletion" }))
     expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
+  })
+
+  it("requires confirmation before permanently deleting the database record and original", async () => {
+    const user = userEvent.setup()
+    api.getDocument.mockResolvedValue({
+      id: "document-1",
+      original_filename: "invoice.pdf",
+      mime_type: "application/pdf",
+      status: "ready",
+      original_available: true,
+      latest_run: { id: "run-1", status: "succeeded" },
+    })
+    api.getRun.mockResolvedValue({
+      id: "run-1",
+      status: "succeeded",
+      result_id: "result-1",
+      error: null,
+      progress: { completed_pages: 1, total_pages: 1 },
+    })
+    api.permanentlyDeleteDocument.mockResolvedValue(undefined)
+    renderDocumentPage()
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Permanently delete record",
+      })
+    )
+    expect(api.permanentlyDeleteDocument).not.toHaveBeenCalled()
+    expect(
+      screen.getByText(/Permanently delete this document/)
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Confirm deletion" }))
+
+    await waitFor(() =>
+      expect(api.permanentlyDeleteDocument).toHaveBeenCalledWith("document-1")
+    )
   })
 })

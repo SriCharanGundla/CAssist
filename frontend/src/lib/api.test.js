@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { API_BASE_URL, correctResult, uploadDocument } from "@/lib/api"
+import {
+  API_BASE_URL,
+  correctResult,
+  deleteDocumentOriginal,
+  permanentlyDeleteDocument,
+  uploadDocument,
+} from "@/lib/api"
 
 function jsonResponse(payload, init = {}) {
   return new Response(JSON.stringify(payload), {
@@ -157,6 +163,36 @@ describe("correctResult", () => {
         headers: expect.objectContaining({
           "Content-Type": "application/json",
           "X-CSRF-Token": "correction-csrf",
+        }),
+      })
+    )
+  })
+})
+
+describe("document deletion", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    [deleteDocumentOriginal, "/documents/document-1/original"],
+    [permanentlyDeleteDocument, "/documents/document-1"],
+  ])("sends a CSRF-protected DELETE to the intended endpoint", async (remove, path) => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "delete-csrf" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    await remove("document-1")
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${API_BASE_URL}${path}`,
+      expect.objectContaining({
+        credentials: "include",
+        method: "DELETE",
+        headers: expect.objectContaining({
+          "X-CSRF-Token": "delete-csrf",
         }),
       })
     )

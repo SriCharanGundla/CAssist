@@ -49,6 +49,18 @@ function correctedValue(draft, type) {
   return draft === "" ? null : draft
 }
 
+function hasValue(value) {
+  if (Array.isArray(value)) return value.length > 0
+  return value !== null && value !== undefined && value !== ""
+}
+
+function documentTypeLabel(value) {
+  return value
+    .split("_")
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ")
+}
+
 function FieldIssues({ issues }) {
   if (!issues.length) return null
   return (
@@ -65,7 +77,7 @@ function FieldIssues({ issues }) {
   )
 }
 
-function EditableField({ field, issues, onSave, saving, value }) {
+function EditableField({ evidence, field, issues, onSave, saving, value }) {
   const [editing, setEditing] = React.useState(false)
   const [draft, setDraft] = React.useState(() => inputValue(value, field.type))
   const [reason, setReason] = React.useState("")
@@ -84,9 +96,16 @@ function EditableField({ field, issues, onSave, saving, value }) {
     <div className="border-b py-4 last:border-b-0">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-muted-foreground">
-            {field.label}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              {field.label}
+            </p>
+            {evidence ? (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                Source page {evidence.page_number}
+              </span>
+            ) : null}
+          </div>
           {!editing ? (
             <p className="mt-1 text-sm font-medium break-words">
               {displayValue(value)}
@@ -239,6 +258,7 @@ export function ReviewPage() {
       downloadTallyExport(resultId, expectedVersion),
     onError: handleMutationError,
   })
+  const [showOptionalFields, setShowOptionalFields] = React.useState(false)
 
   if (resultQuery.isPending) {
     return <p className="text-sm text-muted-foreground">Loading extraction…</p>
@@ -259,6 +279,9 @@ export function ReviewPage() {
     return grouped
   }, new Map())
   const mutationError = correctionMutation.error || reviewMutation.error
+  const evidenceByPath = new Map(
+    (result.evidence || []).map((evidence) => [evidence.field_path, evidence])
+  )
   const saveCorrection = (path, value, reason) => {
     correctionMutation.reset()
     return correctionMutation.mutateAsync({
@@ -270,6 +293,12 @@ export function ReviewPage() {
   }
   const renderField = (field) => (
     <EditableField
+      evidence={
+        evidenceByPath.get(field.path) ||
+        [...evidenceByPath.entries()].find(([path]) =>
+          field.path.startsWith(`${path}/`)
+        )?.[1]
+      }
       field={field}
       issues={issuesByPath.get(field.path) || []}
       key={field.path}
@@ -278,20 +307,92 @@ export function ReviewPage() {
       value={valueAtPointer(data, field.path)}
     />
   )
+  const invoiceFields = INVOICE_FIELDS
+  const partyFields = [
+    ...PARTY_FIELDS.map((field) => ({
+      ...field,
+      group: "Supplier",
+      path: `/supplier/${field.key}`,
+    })),
+    ...PARTY_FIELDS.map((field) => ({
+      ...field,
+      group: "Buyer",
+      path: `/buyer/${field.key}`,
+    })),
+  ]
+  const totalFields = TOTAL_FIELDS.map((field) => ({
+    ...field,
+    path: `/totals/${field.key}`,
+  }))
+  const scalarFields = [
+    ...invoiceFields.map((field) => ({ ...field, group: "Invoice details" })),
+    ...partyFields,
+    ...totalFields.map((field) => ({ ...field, group: "Invoice totals" })),
+  ]
+  const isPrimaryField = (field) =>
+    hasValue(valueAtPointer(data, field.path)) || issuesByPath.has(field.path)
+  const optionalFields = scalarFields.filter((field) => !isPrimaryField(field))
+  const extractedFieldCount =
+    scalarFields.filter((field) => hasValue(valueAtPointer(data, field.path)))
+      .length +
+    data.line_items.reduce(
+      (count, item) =>
+        count +
+        LINE_ITEM_FIELDS.filter((field) => hasValue(item[field.key])).length +
+        LINE_TAX_FIELDS.filter((field) =>
+          hasValue(item.tax_amounts[field.key])
+        ).length,
+      0
+    )
+  const mappedIssuePaths = new Set([
+    ...scalarFields.map((field) => field.path),
+    ...data.line_items.flatMap((_, index) => [
+      ...LINE_ITEM_FIELDS.map(
+        (field) => `/line_items/${index}/${field.key}`
+      ),
+      ...LINE_TAX_FIELDS.map(
+        (field) => `/line_items/${index}/tax_amounts/${field.key}`
+      ),
+    ]),
+  ])
+  const unmappedIssues = result.validation_issues.filter(
+    (issue) => !mappedIssuePaths.has(issue.field_path)
+  )
+
+  const renderSparseSection = (title, fields) => {
+    const primaryFields = fields.filter(isPrimaryField)
+    if (!primaryFields.length) return null
+    return (
+      <FieldSection key={title} title={title}>
+        {primaryFields.map(renderField)}
+      </FieldSection>
+    )
+  }
 
   return (
-    <section className="mx-auto max-w-4xl">
+    <section className="mx-auto max-w-5xl">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
             Human review required
           </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">
             Review extracted invoice
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Version {result.version} · {REVIEW_LABELS[result.review_status]}
           </p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full border bg-card px-3 py-1">
+              {documentTypeLabel(result.document_type)}
+            </span>
+            <span className="rounded-full border bg-card px-3 py-1">
+              {extractedFieldCount} extracted fields
+            </span>
+            <span className="rounded-full border bg-card px-3 py-1">
+              {result.validation_issues.length} need attention
+            </span>
+          </div>
         </div>
         <Button nativeButton={false} render={<Link to="/" />} variant="outline">
           Back to dashboard
@@ -303,8 +404,8 @@ export function ReviewPage() {
           <div>
             <h2 className="font-semibold">
               {result.validation_issues.length
-                ? `${result.validation_issues.length} validation warning${result.validation_issues.length === 1 ? "" : "s"}`
-                : "No validation warnings"}
+                ? "Needs attention"
+                : "Ready for your review"}
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
               Approval records your review; it does not submit bookkeeping or
@@ -352,14 +453,13 @@ export function ReviewPage() {
             </Button>
           )}
         </div>
-        {result.validation_issues.length ? (
+        {unmappedIssues.length ? (
           <ul className="mt-4 space-y-2">
-            {result.validation_issues.map((issue) => (
+            {unmappedIssues.map((issue) => (
               <li
                 className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 key={`${issue.code}-${issue.field_path}`}
               >
-                <span className="font-medium">{issue.field_path}</span>:{" "}
                 {issue.message}
               </li>
             ))}
@@ -374,27 +474,19 @@ export function ReviewPage() {
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <div className="space-y-5">
-          <FieldSection title="Invoice details">
-            {INVOICE_FIELDS.map(renderField)}
-          </FieldSection>
-          {[
-            ["supplier", "Supplier"],
-            ["buyer", "Buyer"],
-          ].map(([partyKey, title]) => (
-            <FieldSection key={partyKey} title={title}>
-              {PARTY_FIELDS.map((field) =>
-                renderField({ ...field, path: `/${partyKey}/${field.key}` })
-              )}
-            </FieldSection>
-          ))}
+          {renderSparseSection("Invoice details", invoiceFields)}
+          {renderSparseSection(
+            "Supplier",
+            partyFields.filter((field) => field.group === "Supplier")
+          )}
+          {renderSparseSection(
+            "Buyer",
+            partyFields.filter((field) => field.group === "Buyer")
+          )}
         </div>
 
         <div className="space-y-5">
-          <FieldSection title="Invoice totals">
-            {TOTAL_FIELDS.map((field) =>
-              renderField({ ...field, path: `/totals/${field.key}` })
-            )}
-          </FieldSection>
+          {renderSparseSection("Invoice totals", totalFields)}
           <FieldSection
             description="Descriptions and financial values are editable. Source pages remain extraction provenance."
             title={`Line items (${data.line_items.length})`}
@@ -403,21 +495,28 @@ export function ReviewPage() {
               data.line_items.map((item, index) => (
                 <div className="border-b py-4 last:border-b-0" key={index}>
                   <h3 className="text-sm font-semibold">Line {index + 1}</h3>
-                  {LINE_ITEM_FIELDS.map((field) =>
-                    renderField({
-                      ...field,
-                      path: `/line_items/${index}/${field.key}`,
-                    })
-                  )}
-                  <p className="mt-3 text-xs font-medium text-muted-foreground">
-                    Tax amounts
-                  </p>
-                  {LINE_TAX_FIELDS.map((field) =>
-                    renderField({
+                  {LINE_ITEM_FIELDS.map((field) => ({
+                    ...field,
+                    path: `/line_items/${index}/${field.key}`,
+                  }))
+                    .filter(isPrimaryField)
+                    .map(renderField)}
+                  {LINE_TAX_FIELDS.some((field) =>
+                    isPrimaryField({
                       ...field,
                       path: `/line_items/${index}/tax_amounts/${field.key}`,
                     })
-                  )}
+                  ) ? (
+                    <p className="mt-3 text-xs font-medium text-muted-foreground">
+                      Tax amounts
+                    </p>
+                  ) : null}
+                  {LINE_TAX_FIELDS.map((field) => ({
+                    ...field,
+                    path: `/line_items/${index}/tax_amounts/${field.key}`,
+                  }))
+                    .filter(isPrimaryField)
+                    .map(renderField)}
                   <p className="mt-3 text-xs text-muted-foreground">
                     Source pages: {item.source_pages.join(", ") || "None"}
                   </p>
@@ -429,6 +528,41 @@ export function ReviewPage() {
               </p>
             )}
           </FieldSection>
+          {optionalFields.length ? (
+            <section className="rounded-2xl border border-dashed bg-card p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">Optional details</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Absent fields stay out of the review unless you need them.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setShowOptionalFields((shown) => !shown)}
+                  variant="outline"
+                >
+                  {showOptionalFields
+                    ? "Hide optional details"
+                    : `Add optional details (${optionalFields.length})`}
+                </Button>
+              </div>
+              {showOptionalFields ? (
+                <div className="mt-4">
+                  {optionalFields.map((field, index) => (
+                    <React.Fragment key={field.path}>
+                      {index === 0 ||
+                      optionalFields[index - 1].group !== field.group ? (
+                        <p className="mt-4 text-xs font-semibold text-muted-foreground first:mt-0">
+                          {field.group}
+                        </p>
+                      ) : null}
+                      {renderField(field)}
+                    </React.Fragment>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
           <FieldSection title="Correction history">
             <CorrectionHistory corrections={result.corrections} />
           </FieldSection>

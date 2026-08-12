@@ -27,6 +27,13 @@ const initialResult = {
   reviewed_by_user_id: null,
   reviewed_at: null,
   canonical_data: {},
+  evidence: [
+    {
+      field_path: "/invoice_number",
+      page_number: 1,
+      region: { x: 10, y: 10, width: 40, height: 20 },
+    },
+  ],
   effective_data: {
     document_type: "tax_invoice",
     invoice_number: "INV-1",
@@ -108,17 +115,23 @@ describe("ReviewPage", () => {
     api.getResult.mockResolvedValue(structuredClone(initialResult))
   })
 
-  it("shows warnings beside effective accounting fields", async () => {
+  it("shows sourced values and attention fields without empty optional rows", async () => {
     renderReviewPage()
 
     expect(
       await screen.findByText("Review extracted invoice")
     ).toBeInTheDocument()
-    expect(screen.getByText("1 validation warning")).toBeInTheDocument()
+    expect(screen.getByText("Needs attention")).toBeInTheDocument()
+    expect(screen.getByText("1 need attention")).toBeInTheDocument()
     expect(screen.getByText("Buyer name was not extracted")).toBeInTheDocument()
+    expect(screen.getByText("Source page 1")).toBeInTheDocument()
     expect(screen.getAllByText("118.00")).toHaveLength(2)
     expect(screen.getByText("Line items (1)")).toBeInTheDocument()
     expect(screen.getByText("Source pages: 1")).toBeInTheDocument()
+    expect(screen.queryByText("Due date")).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /Add optional details/ })
+    ).toBeEnabled()
     expect(
       screen.getByRole("button", { name: "Approve extraction" })
     ).toBeEnabled()
@@ -167,7 +180,22 @@ describe("ReviewPage", () => {
       },
     ])
     expect(await screen.findByText("Version 2 · In review")).toBeInTheDocument()
-    expect(screen.getByText("No validation warnings")).toBeInTheDocument()
+    expect(screen.getByText("Ready for your review")).toBeInTheDocument()
+  })
+
+  it("reveals absent optional contract fields only when requested", async () => {
+    const user = userEvent.setup()
+    renderReviewPage()
+    await screen.findByText("Review extracted invoice")
+
+    await user.click(
+      screen.getByRole("button", { name: /Add optional details/ })
+    )
+
+    expect(screen.getByText("Due date")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Hide optional details" })
+    ).toBeEnabled()
   })
 
   it("records explicit human approval against the current version", async () => {
