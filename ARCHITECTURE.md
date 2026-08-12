@@ -826,6 +826,16 @@ attempt before failing visibly. Provider timeouts and retries must fit inside th
 the configuration validator reserves a 30-second persistence margin and disables Strands' second
 retry layer.
 
+The local and container worker entry point is `cassist-worker`. It runs one polling loop and awaits
+each complete claim/process/persist attempt before claiming another document, so initial concurrency
+is exactly one. Empty queues wait for `WORKER_POLL_SECONDS` (default two seconds). SIGINT/SIGTERM
+request graceful shutdown, and unexpected loop-level failures emit only a generic error before retrying;
+exception details that could contain credentials or provider data are not logged.
+Before each processing attempt, the same single worker deletes at most one expired
+`upload_pending` row and its `incoming/` object. R2 deletion succeeds before PostgreSQL removes the
+row; storage failures roll back and retry later. This bounds abandoned browser uploads without ever
+applying expiry to finalized originals.
+
 The extraction adapter is implemented behind one provider-neutral protocol. Development and test
 may use Strands `GeminiModel` with the verified Google AI Studio model identifier
 `gemini-3.5-flash`. Production is locked to Strands `OpenAIResponsesModel`, with stateless Responses
@@ -849,6 +859,12 @@ On 2026-08-12, Google AI Studio's `models.list` endpoint confirmed the stable id
 `gemini-3.5-flash` supports `generateContent`, and the live synthetic extraction gate passed with no
 deterministic validation issues. Availability must be rechecked through the same endpoint before a
 future model change: https://ai.google.dev/api/models
+
+The final local promotion gate is `backend/scripts/local_vertical_smoke.py`. It refuses production
+and refuses to compete with an existing active run, creates only clearly identified synthetic data,
+then exercises the authenticated API, direct private R2 upload, trusted completion, real worker/model,
+result correction, approval, Tally export, signed original retrieval, and permanent deletion. Its
+`finally` cleanup removes the exact synthetic workspace, user, and any remaining opaque R2 objects.
 
 ## 13. Frontend route map
 

@@ -25,6 +25,9 @@ dependencies = [
   "uvicorn[standard]>=0.34",
 ]
 
+[project.scripts]
+cassist-worker = "app.workers.main:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3",

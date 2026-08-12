@@ -32,7 +32,15 @@ compose.yaml    Local PostgreSQL service
    uvicorn app.main:app --reload
    ```
 
-3. Start the frontend in another terminal:
+3. Start the single-concurrency extraction worker in another terminal:
+
+   ```bash
+   cd backend
+   source .venv/bin/activate
+   cassist-worker
+   ```
+
+4. Start the frontend in another terminal:
 
    ```bash
    cd frontend
@@ -70,6 +78,19 @@ python scripts/live_model_smoke.py
 The script creates its invoice image inside a temporary directory, never uploads it to R2 or stores
 it in PostgreSQL, prints no extracted financial values or provider output, and deletes the image on
 exit. It refuses to run when `APP_ENV=production`.
+
+After the ordinary test suites pass, verify the complete local workflow with synthetic data:
+
+```bash
+cd backend
+source .venv/bin/activate
+python scripts/local_vertical_smoke.py
+```
+
+This gate refuses production and refuses to run while another processing job is active. It creates a
+temporary synthetic user/workspace, exercises authenticated upload, private R2, the real development
+model, review, correction, approval, export, original viewing, and permanent deletion, then removes
+its synthetic database and R2 data.
 
 ## Configure development object storage
 

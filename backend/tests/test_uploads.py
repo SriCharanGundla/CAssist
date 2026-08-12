@@ -1,6 +1,6 @@
 import hashlib
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import BinaryIO
 from uuid import uuid4
@@ -24,6 +24,7 @@ from app.services.object_storage import (
     PresignedUpload,
     StoredObject,
 )
+from app.services.upload_cleanup import cleanup_one_expired_upload
 
 
 class FakeObjectStorage:
@@ -256,6 +257,34 @@ async def test_create_upload_rolls_back_when_signing_fails(
         select(Document).where(Document.original_filename == "rollback.png")
     )
     assert document is None
+
+
+@pytest.mark.asyncio
+async def test_expired_unfinished_upload_cleanup_removes_object_and_row(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, session, storage, _ = authenticated_upload_client
+    response = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "interrupted.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": 10,
+        },
+    )
+    document = await session.get(Document, response.json()["document_id"])
+    assert document is not None and document.r2_object_key is not None
+    incoming_key = document.r2_object_key
+    storage.objects[incoming_key] = (b"unfinished", "application/pdf")
+    document.upload_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await session.commit()
+
+    cleaned = await cleanup_one_expired_upload(session, storage)
+
+    assert cleaned is True
+    assert await session.get(Document, document.id) is None
+    assert incoming_key in storage.deleted_keys
+    assert incoming_key not in storage.objects
 
 
 @pytest.mark.asyncio

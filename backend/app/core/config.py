@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     r2_presigned_url_ttl_seconds: int = 300
     upload_max_bytes: int = 25 * 1024 * 1024
     worker_lease_seconds: int = 5 * 60
+    worker_poll_seconds: float = 2.0
     preprocessing_max_pages: int = 50
     preprocessing_render_dpi: int = 144
     preprocessing_max_pixels: int = 40_000_000
@@ -65,6 +66,8 @@ class Settings(BaseSettings):
             raise ValueError("UPLOAD_MAX_BYTES must be positive")
         if self.worker_lease_seconds <= 0:
             raise ValueError("WORKER_LEASE_SECONDS must be positive")
+        if self.worker_poll_seconds <= 0:
+            raise ValueError("WORKER_POLL_SECONDS must be positive")
         if self.preprocessing_max_pages <= 0:
             raise ValueError("PREPROCESSING_MAX_PAGES must be positive")
         if self.preprocessing_render_dpi <= 0:
