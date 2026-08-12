@@ -8,7 +8,6 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -76,16 +75,6 @@ class FakeObjectStorage:
     def delete_object(self, object_key: str) -> None:
         self.deleted_keys.append(object_key)
         self.objects.pop(object_key, None)
-
-
-def _xlsx_bytes() -> bytes:
-    output = BytesIO()
-    workbook = Workbook()
-    workbook.active.append(["Invoice", "Amount"])
-    workbook.active.append(["INV-1", "1180.00"])
-    workbook.save(output)
-    workbook.close()
-    return output.getvalue()
 
 
 @pytest_asyncio.fixture
@@ -230,28 +219,10 @@ async def test_create_upload_rejects_oversized_documents_before_signing(
 
 
 @pytest.mark.asyncio
-async def test_create_upload_rejects_unsupported_file_types(
-    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
-) -> None:
-    client, _, storage, _ = authenticated_upload_client
-
-    response = await client.post(
-        "/api/v1/uploads",
-        json={
-            "filename": "archive.zip",
-            "mime_type": "application/zip",
-            "byte_size": 1_024,
-        },
-    )
-
-    assert response.status_code == 422
-    assert storage.calls == []
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("filename", "mime_type"),
     [
+        ("archive.zip", "application/zip"),
         ("invoices.csv", "text/csv"),
         (
             "invoices.xlsx",
@@ -259,7 +230,7 @@ async def test_create_upload_rejects_unsupported_file_types(
         ),
     ],
 )
-async def test_create_upload_accepts_spreadsheets(
+async def test_create_upload_rejects_unsupported_file_types(
     authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
     filename: str,
     mime_type: str,
@@ -268,33 +239,15 @@ async def test_create_upload_accepts_spreadsheets(
 
     response = await client.post(
         "/api/v1/uploads",
-        json={"filename": filename, "mime_type": mime_type, "byte_size": 1_024},
+        json={
+            "filename": filename,
+            "mime_type": mime_type,
+            "byte_size": 1_024,
+        },
     )
 
-    assert response.status_code == 201
-    assert storage.calls[0][1] == mime_type
-
-
-@pytest.mark.asyncio
-async def test_complete_upload_validates_xlsx_container(
-    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
-) -> None:
-    client, session, storage, _ = authenticated_upload_client
-    content = _xlsx_bytes()
-    mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    create_response = await client.post(
-        "/api/v1/uploads",
-        json={"filename": "invoices.xlsx", "mime_type": mime_type, "byte_size": len(content)},
-    )
-    document = await session.get(Document, create_response.json()["document_id"])
-    assert document is not None and document.r2_object_key is not None
-    storage.objects[document.r2_object_key] = (content, mime_type)
-
-    response = await client.post(f"/api/v1/uploads/{document.id}/complete")
-
-    assert response.status_code == 202
-    await session.refresh(document)
-    assert document.sha256 == hashlib.sha256(content).hexdigest()
+    assert response.status_code == 422
+    assert storage.calls == []
 
 
 @pytest.mark.asyncio

@@ -7,8 +7,9 @@ After extraction, a bounded organizer groups the observed fields, tables, and te
 document-specific sections for review. Sections reference immutable observations and cannot change
 their labels or values.
 
-Uploads support PDF, JPEG, PNG, CSV, and XLSX files up to 25 MiB each. The upload screen accepts up to
-ten files at once; legacy XLS and ZIP files are not supported.
+Uploads support PDF, JPEG, and PNG files up to 25 MiB each. The upload screen accepts up to ten files
+at once. CSV/XLS/XLSX and ZIP files are not supported; structured-data import is a separate future
+workflow rather than part of AI document extraction.
 
 ## Structure
 
@@ -64,8 +65,6 @@ The dashboard is the document hub: it shows processing state and provides origin
 development model comparison, and deletion actions without an intermediate document page. Review
 uses an embedded PDF.js viewer for PDFs. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
-CSV and XLSX review includes a bounded inline cell preview while preserving an action to open the
-complete private original.
 The review screen presents dynamic sections rather than storage-oriented field/table buckets. Tally
 handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
 Authenticated routes use descriptive browser titles and keyboard skip navigation; compact controls

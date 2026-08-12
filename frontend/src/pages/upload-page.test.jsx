@@ -15,7 +15,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
 function renderUploadPage() {
   return render(
     <QueryClientProvider
-      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
     >
       <MemoryRouter initialEntries={["/upload"]}>
         <Routes>
@@ -41,9 +43,9 @@ describe("UploadPage", () => {
       },
     })
 
-    expect(screen.getByText(
-      "Choose a PDF, JPEG, PNG, CSV, or XLSX file."
-    )).toBeInTheDocument()
+    expect(
+      screen.getByText("Choose a PDF, JPEG, or PNG file.")
+    ).toBeInTheDocument()
     expect(screen.getByRole("alert")).toHaveTextContent(
       "1 invalid file was excluded"
     )
@@ -139,7 +141,7 @@ describe("UploadPage", () => {
     const { container } = renderUploadPage()
     const files = [
       new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" }),
-      new File(["Invoice,Amount"], "invoices.csv", { type: "text/csv" }),
+      new File(["image"], "receipt.png", { type: "image/png" }),
     ]
 
     await user.upload(container.querySelector('input[type="file"]'), files)
@@ -154,7 +156,7 @@ describe("UploadPage", () => {
       expect.objectContaining({ onStage: expect.any(Function) })
     )
     expect(api.uploadDocument).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "invoices.csv" }),
+      expect.objectContaining({ name: "receipt.png" }),
       expect.objectContaining({ onStage: expect.any(Function) })
     )
   })

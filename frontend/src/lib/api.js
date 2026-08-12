@@ -123,18 +123,9 @@ export const ACCEPTED_UPLOAD_TYPES = [
   "application/pdf",
   "image/jpeg",
   "image/png",
-  "text/csv",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]
 
-export const ACCEPTED_UPLOAD_EXTENSIONS = [
-  ".pdf",
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".csv",
-  ".xlsx",
-]
+export const ACCEPTED_UPLOAD_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"]
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 export const MAX_UPLOAD_FILES = 10
 
@@ -143,8 +134,6 @@ const UPLOAD_MIME_TYPE_BY_EXTENSION = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
-  ".csv": "text/csv",
-  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 
 export function uploadMimeType(file) {
@@ -197,17 +186,6 @@ export async function getDocument(documentId, { signal } = {}) {
   const response = await apiRequest(`/documents/${documentId}`, { signal })
   if (!response.ok) {
     throw await responseError(response, "Unable to load the document.")
-  }
-  return response.json()
-}
-
-export async function getSpreadsheetPreview(documentId, { signal } = {}) {
-  const response = await apiRequest(
-    `/documents/${documentId}/spreadsheet-preview`,
-    { signal }
-  )
-  if (!response.ok) {
-    throw await responseError(response, "Unable to preview the spreadsheet.")
   }
   return response.json()
 }

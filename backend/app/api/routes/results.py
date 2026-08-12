@@ -29,6 +29,7 @@ from app.services.generic_extraction import (
     coerce_stored_extraction,
     coerce_stored_presentation,
     deterministic_quality_issues,
+    normalize_extracted_text,
 )
 
 router = APIRouter()
@@ -104,12 +105,15 @@ def _response(
     effective_data, _ = coerce_stored_extraction(effective_stored, result.document_type)
     presentation = coerce_stored_presentation(result.presentation_data, extracted_data)
     path_targets = {path: target_id for target_id, path in target_paths.items()}
+    known_target_ids = set(target_paths)
     quality_issues: list[QualityIssue] = []
     for issue_data in result.validation_issues:
         if not isinstance(issue_data, dict) or "target_id" not in issue_data:
             continue
         try:
-            quality_issues.append(QualityIssue.model_validate(issue_data))
+            issue = QualityIssue.model_validate(issue_data)
+            if issue.target_id in known_target_ids:
+                quality_issues.append(issue)
         except ValueError:
             continue
     return ResultResponse(
@@ -134,8 +138,16 @@ def _response(
             CorrectionResponse(
                 id=correction.id,
                 target_id=path_targets.get(correction.field_path, correction.field_path),
-                previous_value=correction.previous_value,
-                corrected_value=correction.corrected_value,
+                previous_value=(
+                    normalize_extracted_text(correction.previous_value)
+                    if isinstance(correction.previous_value, str)
+                    else correction.previous_value
+                ),
+                corrected_value=(
+                    normalize_extracted_text(correction.corrected_value)
+                    if isinstance(correction.corrected_value, str)
+                    else correction.corrected_value
+                ),
                 reason=correction.reason,
                 corrected_by_user_id=correction.corrected_by_user_id,
                 created_at=correction.created_at,

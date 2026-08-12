@@ -32,17 +32,14 @@ async function mapWithConcurrency(items, limit, operation) {
     }
   }
   await Promise.all(
-    Array.from(
-      { length: Math.min(limit, items.length) },
-      () => worker()
-    )
+    Array.from({ length: Math.min(limit, items.length) }, () => worker())
   )
   return outcomes
 }
 
 function validateFile(file) {
   if (!ACCEPTED_UPLOAD_TYPES.includes(uploadMimeType(file))) {
-    return "Choose a PDF, JPEG, PNG, CSV, or XLSX file."
+    return "Choose a PDF, JPEG, or PNG file."
   }
   if (file.size > MAX_UPLOAD_BYTES) {
     return "Choose a file smaller than 25 MiB."
@@ -182,8 +179,8 @@ export function UploadPage() {
         Upload documents
       </h1>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        Up to 10 PDF, JPEG, PNG, CSV, or XLSX files, 25 MiB each. Originals stay
-        private and require review after extraction.
+        Up to 10 PDF, JPEG, or PNG files, 25 MiB each. Originals stay private
+        and require review after extraction.
       </p>
 
       <form className="mt-7 space-y-5" onSubmit={handleSubmit}>

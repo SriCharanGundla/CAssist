@@ -8,8 +8,6 @@ AllowedUploadMimeType = Literal[
     "application/pdf",
     "image/jpeg",
     "image/png",
-    "text/csv",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]
 
 

@@ -41,7 +41,6 @@ from app.schemas.documents import (
     DocumentListItemResponse,
     DocumentListResponse,
     RetryDocumentResponse,
-    SpreadsheetPreviewResponse,
     ViewOriginalResponse,
 )
 from app.services.auth import CurrentAuth
@@ -49,10 +48,6 @@ from app.services.model_provider import ModelSelection, resolve_model_selection
 from app.services.object_storage import ObjectStorage, ObjectStorageError
 from app.services.processing_runs import find_configured_run, queue_processing_run
 from app.services.run_status import run_summary
-from app.services.spreadsheet_preview import (
-    SpreadsheetPreviewError,
-    create_spreadsheet_preview,
-)
 
 router = APIRouter(prefix="/documents")
 
@@ -606,48 +601,6 @@ async def create_view_url(
         url=signed.url,
         expires_at=signed_at + timedelta(seconds=app_settings.r2_presigned_url_ttl_seconds),
     )
-
-
-@router.get("/{document_id}/spreadsheet-preview", response_model=SpreadsheetPreviewResponse)
-async def get_spreadsheet_preview(
-    document_id: UUID,
-    response: Response,
-    current_auth: Annotated[CurrentAuth, Depends(get_current_auth)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
-    storage: Annotated[ObjectStorage, Depends(get_object_storage)],
-) -> SpreadsheetPreviewResponse:
-    row = await _authorized_document(session, document_id, current_auth.user.id, lock=False)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    document, _ = row
-    _require_available_original(document)
-    if document.mime_type not in {
-        "text/csv",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Document is not a supported spreadsheet",
-        )
-    try:
-        sheets, truncated = await run_in_threadpool(
-            create_spreadsheet_preview,
-            storage,
-            document.r2_object_key,
-            document.mime_type,
-        )
-    except SpreadsheetPreviewError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(exc),
-        ) from exc
-    except ObjectStorageError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Object storage is temporarily unavailable",
-        ) from exc
-    response.headers["Cache-Control"] = "no-store"
-    return SpreadsheetPreviewResponse(sheets=sheets, truncated=truncated)
 
 
 @router.delete("/{document_id}/original", status_code=status.HTTP_204_NO_CONTENT)

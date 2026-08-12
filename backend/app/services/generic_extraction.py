@@ -23,10 +23,41 @@ from app.schemas.extraction import (
 )
 
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_C1_CONTROL_CHARACTERS = re.compile(r"[\x80-\x9f]")
+_ESCAPED_LINE_BREAKS = re.compile(r"\\r\\n|\\n|\\r")
 _TARGET_PATH = re.compile(
     r"^/(?:fields/[0-9]+|text_blocks/[0-9]+|tables/[0-9]+/rows/[0-9]+/[0-9]+)$"
 )
 _PRESENTATION_TARGET_PATH = re.compile(r"^/(?:fields|tables|text_blocks)/[0-9]+$")
+
+
+def normalize_extracted_text(value: str) -> str:
+    """Remove model transport artifacts without changing accounting semantics."""
+    normalized = _ESCAPED_LINE_BREAKS.sub("\n", value)
+    normalized = _C1_CONTROL_CHARACTERS.sub("-", normalized)
+    normalized = _CONTROL_CHARACTERS.sub(" ", normalized)
+    return "\n".join(line.strip() for line in normalized.splitlines()).strip()
+
+
+def _is_non_accounting_boilerplate(value: str) -> bool:
+    normalized = " ".join(normalize_extracted_text(value).casefold().split())
+    if not normalized:
+        return True
+    if normalized.startswith("synthetic test document") and "not for accounting use" in normalized:
+        return True
+    if re.fullmatch(
+        r"this is (?:a )?computer[- ]generated statement and does not require (?:a )?signature\.?",
+        normalized,
+    ):
+        return True
+    if re.fullmatch(r"page [0-9]+(?: of [0-9]+)?", normalized):
+        return True
+    lines = [line.strip() for line in normalize_extracted_text(value).splitlines() if line.strip()]
+    return bool(
+        len(lines) <= 3
+        and lines[0].isupper()
+        and any("continued" in line.casefold() for line in lines)
+    )
 
 
 def _text_is_suspicious(value: str) -> bool:
@@ -177,6 +208,8 @@ def finalize_extraction(
     for index, field in enumerate(draft.fields, start=1):
         _validate_page(field.page_number, page_paths)
         field_data = field.model_dump()
+        field_data["label"] = normalize_extracted_text(field.label)
+        field_data["value"] = normalize_extracted_text(field.value)
         field_data["region"] = _valid_region(field.region, page_paths[field.page_number - 1])
         fields.append(ExtractedField(id=f"field-{index:04d}", **field_data))
 
@@ -191,7 +224,7 @@ def finalize_extraction(
                 cells=[
                     ExtractedTableCell(
                         id=f"{table_id}-r{row_index:04d}-c{cell_index:04d}",
-                        value=value,
+                        value=normalize_extracted_text(value),
                     )
                     for cell_index, value in enumerate(row, start=1)
                 ],
@@ -201,8 +234,8 @@ def finalize_extraction(
         tables.append(
             ExtractedTable(
                 id=table_id,
-                title=table.title,
-                headers=table.headers,
+                title=normalize_extracted_text(table.title) if table.title else None,
+                headers=[normalize_extracted_text(header) for header in table.headers],
                 rows=rows,
                 page_numbers=sorted(set(table.page_numbers)),
             )
@@ -212,6 +245,7 @@ def finalize_extraction(
     for index, block in enumerate(draft.text_blocks, start=1):
         _validate_page(block.page_number, page_paths)
         block_data = block.model_dump()
+        block_data["text"] = normalize_extracted_text(block.text)
         block_data["region"] = _valid_region(block.region, page_paths[block.page_number - 1])
         text_blocks.append(ExtractedTextBlock(id=f"text-{index:04d}", **block_data))
 
@@ -311,6 +345,40 @@ def finalize_presentation(
     return DocumentPresentation(sections=sections)
 
 
+def remove_non_accounting_boilerplate(
+    document: GenericDocumentExtraction,
+    presentation: DocumentPresentation,
+    quality_issues: list[QualityIssue],
+) -> tuple[GenericDocumentExtraction, DocumentPresentation, list[QualityIssue]]:
+    """Remove clearly non-accounting page furniture while preserving observation IDs."""
+    removed_ids = {
+        block.id
+        for block in document.text_blocks
+        if _is_non_accounting_boilerplate(block.text)
+    }
+    if not removed_ids:
+        return document, presentation, quality_issues
+    cleaned_document = document.model_copy(
+        update={
+            "text_blocks": [
+                block for block in document.text_blocks if block.id not in removed_ids
+            ]
+        }
+    )
+    cleaned_sections: list[PresentationSection] = []
+    for section in presentation.sections:
+        target_ids = [
+            target_id for target_id in section.target_ids if target_id not in removed_ids
+        ]
+        if target_ids:
+            cleaned_sections.append(section.model_copy(update={"target_ids": target_ids}))
+    return (
+        cleaned_document,
+        DocumentPresentation(sections=cleaned_sections),
+        [issue for issue in quality_issues if issue.target_id not in removed_ids],
+    )
+
+
 def coerce_stored_presentation(
     data: dict[str, Any] | None,
     document: GenericDocumentExtraction,
@@ -377,13 +445,62 @@ def _display_label(path: list[str]) -> str:
     return " ".join(part.replace("_", " ").title() for part in path)
 
 
+def _normalize_document(document: GenericDocumentExtraction) -> GenericDocumentExtraction:
+    return document.model_copy(
+        update={
+            "fields": [
+                field.model_copy(
+                    update={
+                        "label": normalize_extracted_text(field.label),
+                        "value": normalize_extracted_text(field.value),
+                    }
+                )
+                for field in document.fields
+            ],
+            "tables": [
+                table.model_copy(
+                    update={
+                        "title": (
+                            normalize_extracted_text(table.title) if table.title else None
+                        ),
+                        "headers": [
+                            normalize_extracted_text(header) for header in table.headers
+                        ],
+                        "rows": [
+                            row.model_copy(
+                                update={
+                                    "cells": [
+                                        cell.model_copy(
+                                            update={
+                                                "value": normalize_extracted_text(cell.value)
+                                            }
+                                        )
+                                        for cell in row.cells
+                                    ]
+                                }
+                            )
+                            for row in table.rows
+                        ],
+                    }
+                )
+                for table in document.tables
+            ],
+            "text_blocks": [
+                block.model_copy(update={"text": normalize_extracted_text(block.text)})
+                for block in document.text_blocks
+                if not _is_non_accounting_boilerplate(block.text)
+            ],
+        }
+    )
+
+
 def coerce_stored_extraction(
     data: dict[str, Any],
     document_type: str,
 ) -> tuple[GenericDocumentExtraction, dict[str, str]]:
     """Read generic results and project legacy invoice results without discarding old data."""
     if "fields" in data and "tables" in data and "text_blocks" in data:
-        document = GenericDocumentExtraction.model_validate(data)
+        document = _normalize_document(GenericDocumentExtraction.model_validate(data))
         return document, {
             target_id: target_value_path(document, target_id)
             for target_id in [

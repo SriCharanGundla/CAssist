@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from openpyxl import Workbook
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -325,52 +324,6 @@ async def test_view_url_is_short_lived_narrow_and_not_cached(
         (document.r2_object_key, settings.r2_presigned_url_ttl_seconds)
     ]
     assert document.original_filename not in response.text
-
-
-@pytest.mark.asyncio
-async def test_spreadsheet_preview_is_authorized_bounded_and_not_cached(
-    document_client: tuple[
-        AsyncClient,
-        AsyncSession,
-        DocumentObjectStorage,
-        Settings,
-        UUID,
-        UUID,
-        UUID,
-        UUID,
-    ],
-) -> None:
-    client, session, storage, settings, _, _, document_id, _ = document_client
-    document = await session.get(Document, document_id)
-    assert document is not None and document.r2_object_key is not None
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Invoices"
-    sheet.append(["Invoice", "Amount", *[f"Extra {index}" for index in range(29)]])
-    for index in range(100):
-        sheet.append([f"INV-{index + 1}", 118.0])
-    spreadsheet = BytesIO()
-    workbook.save(spreadsheet)
-    workbook.close()
-    document.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    storage.objects[document.r2_object_key] = (
-        spreadsheet.getvalue(),
-        document.mime_type,
-    )
-    await session.commit()
-
-    response = await client.get(f"/api/v1/documents/{document_id}/spreadsheet-preview")
-
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    payload = response.json()
-    assert payload["truncated"] is True
-    assert payload["sheets"][0]["name"] == "Invoices"
-    assert len(payload["sheets"][0]["rows"]) == 100
-    assert len(payload["sheets"][0]["rows"][0]) == 30
-    assert payload["sheets"][0]["rows"][1][:2] == ["INV-1", "118"]
-    assert document.r2_object_key not in response.text
-    assert settings.r2_secret_access_key not in response.text
 
 
 @pytest.mark.asyncio

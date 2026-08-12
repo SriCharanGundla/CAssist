@@ -28,6 +28,7 @@ from app.services.generic_extraction import (
     finalize_extraction,
     finalize_presentation,
     needs_quality_review,
+    remove_non_accounting_boilerplate,
 )
 
 _CLASSIFIER_PROMPT = """Classify the supplied accounting document by visible content only.
@@ -37,11 +38,15 @@ extraction template. Do not infer a type from the filename."""
 _EXTRACTION_PROMPT = """Extract the visible information from this document for human review.
 Return only label/value pairs actually present, preserving each visible label and value as written.
 Preserve table titles, headers, cells, and row order. Put useful unlabelled narrative content in
-text_blocks. Do not invent required fields, normalize dates, calculate amounts, correct spelling,
-rename labels, or apply an invoice schema. Page images are the primary source. The native PDF text
-tools are optional supporting evidence when text is available. Set quality_review_recommended
-only when the source is genuinely ambiguous, illegible, or likely misread. Do not duplicate
-observations."""
+text_blocks. Exclude page furniture and non-accounting boilerplate: document title repetitions,
+page numbers, repeated page headers, continuation labels, signature disclaimers, synthetic-test
+notices, and other processing-only annotations. Preserve terms or notices that affect payment, tax,
+liability, or the accounting meaning of the document. Do not
+invent required fields, normalize dates, calculate amounts, correct spelling, rename labels, or
+apply an invoice schema. Represent line breaks as actual newlines, never literal backslash-n text.
+Page images are the primary source. The native PDF text tools are optional supporting evidence when
+text is available. Set quality_review_recommended only when the source is genuinely ambiguous,
+illegible, or likely misread. Do not duplicate observations."""
 
 _ORGANIZER_PROMPT = """Organize the preceding generic extraction for a Chartered Accountant's
 review without changing any extracted content. Return short ordered section titles and references
@@ -260,6 +265,11 @@ class StrandsExtractionProvider:
                 quality_review,
             )
             presentation = finalize_presentation(document, presentation_draft)
+            document, presentation, quality_issues = remove_non_accounting_boilerplate(
+                document,
+                presentation,
+                quality_issues,
+            )
         except ModelThrottledException as exc:
             raise ProviderRateLimitError("The model provider rate limit was reached") from exc
         except ProviderExtractionError:

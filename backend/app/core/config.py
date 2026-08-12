@@ -42,9 +42,9 @@ class Settings(BaseSettings):
     comparison_gemini_model_id: str = "gemini-3.5-flash-lite"
     comparison_openai_model_id: str = "gpt-5.6-luna"
     allow_provider_override: bool = True
-    prompt_version: str = "generic-document-v1"
+    prompt_version: str = "generic-document-v2"
     schema_version: str = "generic-extraction-v1"
-    preprocessing_version: str = "spreadsheet-pages-v3"
+    preprocessing_version: str = "visual-pages-v4"
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
 

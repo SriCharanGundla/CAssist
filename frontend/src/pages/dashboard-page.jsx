@@ -82,9 +82,6 @@ function fileTypeLabel(mimeType) {
       "application/pdf": "PDF",
       "image/jpeg": "JPEG",
       "image/png": "PNG",
-      "text/csv": "CSV",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-        "XLSX",
     }[mimeType] || mimeType
   )
 }

@@ -24,12 +24,9 @@ describe("uploadDocument", () => {
     vi.restoreAllMocks()
   })
 
-  it("normalizes spreadsheet MIME types from safe filename extensions", () => {
-    expect(uploadMimeType(new File(["Invoice,Amount"], "invoices.csv"))).toBe(
-      "text/csv"
-    )
-    expect(uploadMimeType(new File(["PK"], "invoices.xlsx"))).toBe(
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  it("normalizes image MIME types from safe filename extensions", () => {
+    expect(uploadMimeType(new File(["image"], "receipt.jpeg"))).toBe(
+      "image/jpeg"
     )
   })
 

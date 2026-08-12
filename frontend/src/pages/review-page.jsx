@@ -60,7 +60,7 @@ function CopyValue({ label, value }) {
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger
         aria-label={`Copy ${label}: ${value}`}
-        className="cursor-pointer text-left text-sm font-medium break-words transition-colors hover:text-muted-foreground"
+        className="cursor-pointer text-left text-sm font-medium break-words whitespace-pre-wrap transition-colors hover:text-muted-foreground"
         onClick={copy}
         title="Click to copy"
       >
@@ -280,13 +280,13 @@ function CorrectionHistory({ corrections, targetLabels }) {
           <dl className="mt-2 grid gap-2 sm:grid-cols-2">
             <div className="rounded-md bg-muted p-2">
               <dt className="font-medium text-muted-foreground">Before</dt>
-              <dd className="mt-0.5 break-words">
+              <dd className="mt-0.5 break-words whitespace-pre-wrap">
                 {String(correction.previous_value)}
               </dd>
             </div>
             <div className="rounded-md bg-secondary p-2">
               <dt className="font-medium text-muted-foreground">After</dt>
-              <dd className="mt-0.5 font-medium break-words">
+              <dd className="mt-0.5 font-medium break-words whitespace-pre-wrap">
                 {String(correction.corrected_value)}
               </dd>
             </div>
@@ -378,7 +378,9 @@ export function ReviewPage() {
   const handleMutationError = (error) => {
     if (error.status === 409) {
       queryClient.invalidateQueries({ queryKey: ["result", resultId] })
-      toast.info("A newer version was loaded. Review your change and try again.")
+      toast.info(
+        "A newer version was loaded. Review your change and try again."
+      )
     }
   }
   const correctionMutation = useMutation({
@@ -577,10 +579,7 @@ export function ReviewPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {result.original_available ? (
-            <Button
-              onClick={toggleOriginal}
-              variant="outline"
-            >
+            <Button onClick={toggleOriginal} variant="outline">
               {showOriginal ? <RiEyeOffLine /> : <RiEyeLine />}
               {showOriginal ? "Hide original" : "Show original"}
             </Button>
@@ -662,7 +661,6 @@ export function ReviewPage() {
       >
         {showOriginal && result.original_available ? (
           <SourcePreview
-            documentId={result.document_id}
             error={sourceMutation.error}
             loading={sourceMutation.isPending}
             mimeType={result.original_mime_type}

@@ -1,12 +1,10 @@
 import * as React from "react"
-import { useQuery } from "@tanstack/react-query"
 import {
   RiArrowDownSLine,
   RiArrowUpSLine,
   RiAspectRatioLine,
   RiClockwise2Line,
   RiDragMove2Line,
-  RiExternalLinkLine,
   RiRestartLine,
   RiZoomInLine,
   RiZoomOutLine,
@@ -20,17 +18,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { getSpreadsheetPreview } from "@/lib/api"
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
 const ZOOM_STEP = 0.25
 const MIN_VISIBLE_IMAGE_PIXELS = 48
 const SHARP_RENDER_DELAY_MS = 180
-const SPREADSHEET_MIME_TYPES = new Set([
-  "text/csv",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-])
 
 function ViewerButton({ label, ...buttonProps }) {
   return (
@@ -54,91 +47,6 @@ function PreviewError({ message, onRetry }) {
           </Button>
         ) : null}
       </div>
-    </div>
-  )
-}
-
-function SpreadsheetPreview({ documentId, sourceUrl }) {
-  const [sheetIndex, setSheetIndex] = React.useState(0)
-  const previewQuery = useQuery({
-    queryKey: ["spreadsheet-preview", documentId],
-    queryFn: ({ signal }) => getSpreadsheetPreview(documentId, { signal }),
-  })
-  const sheets = previewQuery.data?.sheets || []
-  const sheet = sheets[Math.min(sheetIndex, Math.max(0, sheets.length - 1))]
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-between gap-3 border-b p-2">
-        {sheets.length > 1 ? (
-          <select
-            aria-label="Worksheet"
-            className="h-7 min-w-0 rounded-md border bg-background px-2 text-xs"
-            onChange={(event) => setSheetIndex(Number(event.target.value))}
-            value={sheetIndex}
-          >
-            {sheets.map((candidate, index) => (
-              <option key={`${candidate.name}-${index}`} value={index}>
-                {candidate.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="truncate px-2 text-xs font-medium">
-            {sheet?.name || "Spreadsheet"}
-          </span>
-        )}
-        <Button
-          nativeButton={false}
-          render={
-            <a href={sourceUrl} rel="noreferrer" target="_blank">
-              Open original <RiExternalLinkLine />
-            </a>
-          }
-          variant="outline"
-        />
-      </div>
-      {previewQuery.isPending ? (
-        <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
-          Loading spreadsheet…
-        </div>
-      ) : previewQuery.error ? (
-        <PreviewError
-          message={previewQuery.error.message}
-          onRetry={() => previewQuery.refetch()}
-        />
-      ) : sheet?.rows.length ? (
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="min-w-max border-collapse text-xs">
-            <tbody>
-              {sheet.rows.map((row, rowIndex) => (
-                <tr className="border-b" key={rowIndex}>
-                  <th className="sticky left-0 border-r bg-muted px-2 py-1.5 text-right font-normal text-muted-foreground">
-                    {rowIndex + 1}
-                  </th>
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      className="max-w-80 min-w-28 border-r px-2 py-1.5 align-top whitespace-pre-wrap"
-                      key={cellIndex}
-                    >
-                      {cell}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {previewQuery.data.truncated ? (
-            <p className="sticky bottom-0 border-t bg-background/95 px-3 py-2 text-xs text-muted-foreground">
-              Preview limited to the first 100 rows, 30 columns, and 5 sheets.
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="p-6 text-center text-sm text-muted-foreground">
-          This spreadsheet has no visible values.
-        </p>
-      )}
     </div>
   )
 }
@@ -654,7 +562,6 @@ function PdfPreview({ sourceUrl }) {
 }
 
 export function SourcePreview({
-  documentId,
   error,
   loading,
   mimeType,
@@ -675,8 +582,6 @@ export function SourcePreview({
           <PreviewError message={error.message} onRetry={onRetry} />
         ) : sourceUrl && mimeType === "application/pdf" ? (
           <PdfPreview sourceUrl={sourceUrl} />
-        ) : sourceUrl && SPREADSHEET_MIME_TYPES.has(mimeType) ? (
-          <SpreadsheetPreview documentId={documentId} sourceUrl={sourceUrl} />
         ) : sourceUrl ? (
           <ImagePreview sourceUrl={sourceUrl} />
         ) : null}
