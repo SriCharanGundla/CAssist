@@ -72,7 +72,7 @@ function AuthenticatedApp({ auth }) {
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Open account menu"
-                className="grid size-9 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                className="grid size-7 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 {initials}
               </DropdownMenuTrigger>

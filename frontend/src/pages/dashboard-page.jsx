@@ -323,7 +323,7 @@ export function DashboardPage() {
             </p>
           </div>
           <Button nativeButton={false} render={<Link to="/upload" />} size="lg">
-            Upload an invoice
+            Upload
           </Button>
         </div>
 
