@@ -159,7 +159,7 @@ describe("DocumentPage", () => {
     renderDocumentPage()
 
     expect(
-      await screen.findByText("Checking extraction quality")
+      await screen.findByText("Performing quality check")
     ).toBeInTheDocument()
     expect(screen.getByRole("status", { name: "Processing" })).toHaveClass(
       "animate-spin"
