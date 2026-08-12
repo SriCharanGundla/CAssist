@@ -1,6 +1,11 @@
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { RiArrowLeftSLine, RiEyeLine, RiEyeOffLine } from "@remixicon/react"
+import {
+  RiArrowLeftSLine,
+  RiCheckboxCircleLine,
+  RiEyeLine,
+  RiEyeOffLine,
+} from "@remixicon/react"
 import { Link, useParams } from "react-router-dom"
 
 import { SourcePreview } from "@/components/source-preview"
@@ -59,8 +64,14 @@ function CopyValue({ label, value }) {
       >
         {value}
       </PopoverTrigger>
-      <PopoverContent className="w-auto px-2.5 py-1.5" side="top">
-        {feedback}
+      <PopoverContent
+        className="flex w-auto items-center gap-1.5 px-2.5 py-1.5"
+        side="top"
+      >
+        {feedback === "Copied" ? (
+          <RiCheckboxCircleLine aria-hidden="true" className="size-4" />
+        ) : null}
+        <span>{feedback}</span>
       </PopoverContent>
     </Popover>
   )

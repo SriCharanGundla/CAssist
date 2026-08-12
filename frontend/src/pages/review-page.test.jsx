@@ -143,7 +143,9 @@ describe("ReviewPage", () => {
     )
 
     expect(writeText).toHaveBeenCalledWith("INV-1")
-    expect(screen.getByText("Copied")).toBeInTheDocument()
+    const copiedFeedback = screen.getByText("Copied")
+    expect(copiedFeedback).toBeInTheDocument()
+    expect(copiedFeedback.parentElement?.querySelector("svg")).toBeInTheDocument()
     expect(screen.queryByText("Ready for your review")).not.toBeInTheDocument()
     expect(screen.queryByText("Human review required")).not.toBeInTheDocument()
   })
