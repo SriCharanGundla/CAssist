@@ -82,6 +82,7 @@ def test_image_preprocessing_normalizes_to_rgb_png_and_cleans_temporary_files() 
     temporary_directory = page_path.parent
 
     assert preprocessed.page_count == 1
+    assert preprocessed.page_text == (None,)
     assert page_path.name == "page-0001.png"
     assert sorted(path.name for path in temporary_directory.iterdir()) == ["page-0001.png"]
     with Image.open(page_path) as image:
@@ -107,6 +108,7 @@ def test_pdf_preprocessing_renders_each_page_at_configured_resolution() -> None:
         maximum_total_pixels=6_000_000,
     ) as preprocessed:
         assert preprocessed.page_count == 2
+        assert preprocessed.page_text == (None, None)
         assert [path.name for path in preprocessed.page_paths] == [
             "page-0001.png",
             "page-0002.png",

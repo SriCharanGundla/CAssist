@@ -9,7 +9,6 @@ from tempfile import TemporaryDirectory
 from PIL import Image, ImageDraw, ImageFont
 
 from app.core.config import Settings
-from app.services.invoice_validation import validate_invoice
 from app.services.model_provider import (
     ProviderExtractionError,
     create_extraction_provider,
@@ -113,32 +112,38 @@ def main() -> int:
         invoice_path = Path(directory) / "synthetic-invoice.png"
         _synthetic_invoice(invoice_path)
         try:
-            extraction = create_extraction_provider(settings, selection).extract_invoice(
-                [invoice_path]
+            extraction = create_extraction_provider(settings, selection).extract_document(
+                [invoice_path],
+                (None,),
             )
         except ProviderExtractionError:
             print("FAILED: live agentic extraction did not complete")
             return 1
 
-    invoice = extraction.invoice
+    document = extraction.document
+    extracted = {field.label.casefold(): field.value for field in document.fields}
+    table_values = [
+        cell.value
+        for table in document.tables
+        for row in table.rows
+        for cell in row.cells
+    ]
     expected = {
-        "invoice_number": invoice.invoice_number == "SYN-2026-0042",
-        "invoice_date": invoice.invoice_date == "2026-08-12",
-        "supplier_name": invoice.supplier.name == "Synthetic Supplies Private Limited",
-        "buyer_name": invoice.buyer.name == "Example Buyer LLP",
-        "taxable_amount": invoice.totals.taxable_amount == "1000.00",
-        "grand_total": invoice.totals.grand_total == "1180.00",
-        "line_item": len(invoice.line_items) == 1,
+        "document_type": document.document_type in {"invoice", "tax_invoice"},
+        "invoice_number": "SYN-2026-0042" in extracted.values(),
+        "supplier_name": "Synthetic Supplies Private Limited" in extracted.values(),
+        "buyer_name": "Example Buyer LLP" in extracted.values(),
+        "grand_total": "1180.00" in extracted.values(),
+        "line_item": "Professional document review" in table_values,
     }
     failed_fields = [field for field, matches in expected.items() if not matches]
     if failed_fields:
         print(f"FAILED: synthetic extraction mismatched fields: {', '.join(failed_fields)}")
         return 1
 
-    issue_codes = sorted({issue.code for issue in validate_invoice(invoice)})
     print(
-        "PASS: live synthetic invoice extraction; "
-        f"model={selection.model_id}; validation_issue_codes={','.join(issue_codes) or 'none'}"
+        "PASS: live synthetic generic document extraction; "
+        f"model={selection.model_id}; quality_issues={len(extraction.quality_issues)}"
     )
     return 0
 

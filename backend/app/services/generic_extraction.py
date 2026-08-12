@@ -1,0 +1,336 @@
+import re
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+from PIL import Image
+
+from app.schemas.extraction import (
+    DraftQualityIssue,
+    EvidenceRegion,
+    ExtractedField,
+    ExtractedTable,
+    ExtractedTableCell,
+    ExtractedTableRow,
+    ExtractedTextBlock,
+    GenericDocumentExtraction,
+    GenericExtractionDraft,
+    QualityIssue,
+    QualityReviewDraft,
+)
+
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_TARGET_PATH = re.compile(
+    r"^/(?:fields/[0-9]+|text_blocks/[0-9]+|tables/[0-9]+/rows/[0-9]+/[0-9]+)$"
+)
+
+
+def _text_is_suspicious(value: str) -> bool:
+    if "\ufffd" in value or _CONTROL_CHARACTERS.search(value):
+        return True
+    compact = "".join(character for character in value if not character.isspace())
+    if len(compact) < 5:
+        return False
+    alphanumeric = sum(character.isalnum() for character in compact)
+    return alphanumeric / len(compact) < 0.2
+
+
+def deterministic_quality_candidates(
+    draft: GenericExtractionDraft,
+) -> list[DraftQualityIssue]:
+    candidates: list[DraftQualityIssue] = []
+    seen: set[tuple[str, str]] = set()
+    for index, field in enumerate(draft.fields):
+        identity = (field.label.casefold().strip(), field.value.casefold().strip())
+        if identity in seen:
+            candidates.append(
+                DraftQualityIssue(
+                    target_path=f"/fields/{index}",
+                    code="duplicate_observation",
+                    message="This label and value duplicate an earlier extracted field",
+                )
+            )
+        seen.add(identity)
+        if _text_is_suspicious(field.label) or _text_is_suspicious(field.value):
+            candidates.append(
+                DraftQualityIssue(
+                    target_path=f"/fields/{index}",
+                    code="possible_gibberish",
+                    message="This extracted field contains suspicious characters",
+                )
+            )
+    for index, block in enumerate(draft.text_blocks):
+        if _text_is_suspicious(block.text):
+            candidates.append(
+                DraftQualityIssue(
+                    target_path=f"/text_blocks/{index}",
+                    code="possible_gibberish",
+                    message="This extracted text contains suspicious characters",
+                )
+            )
+    for table_index, table in enumerate(draft.tables):
+        for row_index, row in enumerate(table.rows):
+            for cell_index, value in enumerate(row):
+                if _text_is_suspicious(value):
+                    candidates.append(
+                        DraftQualityIssue(
+                            target_path=(
+                                f"/tables/{table_index}/rows/{row_index}/{cell_index}"
+                            ),
+                            code="possible_gibberish",
+                            message="This extracted table cell contains suspicious characters",
+                        )
+                    )
+    return candidates[:200]
+
+
+def needs_quality_review(draft: GenericExtractionDraft) -> bool:
+    return draft.quality_review_recommended or bool(deterministic_quality_candidates(draft))
+
+
+def _validate_region(region: EvidenceRegion | None, page_path: Path) -> None:
+    if region is None:
+        return
+    with Image.open(page_path) as image:
+        if region.x + region.width > image.width or region.y + region.height > image.height:
+            raise ValueError("Evidence region extends beyond its source page")
+
+
+def _validate_page(page_number: int, page_paths: Sequence[Path]) -> None:
+    if page_number > len(page_paths):
+        raise ValueError("Extraction references a page outside the document")
+
+
+def _target_id(document: GenericDocumentExtraction, target_path: str) -> str | None:
+    if not _TARGET_PATH.fullmatch(target_path):
+        return None
+    parts = target_path.split("/")[1:]
+    try:
+        if parts[0] == "fields":
+            return document.fields[int(parts[1])].id
+        if parts[0] == "text_blocks":
+            return document.text_blocks[int(parts[1])].id
+        return document.tables[int(parts[1])].rows[int(parts[3])].cells[int(parts[4])].id
+    except (IndexError, ValueError):
+        return None
+
+
+def finalize_extraction(
+    draft: GenericExtractionDraft,
+    document_type: str,
+    page_paths: Sequence[Path],
+    quality_review: QualityReviewDraft | None = None,
+) -> tuple[GenericDocumentExtraction, list[QualityIssue]]:
+    fields: list[ExtractedField] = []
+    for index, field in enumerate(draft.fields, start=1):
+        _validate_page(field.page_number, page_paths)
+        _validate_region(field.region, page_paths[field.page_number - 1])
+        fields.append(ExtractedField(id=f"field-{index:04d}", **field.model_dump()))
+
+    tables: list[ExtractedTable] = []
+    for table_index, table in enumerate(draft.tables, start=1):
+        for page_number in table.page_numbers:
+            _validate_page(page_number, page_paths)
+        table_id = f"table-{table_index:04d}"
+        rows = [
+            ExtractedTableRow(
+                id=f"{table_id}-row-{row_index:04d}",
+                cells=[
+                    ExtractedTableCell(
+                        id=f"{table_id}-r{row_index:04d}-c{cell_index:04d}",
+                        value=value,
+                    )
+                    for cell_index, value in enumerate(row, start=1)
+                ],
+            )
+            for row_index, row in enumerate(table.rows, start=1)
+        ]
+        tables.append(
+            ExtractedTable(
+                id=table_id,
+                title=table.title,
+                headers=table.headers,
+                rows=rows,
+                page_numbers=sorted(set(table.page_numbers)),
+            )
+        )
+
+    text_blocks: list[ExtractedTextBlock] = []
+    for index, block in enumerate(draft.text_blocks, start=1):
+        _validate_page(block.page_number, page_paths)
+        _validate_region(block.region, page_paths[block.page_number - 1])
+        text_blocks.append(ExtractedTextBlock(id=f"text-{index:04d}", **block.model_dump()))
+
+    document = GenericDocumentExtraction(
+        document_type=document_type,
+        fields=fields,
+        tables=tables,
+        text_blocks=text_blocks,
+    )
+    review_issues = quality_review.issues if quality_review else []
+    issues: list[QualityIssue] = []
+    seen_targets: set[tuple[str, str]] = set()
+    for issue in [*deterministic_quality_candidates(draft), *review_issues]:
+        target_id = _target_id(document, issue.target_path)
+        identity = (target_id or "", issue.code)
+        if target_id is None or identity in seen_targets:
+            continue
+        seen_targets.add(identity)
+        issues.append(
+            QualityIssue(
+                target_id=target_id,
+                code=issue.code,
+                message=issue.message,
+                suggested_value=issue.suggested_value,
+            )
+        )
+    return document, issues[:200]
+
+
+def target_value_path(document: GenericDocumentExtraction, target_id: str) -> str:
+    for index, field in enumerate(document.fields):
+        if field.id == target_id:
+            return f"/fields/{index}/value"
+    for table_index, table in enumerate(document.tables):
+        for row_index, row in enumerate(table.rows):
+            for cell_index, cell in enumerate(row.cells):
+                if cell.id == target_id:
+                    return (
+                        f"/tables/{table_index}/rows/{row_index}/cells/{cell_index}/value"
+                    )
+    for index, block in enumerate(document.text_blocks):
+        if block.id == target_id:
+            return f"/text_blocks/{index}/text"
+    raise ValueError("Correction target does not exist")
+
+
+def _display_label(path: list[str]) -> str:
+    return " ".join(part.replace("_", " ").title() for part in path)
+
+
+def coerce_stored_extraction(
+    data: dict[str, Any],
+    document_type: str,
+) -> tuple[GenericDocumentExtraction, dict[str, str]]:
+    """Read generic results and project legacy invoice results without discarding old data."""
+    if "fields" in data and "tables" in data and "text_blocks" in data:
+        document = GenericDocumentExtraction.model_validate(data)
+        return document, {
+            target_id: target_value_path(document, target_id)
+            for target_id in [
+                *(field.id for field in document.fields),
+                *(
+                    cell.id
+                    for table in document.tables
+                    for row in table.rows
+                    for cell in row.cells
+                ),
+                *(block.id for block in document.text_blocks),
+            ]
+        }
+
+    fields: list[ExtractedField] = []
+    target_paths: dict[str, str] = {}
+
+    def add_field(label_parts: list[str], value: Any, path: str) -> None:
+        if value is None or value == "" or isinstance(value, (dict, list)):
+            return
+        field_id = f"field-{len(fields) + 1:04d}"
+        fields.append(
+            ExtractedField(
+                id=field_id,
+                label=_display_label(label_parts),
+                value="Yes" if value is True else "No" if value is False else str(value),
+                page_number=1,
+            )
+        )
+        target_paths[field_id] = path
+
+    for key, value in data.items():
+        if key in {"document_type", "line_items", "notes"}:
+            continue
+        if isinstance(value, dict):
+            for nested_key, nested_value in value.items():
+                add_field([key, nested_key], nested_value, f"/{key}/{nested_key}")
+        else:
+            add_field([key], value, f"/{key}")
+
+    tables: list[ExtractedTable] = []
+    line_items = data.get("line_items")
+    if isinstance(line_items, list) and line_items:
+        headers: list[str] = []
+        keys: list[tuple[str, str | None]] = []
+        for item in line_items:
+            if not isinstance(item, dict):
+                continue
+            for key, value in item.items():
+                if key == "source_pages":
+                    continue
+                if isinstance(value, dict):
+                    for nested_key in value:
+                        identity = (key, nested_key)
+                        if identity not in keys:
+                            keys.append(identity)
+                            headers.append(_display_label([key, nested_key]))
+                elif (key, None) not in keys:
+                    keys.append((key, None))
+                    headers.append(_display_label([key]))
+        rows: list[ExtractedTableRow] = []
+        for row_index, item in enumerate(line_items, start=1):
+            cells: list[ExtractedTableCell] = []
+            for cell_index, (key, nested_key) in enumerate(keys, start=1):
+                raw_value = item.get(key) if isinstance(item, dict) else None
+                value = (
+                    raw_value.get(nested_key)
+                    if nested_key and isinstance(raw_value, dict)
+                    else raw_value
+                )
+                cell_id = f"table-0001-r{row_index:04d}-c{cell_index:04d}"
+                cells.append(
+                    ExtractedTableCell(
+                        id=cell_id,
+                        value="" if value is None else str(value),
+                    )
+                )
+                suffix = f"/{key}/{nested_key}" if nested_key else f"/{key}"
+                target_paths[cell_id] = f"/line_items/{row_index - 1}{suffix}"
+            rows.append(ExtractedTableRow(id=f"table-0001-row-{row_index:04d}", cells=cells))
+        if headers and rows:
+            pages = sorted(
+                {
+                    page
+                    for item in line_items
+                    if isinstance(item, dict)
+                    for page in item.get("source_pages", [])
+                    if isinstance(page, int) and page > 0
+                }
+            ) or [1]
+            tables.append(
+                ExtractedTable(
+                    id="table-0001",
+                    title="Line Items",
+                    headers=headers,
+                    rows=rows,
+                    page_numbers=pages,
+                )
+            )
+
+    text_blocks: list[ExtractedTextBlock] = []
+    notes = data.get("notes")
+    if isinstance(notes, list):
+        for note_index, note in enumerate(notes, start=1):
+            if not isinstance(note, str) or not note:
+                continue
+            block_id = f"text-{note_index:04d}"
+            text_blocks.append(ExtractedTextBlock(id=block_id, text=note, page_number=1))
+            target_paths[block_id] = f"/notes/{note_index - 1}"
+
+    return (
+        GenericDocumentExtraction(
+            document_type=document_type,
+            fields=fields,
+            tables=tables,
+            text_blocks=text_blocks,
+        ),
+        target_paths,
+    )

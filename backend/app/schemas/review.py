@@ -4,20 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.extraction import FieldEvidence, ValidationIssue
+from app.schemas.extraction import GenericDocumentExtraction, QualityIssue
 
 
 class CorrectionChange(BaseModel):
-    field_path: str = Field(min_length=1, max_length=512)
-    value: Any
+    target_id: str = Field(min_length=1, max_length=100)
+    value: str = Field(max_length=20_000)
     reason: str | None = Field(default=None, max_length=1000)
-
-    @field_validator("field_path")
-    @classmethod
-    def require_json_pointer(cls, value: str) -> str:
-        if not value.startswith("/"):
-            raise ValueError("field_path must be a JSON Pointer")
-        return value
 
     @field_validator("reason")
     @classmethod
@@ -40,7 +33,7 @@ class ReviewRequest(BaseModel):
 
 class CorrectionResponse(BaseModel):
     id: UUID
-    field_path: str
+    target_id: str
     previous_value: Any | None
     corrected_value: Any | None
     reason: str | None
@@ -56,8 +49,7 @@ class ResultResponse(BaseModel):
     review_status: Literal["unreviewed", "in_review", "approved"]
     reviewed_by_user_id: UUID | None
     reviewed_at: datetime | None
-    canonical_data: dict[str, Any]
-    effective_data: dict[str, Any]
-    evidence: list[FieldEvidence]
-    validation_issues: list[ValidationIssue]
+    extracted_data: GenericDocumentExtraction
+    effective_data: GenericDocumentExtraction
+    quality_issues: list[QualityIssue]
     corrections: list[CorrectionResponse]

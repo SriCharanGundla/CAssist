@@ -160,7 +160,12 @@ async def run() -> int:
                 result = await client.get(f"/api/v1/results/{result_id}")
                 result.raise_for_status()
                 result_payload = result.json()
-                assert result_payload["validation_issues"] == []
+                fields = result_payload["effective_data"]["fields"]
+                buyer = next(
+                    field
+                    for field in fields
+                    if field["value"] == "Example Buyer LLP"
+                )
 
                 stage = "correction"
                 correction = await client.patch(
@@ -170,7 +175,7 @@ async def run() -> int:
                         "expected_version": result_payload["version"],
                         "changes": [
                             {
-                                "field_path": "/buyer/name",
+                                "target_id": buyer["id"],
                                 "value": "Example Buyer LLP (Reviewed)",
                                 "reason": "Synthetic vertical smoke correction",
                             }
@@ -201,7 +206,7 @@ async def run() -> int:
                     json={
                         "expected_version": approved["version"],
                         "format": "tally_json",
-                        "options": {"include_validation_warnings": True},
+                        "options": {"include_quality_issues": True},
                     },
                 )
                 export.raise_for_status()

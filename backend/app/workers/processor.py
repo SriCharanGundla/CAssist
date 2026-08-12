@@ -16,7 +16,6 @@ from app.models import (
     ProcessingRun,
     RunStatus,
 )
-from app.services.invoice_validation import validate_invoice
 from app.services.model_provider import (
     ExtractionProvider,
     ModelSelection,
@@ -163,7 +162,6 @@ async def _complete_run(
     worker_id: str,
     extraction: ProviderExtraction,
 ) -> bool:
-    issues = validate_invoice(extraction.invoice)
     async with session_factory() as session:
         run_and_document = (
             await session.execute(
@@ -186,11 +184,13 @@ async def _complete_run(
         session.add(
             ExtractionResult(
                 processing_run_id=run.id,
-                document_type=extraction.invoice.document_type,
+                document_type=extraction.document.document_type,
                 raw_provider_output=extraction.raw_provider_output,
-                canonical_data=extraction.invoice.model_dump(mode="json"),
-                evidence_data=[item.model_dump(mode="json") for item in extraction.evidence],
-                validation_issues=[issue.model_dump(mode="json") for issue in issues],
+                canonical_data=extraction.document.model_dump(mode="json"),
+                evidence_data=[],
+                validation_issues=[
+                    issue.model_dump(mode="json") for issue in extraction.quality_issues
+                ],
             )
         )
         run.status = RunStatus.SUCCEEDED
@@ -293,7 +293,11 @@ async def process_next_document(
             app_settings,
             claim.model_selection,
         )
-        extraction = await asyncio.to_thread(provider.extract_invoice, preprocessed.page_paths)
+        extraction = await asyncio.to_thread(
+            provider.extract_document,
+            preprocessed.page_paths,
+            preprocessed.page_text,
+        )
         if not await _advance_stage(
             session_factory,
             claim,

@@ -2,11 +2,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 from strands.models.gemini import GeminiModel
 from strands.models.openai_responses import OpenAIResponsesModel
 
 from app.core.config import Settings
-from app.schemas.extraction import DocumentClassification, ExtractionCompletion
+from app.schemas.extraction import (
+    DocumentClassification,
+    DraftField,
+    GenericExtractionDraft,
+    QualityReviewDraft,
+)
+from app.services.document_text_tools import DocumentTextTools
 from app.services.model_provider import (
     ModelSelection,
     ProviderConfigurationError,
@@ -83,6 +90,29 @@ def test_provider_requires_the_selected_api_key() -> None:
         )
 
 
+def test_agent_graph_has_bounded_specialists_and_only_native_text_tools() -> None:
+    provider = create_extraction_provider(
+        Settings(app_env="test", _env_file=None, gemini_api_key="test-key"),
+        ModelSelection(provider="gemini", model_id="gemini-3.5-flash"),
+    )
+    graph = provider._build_graph(DocumentTextTools((None,)))  # type: ignore[attr-defined]
+
+    assert list(graph.nodes) == ["classify", "extract", "quality"]
+    assert graph.nodes["classify"].executor.tool_names == []
+    assert graph.nodes["extract"].executor.tool_names == [
+        "read_document_text",
+        "search_document_text",
+    ]
+    assert graph.nodes["quality"].executor.tool_names == [
+        "read_document_text",
+        "search_document_text",
+    ]
+    assert {
+        (edge.from_node.node_id, edge.to_node.node_id, edge.condition is not None)
+        for edge in graph.edges
+    } == {("classify", "extract", False), ("extract", "quality", True)}
+
+
 def test_provider_attempts_must_fit_inside_worker_lease() -> None:
     with pytest.raises(ValueError, match="WORKER_LEASE_SECONDS"):
         Settings(
@@ -105,21 +135,15 @@ def test_provider_attempts_must_fit_inside_worker_lease() -> None:
 
 def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> None:
     page_path = tmp_path / "page-0001.png"
-    page_path.write_bytes(b"synthetic-image")
+    Image.new("RGB", (120, 80), "white").save(page_path)
 
     class FakeGraph:
-        def __init__(self, workspace) -> None:
-            self.workspace = workspace
+        def __init__(self, text_tools) -> None:
+            self.text_tools = text_tools
             self.prompt = None
 
         def __call__(self, prompt):
             self.prompt = prompt
-            self.workspace.record_field("/invoice_number", "INV-1", 1)
-            self.workspace.record_field("/invoice_date", "2026-08-12", 1)
-            self.workspace.record_field("/supplier/name", "Supplier", 1)
-            self.workspace.record_field("/buyer/name", "Buyer", 1)
-            self.workspace.record_field("/totals/grand_total", "100.00", 1)
-            self.workspace.validate_draft()
             return SimpleNamespace(
                 results={
                     "classify": SimpleNamespace(
@@ -133,7 +157,15 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
                     ),
                     "extract": SimpleNamespace(
                         result=SimpleNamespace(
-                            structured_output=ExtractionCompletion(validated=True),
+                            structured_output=GenericExtractionDraft(
+                                fields=[
+                                    DraftField(
+                                        label="Bill No.",
+                                        value="INV-1",
+                                        page_number=1,
+                                    )
+                                ]
+                            ),
                             stop_reason="end_turn",
                         )
                     ),
@@ -148,25 +180,87 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
     graph = None
 
-    def build_graph(workspace):
+    def build_graph(text_tools):
         nonlocal graph
-        graph = FakeGraph(workspace)
+        graph = FakeGraph(text_tools)
         return graph
 
     provider._build_graph = build_graph  # type: ignore[method-assign]
-    extraction = provider.extract_invoice([page_path])
+    extraction = provider.extract_document([page_path], ("Bill No. INV-1",))
 
-    assert extraction.invoice.invoice_number == "INV-1"
-    assert extraction.invoice.document_type == "invoice"
-    assert {item.field_path for item in extraction.evidence} == {
-        "/invoice_number",
-        "/invoice_date",
-        "/supplier/name",
-        "/buyer/name",
-        "/totals/grand_total",
-    }
+    assert extraction.document.document_type == "invoice"
+    assert extraction.document.fields[0].label == "Bill No."
+    assert extraction.document.fields[0].value == "INV-1"
+    assert extraction.document.fields[0].id == "field-0001"
+    assert extraction.quality_issues == []
     assert extraction.input_tokens == 12
     assert extraction.output_tokens == 8
     assert extraction.raw_provider_output["extraction_stop_reason"] == "end_turn"
     assert graph is not None
-    assert graph.prompt[1]["image"]["source"]["bytes"] == b"synthetic-image"
+    assert graph.prompt[1]["image"]["source"]["bytes"] == page_path.read_bytes()
+
+
+def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Path) -> None:
+    page_path = tmp_path / "page.png"
+    Image.new("RGB", (120, 80), "white").save(page_path)
+
+    class FakeGraph:
+        def __call__(self, _prompt):
+            return SimpleNamespace(
+                results={
+                    "classify": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=DocumentClassification(
+                                document_type="receipt",
+                                confidence=0.9,
+                            ),
+                            stop_reason="end_turn",
+                        )
+                    ),
+                    "extract": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=GenericExtractionDraft(
+                                fields=[
+                                    DraftField(
+                                        label="Receipt No",
+                                        value="1NV-1O2",
+                                        page_number=1,
+                                    )
+                                ],
+                                quality_review_recommended=True,
+                            ),
+                            stop_reason="end_turn",
+                        )
+                    ),
+                    "quality": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=QualityReviewDraft(
+                                issues=[
+                                    {
+                                        "target_path": "/fields/0",
+                                        "code": "possible_ocr_error",
+                                        "message": "Possible character confusion",
+                                        "suggested_value": "INV-102",
+                                    }
+                                ]
+                            ),
+                            stop_reason="end_turn",
+                        )
+                    ),
+                },
+                accumulated_usage={"inputTokens": 20, "outputTokens": 10},
+                execution_order=[
+                    SimpleNamespace(node_id="classify"),
+                    SimpleNamespace(node_id="extract"),
+                    SimpleNamespace(node_id="quality"),
+                ],
+            )
+
+    provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
+    provider._build_graph = lambda _tools: FakeGraph()  # type: ignore[method-assign]
+
+    extraction = provider.extract_document([page_path], (None,))
+
+    assert extraction.document.fields[0].value == "1NV-1O2"
+    assert extraction.quality_issues[0].target_id == "field-0001"
+    assert extraction.quality_issues[0].suggested_value == "INV-102"

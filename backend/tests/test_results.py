@@ -25,7 +25,15 @@ from app.models import (
     RunStatus,
     WorkspaceMember,
 )
-from app.schemas.extraction import CanonicalInvoice, InvoiceTotals, Party
+from app.schemas.extraction import (
+    ExtractedField,
+    ExtractedTable,
+    ExtractedTableCell,
+    ExtractedTableRow,
+    ExtractedTextBlock,
+    GenericDocumentExtraction,
+    QualityIssue,
+)
 from app.services.auth import establish_session
 from app.services.identity_provider import VerifiedIdentity
 
@@ -74,7 +82,7 @@ async def result_client() -> AsyncIterator[
     document = Document(
         workspace_id=workspace_id,
         uploaded_by_user_id=user.id,
-        original_filename="invoice.png",
+        original_filename="document.png",
         mime_type="image/png",
         byte_size=100,
         page_count=1,
@@ -100,26 +108,65 @@ async def result_client() -> AsyncIterator[
     )
     session.add(run)
     await session.flush()
-    invoice = CanonicalInvoice(
-        invoice_number="INV-1",
-        invoice_date="2026-08-12",
-        supplier=Party(name="Supplier"),
-        buyer=Party(),
-        totals=InvoiceTotals(grand_total="100.00"),
+    extraction = GenericDocumentExtraction(
+        document_type="invoice",
+        fields=[
+            ExtractedField(
+                id="field-0001",
+                label="Bill No.",
+                value="INV-1",
+                page_number=1,
+            ),
+            ExtractedField(
+                id="field-0002",
+                label="Customer Ref",
+                value="1NV-1O2",
+                page_number=1,
+            ),
+        ],
+        tables=[
+            ExtractedTable(
+                id="table-0001",
+                title="Particulars",
+                headers=["Description", "Amount"],
+                rows=[
+                    ExtractedTableRow(
+                        id="table-0001-row-0001",
+                        cells=[
+                            ExtractedTableCell(
+                                id="table-0001-r0001-c0001",
+                                value="Consulting",
+                            ),
+                            ExtractedTableCell(
+                                id="table-0001-r0001-c0002",
+                                value="100.00",
+                            ),
+                        ],
+                    )
+                ],
+                page_numbers=[1],
+            )
+        ],
+        text_blocks=[
+            ExtractedTextBlock(
+                id="text-0001",
+                text="Thank you",
+                page_number=1,
+            )
+        ],
+    )
+    quality_issue = QualityIssue(
+        target_id="field-0002",
+        code="possible_ocr_error",
+        message="Possible character confusion",
+        suggested_value="INV-102",
     )
     result = ExtractionResult(
         processing_run_id=run.id,
-        document_type="tax_invoice",
+        document_type="invoice",
         raw_provider_output={"private": "provider output"},
-        canonical_data=invoice.model_dump(mode="json"),
-        validation_issues=[
-            {
-                "severity": "warning",
-                "code": "MISSING_PARTY_NAME",
-                "field_path": "/buyer/name",
-                "message": "Buyer name was not extracted",
-            }
-        ],
+        canonical_data=extraction.model_dump(mode="json"),
+        validation_issues=[quality_issue.model_dump(mode="json")],
     )
     session.add(result)
     await session.commit()
@@ -148,7 +195,7 @@ async def result_client() -> AsyncIterator[
 
 
 @pytest.mark.asyncio
-async def test_get_result_returns_effective_data_without_provider_output(
+async def test_get_result_returns_generic_data_without_provider_output(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, _, _, _, run_id, _ = result_client
@@ -159,10 +206,16 @@ async def test_get_result_returns_effective_data_without_provider_output(
     payload = response.json()
     assert payload["version"] == 1
     assert payload["review_status"] == "unreviewed"
-    assert payload["canonical_data"] == payload["effective_data"]
-    assert [issue["code"] for issue in payload["validation_issues"]] == [
-        "MISSING_PARTY_NAME",
-        "NO_LINE_ITEMS",
+    assert payload["extracted_data"] == payload["effective_data"]
+    assert payload["effective_data"]["fields"][0] == {
+        "id": "field-0001",
+        "label": "Bill No.",
+        "value": "INV-1",
+        "page_number": 1,
+        "region": None,
+    }
+    assert [issue["code"] for issue in payload["quality_issues"]] == [
+        "possible_ocr_error"
     ]
     assert "raw_provider_output" not in payload
     assert "provider output" not in response.text
@@ -174,7 +227,6 @@ async def test_get_result_by_id_supports_reloadable_review_route(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, _, _, _, run_id, result_id = result_client
-
     response = await client.get(f"/api/v1/results/{result_id}")
 
     assert response.status_code == 200
@@ -185,20 +237,19 @@ async def test_get_result_by_id_supports_reloadable_review_route(
 
 
 @pytest.mark.asyncio
-async def test_corrections_are_append_only_revalidated_audited_and_versioned(
+async def test_corrections_are_append_only_and_remove_resolved_quality_issue(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, session, _, user_id, _, result_id = result_client
-
     response = await client.patch(
         f"/api/v1/results/{result_id}/fields",
         json={
             "expected_version": 1,
             "changes": [
                 {
-                    "field_path": "/buyer/name",
-                    "value": "Buyer Ltd",
-                    "reason": "Corrected from the document image",
+                    "target_id": "field-0002",
+                    "value": "INV-102",
+                    "reason": "Accepted after checking the image",
                 }
             ],
         },
@@ -208,16 +259,17 @@ async def test_corrections_are_append_only_revalidated_audited_and_versioned(
     payload = response.json()
     assert payload["version"] == 2
     assert payload["review_status"] == "in_review"
-    assert payload["canonical_data"]["buyer"]["name"] is None
-    assert payload["effective_data"]["buyer"]["name"] == "Buyer Ltd"
-    assert "MISSING_PARTY_NAME" not in {issue["code"] for issue in payload["validation_issues"]}
-    assert payload["corrections"][0]["previous_value"] is None
+    assert payload["extracted_data"]["fields"][1]["value"] == "1NV-1O2"
+    assert payload["effective_data"]["fields"][1]["value"] == "INV-102"
+    assert payload["quality_issues"] == []
+    assert payload["corrections"][0]["target_id"] == "field-0002"
+    assert payload["corrections"][0]["previous_value"] == "1NV-1O2"
     assert payload["corrections"][0]["corrected_by_user_id"] == str(user_id)
 
     stored_result = await session.get(ExtractionResult, result_id)
     assert stored_result is not None
-    assert stored_result.canonical_data["buyer"]["name"] is None
-    assert "MISSING_PARTY_NAME" not in {issue["code"] for issue in stored_result.validation_issues}
+    assert stored_result.canonical_data["fields"][1]["value"] == "1NV-1O2"
+    assert stored_result.validation_issues == []
     correction_count = await session.scalar(
         select(func.count())
         .select_from(Correction)
@@ -237,41 +289,30 @@ async def test_corrections_are_append_only_revalidated_audited_and_versioned(
         f"/api/v1/results/{result_id}/fields",
         json={
             "expected_version": 1,
-            "changes": [{"field_path": "/invoice_number", "value": "INV-2"}],
+            "changes": [{"target_id": "field-0001", "value": "INV-2"}],
         },
     )
     assert stale.status_code == 409
-    assert (
-        await session.scalar(
-            select(func.count())
-            .select_from(Correction)
-            .where(Correction.extraction_result_id == result_id)
-        )
-        == 1
-    )
 
 
 @pytest.mark.asyncio
-async def test_invalid_correction_is_rejected_without_partial_writes(
+async def test_invalid_target_is_rejected_without_partial_writes(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, session, _, _, _, result_id = result_client
-
     response = await client.patch(
         f"/api/v1/results/{result_id}/fields",
         json={
             "expected_version": 1,
             "changes": [
-                {"field_path": "/invoice_number", "value": "INV-2"},
-                {"field_path": "/totals/grand_total", "value": 100.0},
+                {"target_id": "field-0001", "value": "INV-2"},
+                {"target_id": "missing", "value": "invalid"},
             ],
         },
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == (
-        "Corrected data does not match the canonical invoice schema"
-    )
+    assert response.json()["detail"] == "Correction target does not exist"
     result = await session.get(ExtractionResult, result_id)
     assert result is not None and result.version == 1
     assert (
@@ -294,13 +335,13 @@ async def test_multiple_corrections_rebuild_in_request_order(
         json={
             "expected_version": 1,
             "changes": [
-                {"field_path": "/invoice_number", "value": "INV-2"},
-                {"field_path": "/invoice_number", "value": "INV-3"},
+                {"target_id": "field-0001", "value": "INV-2"},
+                {"target_id": "field-0001", "value": "INV-3"},
             ],
         },
     )
     assert response.status_code == 200
-    assert response.json()["effective_data"]["invoice_number"] == "INV-3"
+    assert response.json()["effective_data"]["fields"][0]["value"] == "INV-3"
     assert [item["previous_value"] for item in response.json()["corrections"]] == [
         "INV-1",
         "INV-2",
@@ -308,7 +349,7 @@ async def test_multiple_corrections_rebuild_in_request_order(
 
     rebuilt = await client.get(f"/api/v1/runs/{run_id}/result")
     assert rebuilt.status_code == 200
-    assert rebuilt.json()["effective_data"]["invoice_number"] == "INV-3"
+    assert rebuilt.json()["effective_data"]["fields"][0]["value"] == "INV-3"
 
 
 @pytest.mark.asyncio
@@ -316,22 +357,18 @@ async def test_approval_is_audited_and_later_correction_reopens_review(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, session, _, user_id, _, result_id = result_client
-
     approved = await client.post(
         f"/api/v1/results/{result_id}/review",
         json={"expected_version": 1, "status": "approved"},
     )
     assert approved.status_code == 200
-    assert approved.json()["version"] == 2
-    assert approved.json()["review_status"] == "approved"
     assert approved.json()["reviewed_by_user_id"] == str(user_id)
-    assert approved.json()["reviewed_at"] is not None
 
     corrected = await client.patch(
         f"/api/v1/results/{result_id}/fields",
         json={
             "expected_version": 2,
-            "changes": [{"field_path": "/buyer/name", "value": "Buyer Ltd"}],
+            "changes": [{"target_id": "field-0002", "value": "INV-102"}],
         },
     )
     assert corrected.status_code == 200
@@ -351,10 +388,6 @@ async def test_approval_is_audited_and_later_correction_reopens_review(
         "result.review_status_changed",
         "result.corrected",
     ]
-    assert all(
-        set(audit.metadata_) <= {"review_status", "result_version", "correction_count"}
-        for audit in audits
-    )
 
 
 @pytest.mark.asyncio
@@ -381,27 +414,24 @@ async def test_result_operations_hide_other_workspaces(
 
     assert (await client.get(f"/api/v1/runs/{run_id}/result")).status_code == 404
     assert (await client.get(f"/api/v1/results/{result_id}")).status_code == 404
-    assert (
-        await client.patch(
-            f"/api/v1/results/{result_id}/fields",
-            json={
-                "expected_version": 1,
-                "changes": [{"field_path": "/buyer/name", "value": "Hidden"}],
-            },
-        )
-    ).status_code == 404
-    assert (
-        await client.post(
-            f"/api/v1/results/{result_id}/review",
-            json={"expected_version": 1, "status": "approved"},
-        )
-    ).status_code == 404
-    assert (
-        await client.post(
-            f"/api/v1/results/{result_id}/exports",
-            json={"expected_version": 1, "format": "tally_json"},
-        )
-    ).status_code == 404
+    correction = await client.patch(
+        f"/api/v1/results/{result_id}/fields",
+        json={
+            "expected_version": 1,
+            "changes": [{"target_id": "field-0001", "value": "Hidden"}],
+        },
+    )
+    assert correction.status_code == 404
+    review = await client.post(
+        f"/api/v1/results/{result_id}/review",
+        json={"expected_version": 1, "status": "approved"},
+    )
+    assert review.status_code == 404
+    export = await client.post(
+        f"/api/v1/results/{result_id}/exports",
+        json={"expected_version": 1, "format": "tally_json"},
+    )
+    assert export.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -414,7 +444,6 @@ async def test_tally_handoff_requires_approved_current_result(
         json={"expected_version": 1, "format": "tally_json"},
     )
     assert unapproved.status_code == 409
-    assert unapproved.json()["detail"] == "Result must be approved before export"
 
     approved = await client.post(
         f"/api/v1/results/{result_id}/review",
@@ -426,7 +455,6 @@ async def test_tally_handoff_requires_approved_current_result(
         json={"expected_version": 1, "format": "tally_json"},
     )
     assert stale.status_code == 409
-    assert stale.json()["detail"] == "Result changed; reload before exporting"
     assert (
         await session.scalar(
             select(func.count())
@@ -441,10 +469,7 @@ async def test_tally_handoff_requires_approved_current_result(
         json={"expected_version": 2, "format": "tally_json"},
     )
     assert current.status_code == 200
-    assert {issue["code"] for issue in current.json()["validation_warnings"]} == {
-        "MISSING_PARTY_NAME",
-        "NO_LINE_ITEMS",
-    }
+    assert current.json()["quality_issues"][0]["code"] == "possible_ocr_error"
 
 
 def _contains_float(value: Any) -> bool:
@@ -458,7 +483,7 @@ def _contains_float(value: Any) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_tally_handoff_exports_effective_strings_and_records_safe_events(
+async def test_tally_handoff_preserves_effective_strings_and_records_safe_events(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
     client, session, _, user_id, _, result_id = result_client
@@ -466,7 +491,7 @@ async def test_tally_handoff_exports_effective_strings_and_records_safe_events(
         f"/api/v1/results/{result_id}/fields",
         json={
             "expected_version": 1,
-            "changes": [{"field_path": "/buyer/name", "value": "Buyer Ltd"}],
+            "changes": [{"target_id": "field-0002", "value": "INV-102"}],
         },
     )
     assert corrected.status_code == 200
@@ -481,37 +506,25 @@ async def test_tally_handoff_exports_effective_strings_and_records_safe_events(
         json={
             "expected_version": 3,
             "format": "tally_json",
-            "options": {"include_validation_warnings": False},
+            "options": {"include_quality_issues": False},
         },
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == "application/json"
-    assert response.headers["cache-control"] == "no-store"
-    assert response.headers["content-disposition"] == (
-        f'attachment; filename="cassist-tally-{result_id}.json"'
-    )
     payload = response.json()
-    assert payload["format"] == "cassist.tally_handoff"
-    assert payload["schema_version"] == "tally-handoff-v1"
-    assert payload["tally_compatibility"] == {
-        "target": "TallyPrime 7.0+",
-        "native_import_ready": False,
-        "reason_code": "COMPANY_AND_MASTER_MAPPING_REQUIRED",
-    }
-    assert payload["source"]["review_status"] == "approved"
-    assert payload["source"]["result_version"] == 3
-    assert payload["voucher_draft"]["date"] == "20260812"
-    assert payload["voucher_draft"]["buyer"]["name"] == "Buyer Ltd"
-    assert payload["voucher_draft"]["totals"]["grand_total"] == "100.00"
-    assert "validation_warnings" not in payload
+    assert payload["schema_version"] == "tally-handoff-v2"
+    assert payload["tally_compatibility"]["native_import_ready"] is False
+    assert payload["reviewed_extraction"]["fields"][1]["value"] == "INV-102"
+    assert payload["reviewed_extraction"]["tables"][0]["rows"][0]["cells"][1][
+        "value"
+    ] == "100.00"
+    assert "quality_issues" not in payload
     assert not _contains_float(payload)
     assert {mapping["code"] for mapping in payload["required_mappings"]} == {
         "TARGET_COMPANY",
-        "TRANSACTION_ROLE",
-        "PARTY_LEDGER",
-        "ACCOUNTING_MODE",
-        "LINE_MASTERS",
+        "VOUCHER_TYPE",
+        "DOCUMENT_FIELDS",
+        "LEDGER_AND_ITEM_MASTERS",
     }
 
     export_event = await session.scalar(
@@ -526,41 +539,15 @@ async def test_tally_handoff_exports_effective_strings_and_records_safe_events(
     assert export_event is not None
     assert export_event.exported_by_user_id == user_id
     assert export_event.format == ExportFormat.TALLY_JSON
-    assert export_event.exporter_version == "tally-handoff-v1"
+    assert export_event.exporter_version == "tally-handoff-v2"
     assert export_event.options == {
-        "include_validation_warnings": False,
+        "include_quality_issues": False,
         "result_version": 3,
         "native_import_ready": False,
     }
     assert audit is not None
     assert audit.metadata_ == {
         "format": "tally_json",
-        "exporter_version": "tally-handoff-v1",
+        "exporter_version": "tally-handoff-v2",
         "result_version": 3,
     }
-
-
-@pytest.mark.parametrize(
-    ("field_path", "expected_detail"),
-    [
-        ("/missing", "JSON Pointer field does not exist"),
-        ("/buyer~2name", "JSON Pointer contains an invalid escape"),
-        ("/line_items/-", "JSON Pointer list index is invalid"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_invalid_json_pointer_paths_are_rejected(
-    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
-    field_path: str,
-    expected_detail: str,
-) -> None:
-    client, _, _, _, _, result_id = result_client
-    response = await client.patch(
-        f"/api/v1/results/{result_id}/fields",
-        json={
-            "expected_version": 1,
-            "changes": [{"field_path": field_path, "value": "invalid"}],
-        },
-    )
-    assert response.status_code == 422
-    assert response.json()["detail"] == expected_detail

@@ -12,27 +12,33 @@ from strands.multiagent import GraphBuilder
 
 from app.core.config import Settings
 from app.schemas.extraction import (
-    CanonicalInvoice,
     DocumentClassification,
-    ExtractionCompletion,
-    FieldEvidence,
+    GenericDocumentExtraction,
+    GenericExtractionDraft,
+    QualityIssue,
+    QualityReviewDraft,
 )
-from app.services.extraction_tools import InvoiceExtractionWorkspace
+from app.services.document_text_tools import DocumentTextTools
+from app.services.generic_extraction import finalize_extraction, needs_quality_review
 
 _CLASSIFIER_PROMPT = """Classify the supplied accounting document by visible content only.
-Use tax_invoice only when the document visibly identifies itself as a tax invoice or contains
-clear GST tax-invoice characteristics. Use invoice for other invoices. Do not infer a type from
-filename."""
+Choose the closest broad type. Classification is descriptive metadata and must not impose an
+extraction template. Do not infer a type from the filename."""
 
-_EXTRACTION_PROMPT = """Extract the supplied invoice for human accounting review.
-Use the document tools to record only facts visibly supported by a supplied page. Never invent,
-default, calculate, or copy a value merely because the contract supports it. Use inspect_page only
-when a targeted reinspection is useful. Record line items with record_table. Call validate_draft
-after recording. If validation reports a problem that targeted page evidence can resolve, perform at
-most one repair pass and call validate_draft once more. Use replace_existing=true when repairing a
-line-item table. Then return validated=true. Missing optional fields are normal. Monetary values,
-quantities, rates, and prices must be base-10 strings without currency symbols or grouping
-separators. Use ISO dates only when unambiguous."""
+_EXTRACTION_PROMPT = """Extract the visible information from this document for human review.
+Return only label/value pairs actually present, preserving each visible label and value as written.
+Preserve table titles, headers, cells, and row order. Put useful unlabelled narrative content in
+text_blocks. Do not invent required fields, normalize dates, calculate amounts, correct spelling,
+rename labels, or apply an invoice schema. Page images are the primary source. The native PDF text
+tools are optional supporting evidence when text is available. Set quality_review_recommended
+only when the source is genuinely ambiguous, illegible, or likely misread. Do not duplicate
+observations."""
+
+_QUALITY_PROMPT = """Review the preceding generic extraction against the supplied document.
+Only flag likely gibberish, OCR-like character confusion, duplicate observations, or illegible
+text. Never rewrite, remove, or add extracted fields, table cells, or text blocks. Return issues
+separately using the extraction target path. A suggested_value is optional and must be supported by
+visible or native-text evidence; otherwise leave it null. The human decides whether to accept it."""
 
 
 @dataclass(frozen=True)
@@ -43,15 +49,19 @@ class ModelSelection:
 
 @dataclass(frozen=True)
 class ProviderExtraction:
-    invoice: CanonicalInvoice
+    document: GenericDocumentExtraction
     raw_provider_output: dict[str, object]
     input_tokens: int
     output_tokens: int
-    evidence: list[FieldEvidence] = field(default_factory=list)
+    quality_issues: list[QualityIssue] = field(default_factory=list)
 
 
 class ExtractionProvider(Protocol):
-    def extract_invoice(self, page_paths: Sequence[Path]) -> ProviderExtraction: ...
+    def extract_document(
+        self,
+        page_paths: Sequence[Path],
+        page_text: Sequence[str | None],
+    ) -> ProviderExtraction: ...
 
 
 class ProviderConfigurationError(Exception):
@@ -91,7 +101,7 @@ class StrandsExtractionProvider:
             dependency_logger.propagate = False
             dependency_logger.setLevel(logging.CRITICAL + 1)
 
-    def _build_graph(self, workspace: InvoiceExtractionWorkspace):
+    def _build_graph(self, text_tools: DocumentTextTools):
         classifier = Agent(
             model=self.model,
             name="document_classifier",
@@ -103,42 +113,60 @@ class StrandsExtractionProvider:
         )
         extractor = Agent(
             model=self.model,
-            name="invoice_extractor",
+            name="generic_document_extractor",
             system_prompt=_EXTRACTION_PROMPT,
-            structured_output_model=ExtractionCompletion,
+            structured_output_model=GenericExtractionDraft,
             callback_handler=None,
-            tools=[
-                workspace.inspect_page,
-                workspace.record_field,
-                workspace.record_table,
-                workspace.validate_draft,
-            ],
+            tools=[text_tools.read_document_text, text_tools.search_document_text],
             retry_strategy=None,
         )
+        quality_reviewer = Agent(
+            model=self.model,
+            name="extraction_quality_reviewer",
+            system_prompt=_QUALITY_PROMPT,
+            structured_output_model=QualityReviewDraft,
+            callback_handler=None,
+            tools=[text_tools.read_document_text, text_tools.search_document_text],
+            retry_strategy=None,
+        )
+
+        def should_review(state) -> bool:
+            node = state.results.get("extract")
+            draft = node.result.structured_output if node else None
+            return isinstance(draft, GenericExtractionDraft) and needs_quality_review(draft)
+
         graph = GraphBuilder()
         graph.add_node(classifier, "classify")
         graph.add_node(extractor, "extract")
+        graph.add_node(quality_reviewer, "quality")
         graph.add_edge("classify", "extract")
+        graph.add_edge("extract", "quality", condition=should_review)
         return (
             graph.set_entry_point("classify")
-            .set_max_node_executions(2)
+            .set_max_node_executions(3)
             .set_node_timeout(self.node_timeout_seconds)
-            .set_execution_timeout(self.node_timeout_seconds * 2)
-            .set_graph_id("cassist_document_extraction")
+            .set_execution_timeout(self.node_timeout_seconds * 3)
+            .set_graph_id("cassist_generic_document_extraction")
             .build()
         )
 
-    def extract_invoice(self, page_paths: Sequence[Path]) -> ProviderExtraction:
+    def extract_document(
+        self,
+        page_paths: Sequence[Path],
+        page_text: Sequence[str | None],
+    ) -> ProviderExtraction:
         if not page_paths:
             raise ProviderExtractionError("No preprocessed pages were supplied")
+        if len(page_paths) != len(page_text):
+            raise ProviderExtractionError("Page image and text counts do not match")
 
-        workspace = InvoiceExtractionWorkspace(tuple(page_paths))
-        graph = self._build_graph(workspace)
+        text_tools = DocumentTextTools(tuple(page_text))
+        graph = self._build_graph(text_tools)
         content: list[dict[str, object]] = [
             {
                 "text": (
                     "Classify and extract this accounting document across all supplied pages. "
-                    "Page images follow in 1-based order."
+                    "Page images follow in 1-based order. Preserve source wording exactly."
                 )
             }
         ]
@@ -157,16 +185,22 @@ class StrandsExtractionProvider:
             classification_result = graph_result.results["classify"].result
             extraction_result = graph_result.results["extract"].result
             classification = classification_result.structured_output
-            completion = extraction_result.structured_output
+            draft = extraction_result.structured_output
+            quality_node = graph_result.results.get("quality")
+            quality_result = quality_node.result if quality_node else None
+            quality_review = quality_result.structured_output if quality_result else None
             if not isinstance(classification, DocumentClassification):
-                raise ProviderExtractionError("The classification agent returned no classification")
-            if classification.document_type not in {"invoice", "tax_invoice"}:
-                raise ProviderExtractionError(
-                    "The first extraction contract supports invoices only"
-                )
-            if not isinstance(completion, ExtractionCompletion) or not completion.validated:
-                raise ProviderExtractionError("The extraction agent did not complete validation")
-            invoice, evidence = workspace.result(classification.document_type)
+                raise ProviderExtractionError("The classifier returned no classification")
+            if not isinstance(draft, GenericExtractionDraft):
+                raise ProviderExtractionError("The extractor returned no structured extraction")
+            if quality_review is not None and not isinstance(quality_review, QualityReviewDraft):
+                raise ProviderExtractionError("The quality reviewer returned invalid output")
+            document, quality_issues = finalize_extraction(
+                draft,
+                classification.document_type,
+                page_paths,
+                quality_review,
+            )
         except ProviderExtractionError:
             raise
         except Exception as exc:
@@ -174,12 +208,14 @@ class StrandsExtractionProvider:
 
         usage = graph_result.accumulated_usage
         return ProviderExtraction(
-            invoice=invoice,
-            evidence=evidence,
+            document=document,
+            quality_issues=quality_issues,
             raw_provider_output={
                 "classification": classification.model_dump(mode="json"),
                 "classification_stop_reason": classification_result.stop_reason,
                 "extraction_stop_reason": extraction_result.stop_reason,
+                "quality_review_performed": quality_result is not None,
+                "quality_stop_reason": quality_result.stop_reason if quality_result else None,
                 "graph_execution_order": [node.node_id for node in graph_result.execution_order],
             },
             input_tokens=usage.get("inputTokens", 0),
@@ -219,5 +255,5 @@ def create_extraction_provider(
             stateful=False,
         )
 
-    node_timeout = (settings.worker_lease_seconds - 30) / 2
+    node_timeout = (settings.worker_lease_seconds - 30) / 3
     return StrandsExtractionProvider(model=model, node_timeout_seconds=node_timeout)

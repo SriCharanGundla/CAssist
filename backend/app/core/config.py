@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     model_provider: Literal["openai", "gemini"] = "gemini"
     model_id: str = "gemini-3.5-flash"
     allow_provider_override: bool = True
-    prompt_version: str = "invoice-v1"
-    schema_version: str = "canonical-invoice-v1"
-    preprocessing_version: str = "document-v1"
+    prompt_version: str = "generic-document-v1"
+    schema_version: str = "generic-extraction-v1"
+    preprocessing_version: str = "document-native-text-v2"
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
 

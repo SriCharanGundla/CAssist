@@ -3,7 +3,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +16,7 @@ from app.models import (
     ReviewStatus,
     WorkspaceMember,
 )
-from app.schemas.extraction import CanonicalInvoice
+from app.schemas.extraction import QualityIssue
 from app.schemas.review import (
     ApplyCorrectionsRequest,
     CorrectionResponse,
@@ -26,7 +25,7 @@ from app.schemas.review import (
 )
 from app.services.auth import CurrentAuth
 from app.services.corrections import InvalidCorrectionPath, apply_corrections, replace_pointer
-from app.services.invoice_validation import validate_invoice
+from app.services.generic_extraction import coerce_stored_extraction
 
 router = APIRouter()
 
@@ -92,8 +91,21 @@ def _response(
     run: ProcessingRun,
     corrections: list[Correction],
 ) -> ResultResponse:
-    effective_data = apply_corrections(result.canonical_data, corrections)
-    invoice = CanonicalInvoice.model_validate(effective_data)
+    effective_stored = apply_corrections(result.canonical_data, corrections)
+    extracted_data, target_paths = coerce_stored_extraction(
+        result.canonical_data,
+        result.document_type,
+    )
+    effective_data, _ = coerce_stored_extraction(effective_stored, result.document_type)
+    path_targets = {path: target_id for target_id, path in target_paths.items()}
+    quality_issues: list[QualityIssue] = []
+    for issue_data in result.validation_issues:
+        if not isinstance(issue_data, dict) or "target_id" not in issue_data:
+            continue
+        try:
+            quality_issues.append(QualityIssue.model_validate(issue_data))
+        except ValueError:
+            continue
     return ResultResponse(
         result_id=result.id,
         run_id=run.id,
@@ -102,14 +114,13 @@ def _response(
         review_status=result.review_status,
         reviewed_by_user_id=result.reviewed_by_user_id,
         reviewed_at=result.reviewed_at,
-        canonical_data=result.canonical_data,
-        effective_data=invoice.model_dump(mode="json"),
-        evidence=result.evidence_data,
-        validation_issues=validate_invoice(invoice),
+        extracted_data=extracted_data,
+        effective_data=effective_data,
+        quality_issues=quality_issues,
         corrections=[
             CorrectionResponse(
                 id=correction.id,
-                field_path=correction.field_path,
+                target_id=path_targets.get(correction.field_path, correction.field_path),
                 previous_value=correction.previous_value,
                 corrected_value=correction.corrected_value,
                 reason=correction.reason,
@@ -177,15 +188,19 @@ async def apply_result_corrections(
 
     existing_corrections = await _corrections_for_result(session, result.id)
     effective_data = apply_corrections(result.canonical_data, existing_corrections)
+    _, target_paths = coerce_stored_extraction(effective_data, result.document_type)
     pending_corrections: list[Correction] = []
     correction_time = datetime.now(UTC)
     try:
         for index, change in enumerate(payload.changes):
-            previous_value = replace_pointer(effective_data, change.field_path, change.value)
+            field_path = target_paths.get(change.target_id)
+            if field_path is None:
+                raise InvalidCorrectionPath("Correction target does not exist")
+            previous_value = replace_pointer(effective_data, field_path, change.value)
             correction = Correction(
                 extraction_result_id=result.id,
                 corrected_by_user_id=current_auth.user.id,
-                field_path=change.field_path,
+                field_path=field_path,
                 previous_value=previous_value,
                 corrected_value=change.value,
                 reason=change.reason,
@@ -193,23 +208,19 @@ async def apply_result_corrections(
             )
             session.add(correction)
             pending_corrections.append(correction)
-        invoice = CanonicalInvoice.model_validate(effective_data)
+        coerce_stored_extraction(effective_data, result.document_type)
     except InvalidCorrectionPath as exc:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
-    except ValidationError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Corrected data does not match the canonical invoice schema",
-        ) from exc
-
     changed_at = datetime.now(UTC)
+    corrected_targets = {change.target_id for change in payload.changes}
     result.validation_issues = [
-        issue.model_dump(mode="json") for issue in validate_invoice(invoice)
+        issue
+        for issue in result.validation_issues
+        if isinstance(issue, dict) and issue.get("target_id") not in corrected_targets
     ]
     result.review_status = ReviewStatus.IN_REVIEW
     result.reviewed_by_user_id = None

@@ -11,6 +11,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from app.services.object_storage import ObjectStorage
 
 _CHUNK_SIZE = 1024 * 1024
+_MAX_NATIVE_TEXT_CHARACTERS_PER_PAGE = 100_000
 
 
 class PreprocessingError(Exception):
@@ -23,6 +24,7 @@ class PreprocessingError(Exception):
 @dataclass
 class PreprocessedDocument:
     page_paths: tuple[Path, ...]
+    page_text: tuple[str | None, ...]
     page_count: int
     _temporary_directory: TemporaryDirectory[str]
 
@@ -90,7 +92,7 @@ def _render_pdf(
     render_dpi: int,
     maximum_pixels: int,
     maximum_total_pixels: int,
-) -> tuple[Path, ...]:
+) -> tuple[tuple[Path, ...], tuple[str | None, ...]]:
     document = pdfium.PdfDocument(source_path)
     try:
         page_count = len(document)
@@ -101,6 +103,7 @@ def _render_pdf(
 
         scale = render_dpi / 72
         page_paths: list[Path] = []
+        page_text: list[str | None] = []
         total_pixels = 0
         for page_number in range(page_count):
             page = document.get_page(page_number)
@@ -137,9 +140,17 @@ def _render_pdf(
                         image.close()
                 finally:
                     bitmap.close()
+                text_page = page.get_textpage()
+                try:
+                    text = text_page.get_text_range().strip()
+                    page_text.append(
+                        text[:_MAX_NATIVE_TEXT_CHARACTERS_PER_PAGE] if text else None
+                    )
+                finally:
+                    text_page.close()
             finally:
                 page.close()
-        return tuple(page_paths)
+        return tuple(page_paths), tuple(page_text)
     finally:
         document.close()
 
@@ -221,7 +232,7 @@ def preprocess_document(
             expected_mime_type,
         )
         if expected_mime_type == "application/pdf":
-            page_paths = _render_pdf(
+            page_paths, page_text = _render_pdf(
                 source_path,
                 directory,
                 maximum_pages,
@@ -236,9 +247,11 @@ def preprocess_document(
                 expected_mime_type,
                 maximum_pixels,
             )
+            page_text = (None,)
         source_path.unlink()
         return PreprocessedDocument(
             page_paths=page_paths,
+            page_text=page_text,
             page_count=len(page_paths),
             _temporary_directory=temporary_directory,
         )

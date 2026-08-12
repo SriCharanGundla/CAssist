@@ -27,11 +27,12 @@ from app.models import (
     WorkspaceMember,
 )
 from app.schemas.extraction import (
-    CanonicalInvoice,
-    InvoiceLineItem,
-    InvoiceTotals,
-    Party,
-    TaxAmounts,
+    ExtractedField,
+    ExtractedTable,
+    ExtractedTableCell,
+    ExtractedTableRow,
+    GenericDocumentExtraction,
+    QualityIssue,
 )
 from app.services.model_provider import ProviderExtraction, ProviderExtractionError
 from app.services.object_storage import ObjectNotFoundError, PresignedUpload, StoredObject
@@ -79,36 +80,54 @@ class FakeExtractionProvider:
         self.should_fail = should_fail
         self.observed_paths: tuple[Path, ...] = ()
 
-    def extract_invoice(self, page_paths) -> ProviderExtraction:
+    def extract_document(self, page_paths, page_text) -> ProviderExtraction:
         self.observed_paths = tuple(page_paths)
         assert all(path.exists() for path in self.observed_paths)
+        assert tuple(page_text) == (None,)
         if self.should_fail:
             raise ProviderExtractionError("simulated provider failure")
         return ProviderExtraction(
-            invoice=CanonicalInvoice(
-                invoice_number="INV-100",
-                invoice_date="2026-08-12",
-                supplier=Party(name="Supplier", gstin="27AAPFU0939F1ZV"),
-                buyer=Party(),
-                line_items=[
-                    InvoiceLineItem(
-                        description="Professional services",
-                        quantity="1",
-                        unit_price="100.00",
-                        taxable_value="100.00",
-                        gst_rate="18",
-                        tax_amounts=TaxAmounts(cgst="9.00", sgst="9.00"),
-                        total="118.00",
-                        source_pages=[1],
+            document=GenericDocumentExtraction(
+                document_type="invoice",
+                fields=[
+                    ExtractedField(
+                        id="field-0001",
+                        label="Invoice No.",
+                        value="INV-100",
+                        page_number=1,
                     )
                 ],
-                totals=InvoiceTotals(
-                    taxable_amount="100.00",
-                    cgst_amount="9.00",
-                    sgst_amount="9.00",
-                    grand_total="118.00",
-                ),
+                tables=[
+                    ExtractedTable(
+                        id="table-0001",
+                        title="Items",
+                        headers=["Description", "Amount"],
+                        rows=[
+                            ExtractedTableRow(
+                                id="table-0001-row-0001",
+                                cells=[
+                                    ExtractedTableCell(
+                                        id="table-0001-r0001-c0001",
+                                        value="Professional services",
+                                    ),
+                                    ExtractedTableCell(
+                                        id="table-0001-r0001-c0002",
+                                        value="118.00",
+                                    ),
+                                ],
+                            )
+                        ],
+                        page_numbers=[1],
+                    )
+                ],
             ),
+            quality_issues=[
+                QualityIssue(
+                    target_id="field-0001",
+                    code="possible_ocr_error",
+                    message="Check one character",
+                )
+            ],
             raw_provider_output={"provider_response": "structured"},
             input_tokens=120,
             output_tokens=80,
@@ -351,9 +370,10 @@ async def test_processes_one_image_to_result_and_removes_temporary_pages(
         )
         assert result is not None
         assert result.document_type == "invoice"
-        assert result.canonical_data["totals"]["grand_total"] == "118.00"
+        assert result.canonical_data["fields"][0]["value"] == "INV-100"
+        assert result.canonical_data["tables"][0]["rows"][0]["cells"][1]["value"] == "118.00"
         assert result.raw_provider_output == {"provider_response": "structured"}
-        assert [issue["code"] for issue in result.validation_issues] == ["MISSING_PARTY_NAME"]
+        assert [issue["code"] for issue in result.validation_issues] == ["possible_ocr_error"]
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,6 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,10 +18,10 @@ from app.models import (
     WorkspaceMember,
 )
 from app.schemas.exports import CreateExportRequest
-from app.schemas.extraction import CanonicalInvoice
+from app.schemas.extraction import QualityIssue
 from app.services.auth import CurrentAuth
 from app.services.corrections import apply_corrections
-from app.services.invoice_validation import validate_invoice
+from app.services.generic_extraction import coerce_stored_extraction
 from app.services.tally_export import (
     EXPORTER_VERSION,
     build_tally_handoff,
@@ -75,27 +74,35 @@ async def export_result(
             )
         ).all()
     )
+    document_data = apply_corrections(result.canonical_data, corrections)
     try:
-        invoice = CanonicalInvoice.model_validate(
-            apply_corrections(result.canonical_data, corrections)
+        extracted_document, _ = coerce_stored_extraction(
+            document_data,
+            result.document_type,
         )
-    except ValidationError as exc:
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Effective result is invalid and cannot be exported",
         ) from exc
-    issues = validate_invoice(invoice)
+    issues: list[QualityIssue] = []
+    for issue_data in result.validation_issues:
+        if isinstance(issue_data, dict) and "target_id" in issue_data:
+            try:
+                issues.append(QualityIssue.model_validate(issue_data))
+            except ValueError:
+                continue
     export_payload = build_tally_handoff(
         result_id=result.id,
         result_version=result.version,
-        invoice=invoice,
-        validation_issues=issues,
-        include_validation_warnings=payload.options.include_validation_warnings,
+        document=extracted_document,
+        quality_issues=issues,
+        include_quality_issues=payload.options.include_quality_issues,
     )
     export_bytes = serialize_tally_handoff(export_payload)
 
     event_options = {
-        "include_validation_warnings": payload.options.include_validation_warnings,
+        "include_quality_issues": payload.options.include_quality_issues,
         "result_version": result.version,
         "native_import_ready": False,
     }
