@@ -199,16 +199,9 @@ export function App() {
   return (
     <main className="grid min-h-svh place-items-center p-6">
       <section className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
-        <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-          CA document processing
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold">CAssist</h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Continue with an authorized Google account to upload, extract, review,
-          and export accounting documents.
-        </p>
+        <h1 className="text-3xl font-semibold">CAssist</h1>
         <Button className="mt-5" onClick={handleLogin} size="lg">
-          Continue with Google
+          Sign In with Google
         </Button>
         {authQuery.error ? (
           <p className="mt-4 text-sm text-destructive" role="alert">

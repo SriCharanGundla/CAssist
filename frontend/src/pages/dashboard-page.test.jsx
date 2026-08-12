@@ -245,10 +245,12 @@ describe("DashboardPage", () => {
     renderDashboard()
     await screen.findByText("No documents yet")
 
-    await user.type(
-      screen.getByRole("searchbox", { name: "Search documents" }),
-      "acme"
-    )
+    const search = screen.getByRole("searchbox", { name: "Search documents" })
+    expect(
+      search.compareDocumentPosition(screen.getByText("Actions")) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    await user.type(search, "acme")
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Filter by status" }),
       "ready"

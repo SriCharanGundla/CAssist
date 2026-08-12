@@ -118,4 +118,17 @@ describe("authenticated app header", () => {
     expect(screen.getByText("Checking your session…")).toBeInTheDocument()
     expect(view.container.querySelector(".animate-spin")).toBeInTheDocument()
   })
+
+  it("shows the concise Google sign-in screen", async () => {
+    api.getCurrentAuth.mockResolvedValue(null)
+    renderApp()
+
+    expect(
+      await screen.findByRole("button", { name: "Sign In with Google" })
+    ).toBeEnabled()
+    expect(screen.queryByText("CA document processing")).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/Continue with an authorized Google account/)
+    ).not.toBeInTheDocument()
+  })
 })

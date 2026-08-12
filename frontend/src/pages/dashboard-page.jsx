@@ -441,12 +441,7 @@ export function DashboardPage() {
 
         <div className="mt-7 overflow-hidden rounded-2xl border bg-card shadow-sm">
           <div className="border-b px-5 py-4">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="font-semibold">Recent documents</h2>
-              <span className="text-xs font-medium text-muted-foreground">
-                Actions
-              </span>
-            </div>
+            <h2 className="font-semibold">Recent documents</h2>
             <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto_auto]">
               <input
                 aria-label="Search documents"
@@ -489,6 +484,10 @@ export function DashboardPage() {
                 ))}
               </select>
             </div>
+          </div>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b bg-muted/30 px-5 py-2 text-xs font-medium text-muted-foreground">
+            <span>Document</span>
+            <span>Actions</span>
           </div>
           {documentsQuery.isPending ? (
             <DocumentListSkeleton />
