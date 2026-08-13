@@ -22,7 +22,7 @@ function configuredOrigin(value) {
 function unavailable() {
   return Response.json(
     { error: { code: "EDGE_PROXY_UNAVAILABLE", message: "API unavailable" } },
-    { status: 503 }
+    { status: 503, headers: { "Cache-Control": "no-store" } }
   )
 }
 
@@ -53,6 +53,11 @@ export async function onRequest(context) {
 
   try {
     const response = await fetch(upstreamRequest)
+    const contentType = response.headers.get("content-type") || ""
+    if (response.status >= 500 && !contentType.includes("application/json")) {
+      response.body?.cancel()
+      return unavailable()
+    }
     return new Response(response.body, response)
   } catch {
     return unavailable()

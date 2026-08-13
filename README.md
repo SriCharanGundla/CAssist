@@ -77,7 +77,7 @@ reconnects.
 
 ## Prepare private deployment
 
-The free-domain pilot uses `cassist.pages.dev` as one browser origin. A Pages Function streams
+The free-domain pilot is deployed at `https://cassist.pages.dev` as one browser origin. A Pages Function streams
 `/api/*` to the NAS Tailscale Funnel origin, so production cookies remain host-only and the Funnel
 hostname is not exposed to frontend code. Set these Pages Function bindings in the Cloudflare
 dashboard; encrypt `CASSIST_PROXY_SECRET`:
@@ -100,6 +100,13 @@ docker compose --env-file deploy/.env.production \
 No NAS deployment is performed by these files. `ARCHITECTURE.md` contains the approval-gated rollout
 order and security boundaries. [`deploy/README.md`](deploy/README.md) documents encrypted database
 backups, retention, scheduling, and the clean-container restore test.
+
+The Pages project uses Wrangler Direct Upload. Build and deploy from `frontend/` with:
+
+```bash
+pnpm build
+pnpm exec wrangler pages deploy dist --project-name cassist --branch main
+```
 
 ## Configure authentication
 

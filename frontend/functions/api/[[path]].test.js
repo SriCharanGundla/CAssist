@@ -73,4 +73,24 @@ describe("Pages API proxy", () => {
     expect(response.status).toBe(503)
     expect(upstream).not.toHaveBeenCalled()
   })
+
+  it("sanitizes non-JSON origin failures", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<title>Origin DNS error | private-origin</title>", {
+        status: 530,
+        headers: { "Content-Type": "text/html" },
+      })
+    )
+
+    const response = await onRequest({
+      env: environment,
+      request: new Request("https://cassist.pages.dev/api/v1/health"),
+    })
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get("cache-control")).toBe("no-store")
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "EDGE_PROXY_UNAVAILABLE", message: "API unavailable" },
+    })
+  })
 })

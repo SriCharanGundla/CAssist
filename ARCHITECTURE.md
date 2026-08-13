@@ -1148,6 +1148,9 @@ through a five-minute signed URL, and permanently delete the entire record.
 - The first private deployment uses the existing NAS rather than a paid VPS.
 - Until a custom domain exists, the private pilot uses the permanent Cloudflare Pages
   `cassist.pages.dev` hostname and a Tailscale Funnel `*.ts.net` origin.
+- The `cassist` Pages project uses Wrangler Direct Upload from the repository. The production
+  originals and encrypted-backup buckets are private APAC R2 buckets named `cassist-documents` and
+  `cassist-backups`; only the originals bucket has browser CORS, restricted to the Pages origin.
 - The application remains portable through containers and environment-based configuration so it can move to a VPS without an architectural rewrite.
 
 ### Initial deployment
@@ -1235,9 +1238,10 @@ loopback port `18000`, for Funnel; the database and worker remain internal.
    health checks, and fail-closed production settings locally.
 2. Validate encrypted nightly PostgreSQL backups, bounded retention, and a clean-container restore
    test locally.
-3. Create the `cassist.pages.dev` Pages project, configure encrypted `CASSIST_ORIGIN` and
-   `CASSIST_PROXY_SECRET` Function bindings, update Auth0 callback/logout URLs, and restrict R2 CORS
-   to the Pages origin.
+3. Create the `cassist.pages.dev` Pages project and production R2 buckets, then restrict originals
+   CORS to the Pages origin. When the NAS rollout is authorized, configure encrypted
+   `CASSIST_ORIGIN` and `CASSIST_PROXY_SECRET` Function bindings and update Auth0 callback/logout
+   URLs; the deployed API proxy fails closed until those values exist.
 4. Only after explicit authorization, create the NAS directories/network, deploy PostgreSQL/API/one
    worker, run migrations, and point Tailscale Funnel at `127.0.0.1:18000`.
 5. After an OpenAI key is available, run the production-only model and complete vertical promotion
