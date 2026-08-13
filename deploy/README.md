@@ -2,6 +2,21 @@
 
 These files prepare the NAS deployment but do not connect to or change the NAS.
 
+## R2 temporary-upload lifecycle
+
+The development and production document buckets expire only `incoming/` temporary objects after
+one day. This is a fallback for interrupted requests and post-commit cleanup failures; permanent
+`originals/` objects are never covered by an expiry rule.
+
+```bash
+pnpm --dir frontend exec wrangler r2 bucket lifecycle add \
+  cassist-dev-originals cassist-incoming-expiry incoming/ --expire-days 1 --force
+pnpm --dir frontend exec wrangler r2 bucket lifecycle add \
+  cassist-documents cassist-incoming-expiry incoming/ --expire-days 1 --force
+```
+
+Verify the rules with `wrangler r2 bucket lifecycle list <bucket>` during deployment audits.
+
 ## PostgreSQL backup
 
 The `backup` Compose service streams a PostgreSQL 17 custom-format dump directly into a

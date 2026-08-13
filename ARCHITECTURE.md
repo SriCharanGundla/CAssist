@@ -486,6 +486,11 @@ presigned `PUT` cannot overwrite a completed document.
 The private development bucket CORS policy allows only `http://localhost:5173` to use `PUT`, `GET`,
 and `HEAD`, allows the `Content-Type` request header, exposes only `ETag`, and caches preflights for
 one hour. Production replaces the development origin with the exact Cloudflare Pages origin.
+Both document buckets apply an R2 lifecycle rule that expires only the `incoming/` prefix after one
+day. PostgreSQL-backed cancellation and expired-upload cleanup remain the primary deletion paths;
+the lifecycle rule is a crash-safe fallback for a temporary object recreated through an unexpired
+presigned URL or left behind when best-effort post-commit deletion fails. The `originals/` prefix
+has no lifecycle expiry and originals remain until the user explicitly deletes them.
 
 Request:
 
@@ -519,9 +524,11 @@ Confirms upload completion, verifies and finalizes the original, and queues proc
 
 The trusted completion service streams the private incoming object into a bounded temporary buffer,
 checks the stored and streamed sizes against the database and 25 MiB limit, checks the stored
-`Content-Type`, and validates the PDF/JPEG/PNG binary signature. It then computes SHA-256 and writes those
-verified bytes to a new `originals/<random 128-bit value>` key that was never exposed to the browser.
-Temporary data is closed and deleted after the request.
+`Content-Type`, and validates the PDF/JPEG/PNG binary signature. It then computes SHA-256 and writes
+those verified bytes to `originals/<same opaque 128-bit value as the incoming key>`. The permanent
+key is never signed for browser upload or download during finalization. Reusing the opaque value
+makes retries idempotent and lets pending-upload cancellation remove a final copy left by a hard
+process failure before the PostgreSQL commit. Temporary data is closed and deleted after the request.
 
 For a new hash, the document hash, permanent key, `uploaded` status, and configured queued processing
 run are committed atomically in PostgreSQL. The incoming object is deleted after commit. Completion

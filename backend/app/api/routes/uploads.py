@@ -31,6 +31,7 @@ from app.schemas.uploads import (
     UploadTargetResponse,
 )
 from app.services.auth import CurrentAuth
+from app.services.object_keys import permanent_key_for_incoming
 from app.services.object_storage import ObjectNotFoundError, ObjectStorage, ObjectStorageError
 from app.services.upload_verification import UploadValidationError, verify_upload
 
@@ -96,6 +97,11 @@ async def cancel_upload(
     if object_key is not None:
         try:
             await run_in_threadpool(storage.delete_object, object_key)
+            if is_pending:
+                await run_in_threadpool(
+                    storage.delete_object,
+                    permanent_key_for_incoming(object_key),
+                )
         except ObjectStorageError as exc:
             await session.rollback()
             raise HTTPException(
@@ -286,7 +292,7 @@ async def complete_upload(
             existing_id = existing_document.id
             existing_status = existing_document.status
             if existing_document.r2_object_key is None:
-                permanent_key = f"originals/{uuid4().hex}"
+                permanent_key = permanent_key_for_incoming(incoming_key)
                 await run_in_threadpool(
                     storage.put_object,
                     permanent_key,
@@ -311,7 +317,7 @@ async def complete_upload(
                 deduplicated=True,
             )
 
-        permanent_key = f"originals/{uuid4().hex}"
+        permanent_key = permanent_key_for_incoming(incoming_key)
         await run_in_threadpool(
             storage.put_object,
             permanent_key,

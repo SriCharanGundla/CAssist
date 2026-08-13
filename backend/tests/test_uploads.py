@@ -289,7 +289,9 @@ async def test_expired_unfinished_upload_cleanup_removes_object_and_row(
     document = await session.get(Document, response.json()["document_id"])
     assert document is not None and document.r2_object_key is not None
     incoming_key = document.r2_object_key
+    interrupted_permanent_key = incoming_key.replace("incoming/", "originals/", 1)
     storage.objects[incoming_key] = (b"unfinished", "application/pdf")
+    storage.objects[interrupted_permanent_key] = (b"unfinished", "application/pdf")
     document.upload_expires_at = datetime.now(UTC) - timedelta(seconds=1)
     await session.commit()
 
@@ -299,6 +301,8 @@ async def test_expired_unfinished_upload_cleanup_removes_object_and_row(
     assert await session.get(Document, document.id) is None
     assert incoming_key in storage.deleted_keys
     assert incoming_key not in storage.objects
+    assert interrupted_permanent_key in storage.deleted_keys
+    assert interrupted_permanent_key not in storage.objects
 
 
 @pytest.mark.asyncio
@@ -333,7 +337,9 @@ async def test_cancel_upload_removes_pending_object_and_database_record(
     document = await session.get(Document, response.json()["document_id"])
     assert document is not None and document.r2_object_key is not None
     object_key = document.r2_object_key
+    interrupted_permanent_key = object_key.replace("incoming/", "originals/", 1)
     storage.objects[object_key] = (b"unfinished", "application/pdf")
+    storage.objects[interrupted_permanent_key] = (b"unfinished", "application/pdf")
 
     cancel_response = await client.delete(f"/api/v1/uploads/{document.id}")
 
@@ -341,6 +347,8 @@ async def test_cancel_upload_removes_pending_object_and_database_record(
     assert await session.get(Document, document.id) is None
     assert object_key in storage.deleted_keys
     assert object_key not in storage.objects
+    assert interrupted_permanent_key in storage.deleted_keys
+    assert interrupted_permanent_key not in storage.objects
 
 
 @pytest.mark.asyncio
@@ -447,7 +455,7 @@ async def test_complete_upload_verifies_hash_moves_original_and_queues_run(
     assert document.sha256 == hashlib.sha256(content).hexdigest()
     assert document.upload_expires_at is None
     assert document.r2_object_key is not None
-    assert document.r2_object_key.startswith("originals/")
+    assert document.r2_object_key == incoming_key.replace("incoming/", "originals/", 1)
     assert document.r2_object_key != incoming_key
     assert storage.objects[document.r2_object_key] == (content, "application/pdf")
     assert incoming_key not in storage.objects
@@ -583,7 +591,7 @@ async def test_complete_upload_deduplicates_inside_workspace(
     assert await session.get(Document, pending_id) is None
     await session.refresh(existing)
     assert existing.r2_object_key is not None
-    assert existing.r2_object_key.startswith("originals/")
+    assert existing.r2_object_key == incoming_key.replace("incoming/", "originals/", 1)
     assert existing.original_deleted_at is None
     assert existing.original_deleted_by is None
     assert storage.objects[existing.r2_object_key] == (content, "image/jpeg")
