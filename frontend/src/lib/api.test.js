@@ -276,6 +276,30 @@ describe("uploadDocument", () => {
   })
 })
 
+describe("getCurrentAuth", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("stops a stalled session check after ten seconds", async () => {
+    vi.useFakeTimers()
+    vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"))
+        })
+      })
+    )
+
+    const rejection = expect(getCurrentAuth()).rejects.toThrow(
+      "The request timed out. Try again."
+    )
+    await vi.advanceTimersByTimeAsync(10_000)
+    await rejection
+    vi.useRealTimers()
+  })
+})
+
 describe("API request timeout", () => {
   it("aborts a standard API request after thirty seconds", async () => {
     vi.useFakeTimers()

@@ -167,6 +167,9 @@ export function App() {
     queryKey: ["auth"],
     queryFn: ({ signal }) => getCurrentAuth({ signal }),
     retry: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 60 * 1_000,
   })
 
   const handleLogin = () => {
@@ -196,6 +199,27 @@ export function App() {
     return <AuthenticatedApp auth={authQuery.data} />
   }
 
+  if (authQuery.isError) {
+    return (
+      <main className="grid min-h-svh place-items-center p-6">
+        <section className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
+          <h1 className="text-3xl font-semibold">CAssist</h1>
+          <p className="mt-4 text-sm text-destructive" role="alert">
+            {authQuery.error.message}
+          </p>
+          <Button
+            className="mt-5"
+            disabled={authQuery.isFetching}
+            onClick={() => authQuery.refetch()}
+            size="lg"
+          >
+            {authQuery.isFetching ? "Checking…" : "Retry"}
+          </Button>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className="grid min-h-svh place-items-center p-6">
       <section className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-sm">
@@ -203,11 +227,6 @@ export function App() {
         <Button className="mt-5" onClick={handleLogin} size="lg">
           Sign In with Google
         </Button>
-        {authQuery.error ? (
-          <p className="mt-4 text-sm text-destructive" role="alert">
-            {authQuery.error.message}
-          </p>
-        ) : null}
       </section>
     </main>
   )

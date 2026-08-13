@@ -1,5 +1,6 @@
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL
 const API_REQUEST_TIMEOUT_MS = 30_000
+const AUTH_REQUEST_TIMEOUT_MS = 10_000
 
 export const API_BASE_URL = (
   configuredApiBaseUrl ||
@@ -7,24 +8,30 @@ export const API_BASE_URL = (
 ).replace(/\/$/, "")
 
 async function apiRequest(path, options = {}) {
+  const fetchOptions = { ...options }
+  const callerSignal = fetchOptions.signal
+  const timeoutMs = fetchOptions.timeoutMs ?? API_REQUEST_TIMEOUT_MS
+  delete fetchOptions.idempotencyKey
+  delete fetchOptions.signal
+  delete fetchOptions.timeoutMs
   const controller = new AbortController()
   let timedOut = false
-  const abortFromCaller = () => controller.abort(options.signal?.reason)
-  if (options.signal?.aborted) abortFromCaller()
+  const abortFromCaller = () => controller.abort(callerSignal?.reason)
+  if (callerSignal?.aborted) abortFromCaller()
   else
-    options.signal?.addEventListener("abort", abortFromCaller, { once: true })
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true })
   const timeout = window.setTimeout(() => {
     timedOut = true
     controller.abort()
-  }, API_REQUEST_TIMEOUT_MS)
+  }, timeoutMs)
   try {
     return await fetch(`${API_BASE_URL}${path}`, {
       credentials: "include",
-      ...options,
+      ...fetchOptions,
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        ...options.headers,
+        ...fetchOptions.headers,
       },
     })
   } catch (error) {
@@ -37,7 +44,7 @@ async function apiRequest(path, options = {}) {
     throw error
   } finally {
     window.clearTimeout(timeout)
-    options.signal?.removeEventListener("abort", abortFromCaller)
+    callerSignal?.removeEventListener("abort", abortFromCaller)
   }
 }
 
@@ -96,7 +103,10 @@ export function loginUrl(returnTo = "/") {
 }
 
 export async function getCurrentAuth({ signal } = {}) {
-  const response = await apiRequest("/auth/me", { signal })
+  const response = await apiRequest("/auth/me", {
+    signal,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
   if (response.status === 401) {
     return null
   }

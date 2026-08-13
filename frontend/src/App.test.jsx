@@ -131,4 +131,27 @@ describe("authenticated app header", () => {
       screen.queryByText(/Continue with an authorized Google account/)
     ).not.toBeInTheDocument()
   })
+
+  it("lets the user retry a failed session check", async () => {
+    const user = userEvent.setup()
+    api.getCurrentAuth
+      .mockRejectedValueOnce(new Error("The request timed out. Try again."))
+      .mockResolvedValueOnce({
+        user: {
+          display_name: "Alex Morgan",
+          email: "owner@example.test",
+        },
+      })
+    renderApp()
+
+    expect(
+      await screen.findByText("The request timed out. Try again.")
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+
+    expect(
+      await screen.findByRole("button", { name: "Open account menu" })
+    ).toBeInTheDocument()
+    expect(api.getCurrentAuth).toHaveBeenCalledTimes(2)
+  })
 })
