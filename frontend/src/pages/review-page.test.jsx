@@ -469,6 +469,7 @@ describe("ReviewPage", () => {
       reviewed_by_user_id: "user-1",
       reviewed_at: "2026-08-12T12:00:00Z",
     }
+    approved.presentation.excluded_target_ids = ["field-0001", "text-0001"]
     api.getResult.mockResolvedValue(approved)
     api.updateResultReview.mockResolvedValue({
       ...approved,
@@ -488,6 +489,14 @@ describe("ReviewPage", () => {
     expect(
       screen.queryByRole("button", { name: "Use “INV-7”" })
     ).not.toBeInTheDocument()
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "Tally JSON content" })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText("Bill No.")).not.toBeInTheDocument()
+    expect(screen.getByText("Grand Total")).toBeInTheDocument()
+    expect(screen.queryByText("Terms")).not.toBeInTheDocument()
+    expect(screen.getByText("Items")).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Return to review" }))
 
@@ -496,6 +505,9 @@ describe("ReviewPage", () => {
     expect(
       screen.getByRole("button", { name: "Use “INV-7”" })
     ).toBeInTheDocument()
+    expect(screen.getByText("Bill No.")).toBeInTheDocument()
+    expect(screen.getByText("Terms")).toBeInTheDocument()
+    expect(screen.getAllByRole("checkbox")).toHaveLength(7)
   })
 
   it("loads the latest result with clear feedback after a version conflict", async () => {

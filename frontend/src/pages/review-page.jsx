@@ -419,14 +419,16 @@ function ReviewTable({
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <input
-            aria-label={`Include ${table.title || sectionTitle} table in Tally JSON`}
-            checked={selected}
-            className="size-4 shrink-0 accent-primary"
-            disabled={selectionDisabled}
-            onChange={(event) => onSelectionChange(event.target.checked)}
-            type="checkbox"
-          />
+          {onSelectionChange ? (
+            <input
+              aria-label={`Include ${table.title || sectionTitle} table in Tally JSON`}
+              checked={selected}
+              className="size-4 shrink-0 accent-primary"
+              disabled={selectionDisabled}
+              onChange={(event) => onSelectionChange(event.target.checked)}
+              type="checkbox"
+            />
+          ) : null}
           {table.title && table.title !== sectionTitle ? (
             <h3 className="text-sm font-medium">{table.title}</h3>
           ) : (
@@ -654,6 +656,17 @@ export function ReviewPage() {
     )
   const selectedTargetCount =
     presentationTargetIds.length - orderedDraftExcludedTargetIds.length
+  const approved = result.review_status === "approved"
+  const visiblePresentationSections = approved
+    ? presentationSections
+        .map((section) => ({
+          ...section,
+          target_ids: section.target_ids.filter(
+            (targetId) => !savedExcludedTargetIds.has(targetId)
+          ),
+        }))
+        .filter((section) => section.target_ids.length)
+    : presentationSections
   const targetOrder = presentationSections.flatMap((section) =>
     section.target_ids.flatMap((targetId) => {
       const table = tablesById.get(targetId)
@@ -832,7 +845,7 @@ export function ReviewPage() {
       </div>
 
       <div className="mt-4">
-        {presentationTargetIds.length ? (
+        {!approved && presentationTargetIds.length ? (
           <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 shadow-sm">
             <div>
               <h2 className="text-sm font-semibold">Tally JSON content</h2>
@@ -852,26 +865,24 @@ export function ReviewPage() {
                 </p>
               ) : null}
             </div>
-            {result.review_status !== "approved" ? (
-              <Button
-                disabled={
-                  !selectionIsDirty ||
-                  !selectedTargetCount ||
-                  selectionMutation.isPending
-                }
-                onClick={() =>
-                  selectionMutation.mutate({
-                    excludedTargetIds: orderedDraftExcludedTargetIds,
-                    expectedVersion: result.version,
-                  })
-                }
-                variant="outline"
-              >
-                {selectionMutation.isPending
-                  ? "Saving selection…"
-                  : "Save Tally selection"}
-              </Button>
-            ) : null}
+            <Button
+              disabled={
+                !selectionIsDirty ||
+                !selectedTargetCount ||
+                selectionMutation.isPending
+              }
+              onClick={() =>
+                selectionMutation.mutate({
+                  excludedTargetIds: orderedDraftExcludedTargetIds,
+                  expectedVersion: result.version,
+                })
+              }
+              variant="outline"
+            >
+              {selectionMutation.isPending
+                ? "Saving selection…"
+                : "Save Tally selection"}
+            </Button>
           </section>
         ) : null}
         {unmappedIssues.length ? (
@@ -925,7 +936,7 @@ export function ReviewPage() {
               : "grid items-start gap-5 lg:grid-cols-2"
           }
         >
-          {presentationSections.map((section) => {
+          {visiblePresentationSections.map((section) => {
             const sectionSelectedCount = section.target_ids.filter(
               (targetId) => !effectiveExcludedTargetIds.has(targetId)
             ).length
@@ -935,18 +946,24 @@ export function ReviewPage() {
               <Card
                 collapsible
                 headerControl={
-                  <SectionSelectionCheckbox
-                    disabled={selectionDisabled}
-                    onChange={(selected) =>
-                      setSectionSelected(section.target_ids, selected)
-                    }
-                    selectedCount={sectionSelectedCount}
-                    targetCount={section.target_ids.length}
-                    title={section.title}
-                  />
+                  approved ? null : (
+                    <SectionSelectionCheckbox
+                      disabled={selectionDisabled}
+                      onChange={(selected) =>
+                        setSectionSelected(section.target_ids, selected)
+                      }
+                      selectedCount={sectionSelectedCount}
+                      targetCount={section.target_ids.length}
+                      title={section.title}
+                    />
+                  )
                 }
                 itemCount={section.target_ids.length}
-                itemSummary={`${sectionSelectedCount} of ${section.target_ids.length} selected`}
+                itemSummary={
+                  approved
+                    ? null
+                    : `${sectionSelectedCount} of ${section.target_ids.length} selected`
+                }
                 key={section.id}
                 title={section.title}
               >
@@ -961,8 +978,11 @@ export function ReviewPage() {
                         pageNumber={field.page_number}
                         selected={selected}
                         selectionDisabled={selectionDisabled}
-                        onSelectionChange={(nextSelected) =>
-                          setTargetSelected(field.id, nextSelected)
+                        onSelectionChange={
+                          approved
+                            ? undefined
+                            : (nextSelected) =>
+                                setTargetSelected(field.id, nextSelected)
                         }
                         value={field.value}
                         {...editableProps(field.id, {
@@ -978,8 +998,11 @@ export function ReviewPage() {
                       <ReviewTable
                         editableProps={editableProps}
                         key={table.id}
-                        onSelectionChange={(nextSelected) =>
-                          setTargetSelected(table.id, nextSelected)
+                        onSelectionChange={
+                          approved
+                            ? undefined
+                            : (nextSelected) =>
+                                setTargetSelected(table.id, nextSelected)
                         }
                         selected={selected}
                         selectionDisabled={selectionDisabled}
@@ -999,8 +1022,11 @@ export function ReviewPage() {
                         selected={selected}
                         selectionDisabled={selectionDisabled}
                         selectionLabel={`Include ${section.title} text in Tally JSON`}
-                        onSelectionChange={(nextSelected) =>
-                          setTargetSelected(block.id, nextSelected)
+                        onSelectionChange={
+                          approved
+                            ? undefined
+                            : (nextSelected) =>
+                                setTargetSelected(block.id, nextSelected)
                         }
                         value={block.text}
                         {...editableProps(block.id, {
