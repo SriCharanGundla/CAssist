@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { RiArrowLeftSLine, RiCloseLine } from "@remixicon/react"
 import { Link, useNavigate } from "react-router-dom"
 
@@ -9,6 +9,7 @@ import {
   ACCEPTED_UPLOAD_EXTENSIONS,
   MAX_UPLOAD_BYTES,
   MAX_UPLOAD_FILES,
+  getStorageQuota,
   uploadMimeType,
   uploadDocument,
 } from "@/lib/api"
@@ -68,6 +69,12 @@ export function UploadPage() {
   const [error, setError] = React.useState(null)
   const [dragActive, setDragActive] = React.useState(false)
   const [uploading, setUploading] = React.useState(false)
+  const quotaQuery = useQuery({
+    queryKey: ["storage-quota"],
+    queryFn: ({ signal }) => getStorageQuota({ signal }),
+    staleTime: 5_000,
+  })
+  const quota = quotaQuery.data
 
   React.useEffect(() => {
     if (!uploading) return undefined
@@ -134,7 +141,16 @@ export function UploadPage() {
     const pendingItems = items.filter(
       (item) => !item.result && !item.validationError
     )
-    if (!pendingItems.length || uploading) {
+    const pendingBytes = pendingItems.reduce(
+      (total, item) => total + item.file.size,
+      0
+    )
+    if (
+      !pendingItems.length ||
+      uploading ||
+      !quota?.upload_allowed ||
+      pendingBytes > quota.available_bytes
+    ) {
       return
     }
     setError(null)
@@ -173,6 +189,7 @@ export function UploadPage() {
       }
     )
     setUploading(false)
+    await queryClient.invalidateQueries({ queryKey: ["storage-quota"] })
     const failedCount = outcomes.filter((outcome) => outcome.error).length
     const cancelledCount = outcomes.filter(
       (outcome) => outcome.cancelled
@@ -215,6 +232,15 @@ export function UploadPage() {
     (item) => !item.result && !item.validationError
   ).length
   const completedCount = items.filter((item) => item.result).length
+  const pendingBytes = items
+    .filter((item) => !item.result && !item.validationError)
+    .reduce((total, item) => total + item.file.size, 0)
+  const quotaUnavailable = quotaQuery.isPending || Boolean(quotaQuery.error)
+  const storageFull = Boolean(quota && !quota.upload_allowed)
+  const selectionExceedsQuota = Boolean(
+    quota && pendingBytes > quota.available_bytes
+  )
+  const selectionDisabled = uploading || storageFull
 
   return (
     <section className="mx-auto max-w-2xl">
@@ -236,15 +262,22 @@ export function UploadPage() {
         Up to 10 PDF, JPEG, or PNG files, 25 MiB each. Originals stay private
         and require review after extraction.
       </p>
+      {quota ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {(quota.available_bytes / 1_000_000_000).toFixed(2)} GB available in
+          shared document storage.
+        </p>
+      ) : null}
 
       <form className="mt-7 space-y-5" onSubmit={handleSubmit}>
         <div
+          aria-disabled={selectionDisabled}
           aria-label="Document drop zone"
           className={`rounded-2xl border border-dashed p-8 text-center shadow-sm transition-colors ${dragActive ? "border-primary bg-primary/5" : "bg-card"}`}
           data-drag-active={dragActive || undefined}
           onDragEnter={(event) => {
             event.preventDefault()
-            if (uploading) return
+            if (selectionDisabled) return
             dragDepth.current += 1
             setDragActive(true)
           }}
@@ -258,7 +291,7 @@ export function UploadPage() {
             event.preventDefault()
             dragDepth.current = 0
             setDragActive(false)
-            if (!uploading) selectFiles(event.dataTransfer.files)
+            if (!selectionDisabled) selectFiles(event.dataTransfer.files)
           }}
         >
           <input
@@ -267,7 +300,7 @@ export function UploadPage() {
               ...ACCEPTED_UPLOAD_EXTENSIONS,
             ].join(",")}
             className="sr-only"
-            disabled={uploading}
+            disabled={selectionDisabled}
             multiple
             onChange={(event) => {
               selectFiles(event.target.files)
@@ -343,6 +376,7 @@ export function UploadPage() {
               {!uploading ? (
                 <Button
                   className="mt-4"
+                  disabled={selectionDisabled}
                   onClick={() => inputRef.current?.click()}
                   type="button"
                   variant="outline"
@@ -359,6 +393,7 @@ export function UploadPage() {
               <p className="mt-1 text-xs text-muted-foreground">or</p>
               <Button
                 className="mt-3"
+                disabled={selectionDisabled}
                 onClick={() => inputRef.current?.click()}
                 type="button"
                 variant="outline"
@@ -393,8 +428,33 @@ export function UploadPage() {
             {error}
           </p>
         ) : null}
+        {quotaQuery.error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {quotaQuery.error.message}
+          </p>
+        ) : storageFull ? (
+          <p className="text-sm text-destructive" role="alert">
+            Shared document storage is full. Delete stored files before
+            uploading more.
+          </p>
+        ) : selectionExceedsQuota ? (
+          <p className="text-sm text-destructive" role="alert">
+            These files exceed the remaining shared storage. Remove files or
+            delete stored documents first.
+          </p>
+        ) : null}
 
-        <Button disabled={!pendingCount || uploading} size="lg" type="submit">
+        <Button
+          disabled={
+            !pendingCount ||
+            uploading ||
+            quotaUnavailable ||
+            storageFull ||
+            selectionExceedsQuota
+          }
+          size="lg"
+          type="submit"
+        >
           {uploading
             ? "Uploading…"
             : completedCount

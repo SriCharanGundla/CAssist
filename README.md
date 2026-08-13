@@ -69,7 +69,9 @@ The dashboard is the document hub: it supports filename search plus status and d
 filters, shows processing state, and provides original viewing, review, development model
 comparison, cancellation, and deletion actions without an intermediate document page. Active
 cancellation is acknowledged by the worker before deletion is enabled. Uploads show byte progress
-and can be cancelled individually or as a batch. Review uses an embedded PDF.js viewer with
+and can be cancelled individually or as a batch. A shared dashboard meter reports the document
+bucket allocation against an application-enforced 8 GB cap; pending uploads reserve capacity and
+deleting an original releases it immediately. Review uses an embedded PDF.js viewer with
 selectable text, page thumbnails, and source-evidence highlighting. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
 The review screen presents collapsible dynamic sections rather than storage-oriented field/table
@@ -166,5 +168,6 @@ its synthetic database and R2 data.
 
 Create a private Cloudflare R2 bucket and an Object Read & Write API token scoped only to that
 bucket. Set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` in
-`backend/.env`. The bucket must keep public access disabled and allow CORS only from
+`backend/.env`. `R2_STORAGE_QUOTA_BYTES` defaults to the shared 8,000,000,000-byte application cap.
+The bucket must keep public access disabled and allow CORS only from
 `http://localhost:5173` for `PUT`, `GET`, and `HEAD` with the `Content-Type` request header.

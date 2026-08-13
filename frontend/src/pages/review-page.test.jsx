@@ -177,6 +177,23 @@ describe("ReviewPage", () => {
     expect(localStorage.getItem("cassist-review-source-visible")).toBe("false")
   })
 
+  it("keeps extracted data visible without original controls after file deletion", async () => {
+    const result = structuredClone(initialResult)
+    result.original_available = false
+    api.getResult.mockResolvedValue(result)
+    renderReviewPage()
+
+    expect(await screen.findByText("Bill No.")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Hide document" })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Show document" })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
+    expect(api.createOriginalViewUrl).not.toHaveBeenCalled()
+  })
+
   it("selects sections and individual items for Tally JSON", async () => {
     const user = userEvent.setup()
     const saved = structuredClone(initialResult)

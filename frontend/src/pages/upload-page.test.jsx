@@ -9,7 +9,11 @@ import { UploadPage } from "@/pages/upload-page"
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const original = await importOriginal()
-  return { ...original, uploadDocument: vi.fn() }
+  return {
+    ...original,
+    getStorageQuota: vi.fn(),
+    uploadDocument: vi.fn(),
+  }
 })
 
 function renderUploadPage() {
@@ -32,6 +36,55 @@ function renderUploadPage() {
 describe("UploadPage", () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    api.getStorageQuota.mockResolvedValue({
+      used_bytes: 1_000_000_000,
+      limit_bytes: 8_000_000_000,
+      available_bytes: 7_000_000_000,
+      usage_percent: 12.5,
+      upload_allowed: true,
+    })
+  })
+
+  it("blocks file selection when shared storage is full", async () => {
+    api.getStorageQuota.mockResolvedValue({
+      used_bytes: 8_000_000_000,
+      limit_bytes: 8_000_000_000,
+      available_bytes: 0,
+      usage_percent: 100,
+      upload_allowed: false,
+    })
+    const { container } = renderUploadPage()
+
+    expect(
+      await screen.findByText(/Shared document storage is full/)
+    ).toBeInTheDocument()
+    expect(container.querySelector('input[type="file"]')).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Choose files" })).toBeDisabled()
+  })
+
+  it("blocks a selection larger than the remaining shared storage", async () => {
+    const user = userEvent.setup()
+    api.getStorageQuota.mockResolvedValue({
+      used_bytes: 7_999_999_995,
+      limit_bytes: 8_000_000_000,
+      available_bytes: 5,
+      usage_percent: 99.9999999,
+      upload_allowed: true,
+    })
+    const { container } = renderUploadPage()
+
+    await user.upload(
+      container.querySelector('input[type="file"]'),
+      new File(["%PDF-1.7"], "invoice.pdf", { type: "application/pdf" })
+    )
+
+    expect(
+      screen.getByText(/exceed the remaining shared storage/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Upload and process" })
+    ).toBeDisabled()
+    expect(api.uploadDocument).not.toHaveBeenCalled()
   })
 
   it("rejects unsupported files before calling the API", async () => {
@@ -76,8 +129,9 @@ describe("UploadPage", () => {
     expect(api.uploadDocument).not.toHaveBeenCalled()
   })
 
-  it("keeps valid files when invalid files are selected with them", () => {
+  it("keeps valid files when invalid files are selected with them", async () => {
     const { container } = renderUploadPage()
+    await screen.findByText(/7\.00 GB available/)
     const valid = new File(["%PDF-1.7"], "invoice.pdf", {
       type: "application/pdf",
     })

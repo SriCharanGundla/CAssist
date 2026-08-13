@@ -508,6 +508,18 @@ contents, extracted financial values, hashes, or provider output.
 
 ## 7. Upload and document endpoints
 
+### `GET /api/v1/uploads/quota`
+
+Returns the authenticated, no-store view of the shared originals-bucket allocation. PostgreSQL is
+the immediate source of truth: every document with an R2 key contributes its declared byte size, so
+pending uploads reserve capacity before a presigned URL is issued and deleting an original releases
+capacity in the same application workflow. The default limit is 8,000,000,000 bytes and is shared
+across workspaces. Cloudflare's account and bucket analytics remain operational reconciliation
+signals rather than the upload gate because they can lag and can include storage outside this app.
+
+The response contains `used_bytes`, `limit_bytes`, `available_bytes`, `usage_percent`, and
+`upload_allowed`. The dashboard renders the same value for every user.
+
 ### `POST /api/v1/uploads`
 
 Creates a pending document and a short-lived presigned R2 upload URL.
@@ -517,6 +529,10 @@ workspace is selected server-side. The presigned upload targets `incoming/<rando
 and never contains the original filename or identity data. It expires after five minutes and signs
 the exact `Content-Type`. The incoming key is not the permanent original key, so reusing an unexpired
 presigned `PUT` cannot overwrite a completed document.
+Creation takes a PostgreSQL transaction advisory lock before measuring the shared allocation. A
+request whose declared size would exceed the configured cap returns `507 Insufficient Storage` and
+does not receive an R2 upload URL. This serializes concurrent reservations across all API instances;
+the browser check is only an early usability guard.
 The private development bucket CORS policy allows only `http://localhost:5173` to use `PUT`, `GET`,
 and `HEAD`, allows the `Content-Type` request header, exposes only `ETag`, and caches preflights for
 one hour. Production replaces the development origin with the exact Cloudflare Pages origin.

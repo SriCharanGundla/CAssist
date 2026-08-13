@@ -41,6 +41,7 @@ import {
   confirmDocumentProcessing,
   createOriginalViewUrl,
   deleteDocumentOriginal,
+  getStorageQuota,
   getRun,
   listDocuments,
   permanentlyDeleteDocument,
@@ -96,6 +97,10 @@ const STATUS_LABELS = {
   cancelled: "Cancelled",
   needs_confirmation: "Confirmation needed",
   unsupported: "Unsupported document",
+}
+
+function formatStorageGb(bytes) {
+  return `${(bytes / 1_000_000_000).toFixed(2)} GB`
 }
 
 function statusBadgeClass(status) {
@@ -186,7 +191,10 @@ function DocumentRow({ document }) {
   const resultId = run?.result_id
 
   const refreshDocuments = () =>
-    queryClient.invalidateQueries({ queryKey: ["documents"] })
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["documents"] }),
+      queryClient.invalidateQueries({ queryKey: ["storage-quota"] }),
+    ])
   const viewMutation = useMutation({
     mutationFn: () => createOriginalViewUrl(document.id),
     onSuccess: ({ url }) => window.open(url, "_blank", "noopener,noreferrer"),
@@ -462,6 +470,12 @@ export function DashboardPage() {
       }),
     staleTime: 5_000,
   })
+  const quotaQuery = useQuery({
+    queryKey: ["storage-quota"],
+    queryFn: ({ signal }) => getStorageQuota({ signal }),
+    staleTime: 5_000,
+  })
+  const quota = quotaQuery.data
   const documents = documentsQuery.data?.items || []
   const hasPreviousPage = pageIndex > 0
   const nextCursor = documentsQuery.data?.next_cursor
@@ -497,9 +511,49 @@ export function DashboardPage() {
               Upload, monitor, review, and export accounting documents.
             </p>
           </div>
-          <Button nativeButton={false} render={<Link to="/upload" />} size="lg">
-            Upload
-          </Button>
+          <div className="flex min-w-48 flex-col gap-2">
+            {quota ? (
+              <div aria-label="Shared document storage" className="text-xs">
+                <div className="flex items-center justify-between gap-3 text-muted-foreground">
+                  <span>Shared storage</span>
+                  <span>
+                    {formatStorageGb(quota.used_bytes)} /{" "}
+                    {formatStorageGb(quota.limit_bytes)}
+                  </span>
+                </div>
+                <div
+                  aria-label="Shared storage usage"
+                  aria-valuemax="100"
+                  aria-valuemin="0"
+                  aria-valuenow={Math.round(quota.usage_percent)}
+                  className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
+                  role="progressbar"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width]"
+                    style={{ width: `${quota.usage_percent}%` }}
+                  />
+                </div>
+              </div>
+            ) : null}
+            {quota && !quota.upload_allowed ? (
+              <Button
+                disabled
+                size="lg"
+                title="Delete stored files to free space"
+              >
+                Storage full
+              </Button>
+            ) : (
+              <Button
+                nativeButton={false}
+                render={<Link to="/upload" />}
+                size="lg"
+              >
+                Upload
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="mt-7 overflow-hidden rounded-2xl border bg-card shadow-sm">

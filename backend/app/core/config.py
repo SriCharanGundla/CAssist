@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     r2_secret_access_key: str | None = None
     r2_bucket_name: str = "cassist-documents"
     r2_presigned_url_ttl_seconds: int = 300
+    r2_storage_quota_bytes: int = 8_000_000_000
     upload_max_bytes: int = 25 * 1024 * 1024
     worker_lease_seconds: int = 5 * 60
     worker_poll_seconds: float = 2.0
@@ -83,6 +84,8 @@ class Settings(BaseSettings):
             raise ValueError("AUTH_MAX_ACTIVE_SESSIONS must be between 1 and 100")
         if not 60 <= self.r2_presigned_url_ttl_seconds <= 900:
             raise ValueError("R2_PRESIGNED_URL_TTL_SECONDS must be between 60 and 900")
+        if self.r2_storage_quota_bytes <= 0:
+            raise ValueError("R2_STORAGE_QUOTA_BYTES must be positive")
         if self.upload_max_bytes <= 0:
             raise ValueError("UPLOAD_MAX_BYTES must be positive")
         if self.worker_lease_seconds <= 0:

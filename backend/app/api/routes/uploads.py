@@ -3,12 +3,13 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import (
     get_app_settings,
+    get_current_auth,
     get_database_session,
     get_object_storage,
     require_csrf,
@@ -28,6 +29,7 @@ from app.schemas.uploads import (
     CompleteUploadResponse,
     CreateUploadRequest,
     CreateUploadResponse,
+    StorageQuotaResponse,
     UploadTargetResponse,
 )
 from app.services.auth import CurrentAuth
@@ -36,6 +38,43 @@ from app.services.object_storage import ObjectNotFoundError, ObjectStorage, Obje
 from app.services.upload_verification import UploadValidationError, verify_upload
 
 router = APIRouter(prefix="/uploads")
+_STORAGE_QUOTA_ADVISORY_LOCK_ID = 1_434_152_835
+
+
+async def _used_storage_bytes(session: AsyncSession) -> int:
+    return int(
+        await session.scalar(
+            select(func.coalesce(func.sum(Document.byte_size), 0)).where(
+                Document.r2_object_key.is_not(None)
+            )
+        )
+        or 0
+    )
+
+
+def _storage_quota_response(used_bytes: int, limit_bytes: int) -> StorageQuotaResponse:
+    available_bytes = max(0, limit_bytes - used_bytes)
+    return StorageQuotaResponse(
+        used_bytes=used_bytes,
+        limit_bytes=limit_bytes,
+        available_bytes=available_bytes,
+        usage_percent=min(100.0, (used_bytes / limit_bytes) * 100),
+        upload_allowed=available_bytes > 0,
+    )
+
+
+@router.get("/quota", response_model=StorageQuotaResponse)
+async def get_storage_quota(
+    response: Response,
+    _: Annotated[CurrentAuth, Depends(get_current_auth)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> StorageQuotaResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return _storage_quota_response(
+        await _used_storage_bytes(session),
+        app_settings.r2_storage_quota_bytes,
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -148,6 +187,19 @@ async def create_upload(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="A workspace membership is required",
+        )
+
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_id)"),
+        {"lock_id": _STORAGE_QUOTA_ADVISORY_LOCK_ID},
+    )
+    used_bytes = await _used_storage_bytes(session)
+    if used_bytes + payload.byte_size > app_settings.r2_storage_quota_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+            detail=(
+                "Shared document storage is full. Delete stored files before uploading more."
+            ),
         )
 
     current_time = datetime.now(UTC)

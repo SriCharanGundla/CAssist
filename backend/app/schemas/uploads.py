@@ -42,3 +42,11 @@ class CompleteUploadResponse(BaseModel):
     document_id: UUID
     status: Literal["uploaded", "processing", "ready", "failed"]
     deduplicated: bool = False
+
+
+class StorageQuotaResponse(BaseModel):
+    used_bytes: int = Field(ge=0)
+    limit_bytes: int = Field(gt=0)
+    available_bytes: int = Field(ge=0)
+    usage_percent: float = Field(ge=0)
+    upload_allowed: bool

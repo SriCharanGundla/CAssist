@@ -285,6 +285,14 @@ export async function uploadDocument(
   }
 }
 
+export async function getStorageQuota({ signal } = {}) {
+  const response = await apiRequest("/uploads/quota", { signal })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load shared storage usage.")
+  }
+  return response.json()
+}
+
 export async function getDocument(documentId, { signal } = {}) {
   const response = await apiRequest(`/documents/${documentId}`, { signal })
   if (!response.ok) {

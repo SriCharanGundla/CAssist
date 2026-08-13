@@ -16,6 +16,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     confirmDocumentProcessing: vi.fn(),
     createOriginalViewUrl: vi.fn(),
     deleteDocumentOriginal: vi.fn(),
+    getStorageQuota: vi.fn(),
     getRun: vi.fn(),
     listDocuments: vi.fn(),
     permanentlyDeleteDocument: vi.fn(),
@@ -47,7 +48,16 @@ function renderDashboard(initialEntry = "/") {
 }
 
 describe("DashboardPage", () => {
-  beforeEach(() => vi.resetAllMocks())
+  beforeEach(() => {
+    vi.resetAllMocks()
+    api.getStorageQuota.mockResolvedValue({
+      used_bytes: 1_250_000_000,
+      limit_bytes: 8_000_000_000,
+      available_bytes: 6_750_000_000,
+      usage_percent: 15.625,
+      upload_allowed: true,
+    })
+  })
 
   it.each([
     [
@@ -416,5 +426,69 @@ describe("DashboardPage", () => {
       screen.getByRole("button", { name: "Delete File and Data" })
     ).toBeEnabled()
     open.mockRestore()
+  })
+
+  it("shows shared storage usage and disables uploads when full", async () => {
+    api.listDocuments.mockResolvedValue({ items: [], next_cursor: null })
+    api.getStorageQuota.mockResolvedValue({
+      used_bytes: 8_000_000_000,
+      limit_bytes: 8_000_000_000,
+      available_bytes: 0,
+      usage_percent: 100,
+      upload_allowed: false,
+    })
+    renderDashboard()
+
+    expect(await screen.findByText("8.00 GB / 8.00 GB")).toBeInTheDocument()
+    expect(
+      screen.getByRole("progressbar", { name: "Shared storage usage" })
+    ).toHaveAttribute("aria-valuenow", "100")
+    expect(screen.getByRole("button", { name: "Storage full" })).toBeDisabled()
+    expect(
+      screen.queryByRole("button", { name: "Upload" })
+    ).not.toBeInTheDocument()
+  })
+
+  it("keeps extracted data actions but removes original-file actions after file deletion", async () => {
+    const user = userEvent.setup()
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-1",
+          original_filename: "invoice.pdf",
+          mime_type: "application/pdf",
+          original_available: false,
+          status: "ready",
+          created_at: "2026-08-12T12:00:00Z",
+          latest_run: {
+            id: "run-1",
+            status: "succeeded",
+            result_id: "result-1",
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    api.permanentlyDeleteDocument.mockResolvedValue(undefined)
+    renderDashboard()
+
+    expect(await screen.findByText("invoice.pdf")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", {
+        name: "Open invoice.pdf in a new tab",
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Review extraction" })
+    ).toBeEnabled()
+    await user.click(screen.getByRole("button", { name: "Delete document" }))
+    expect(
+      screen.queryByRole("button", { name: "Delete File, Keep Data" })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Delete File and Data" })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Delete Data" }))
+    expect(api.permanentlyDeleteDocument).toHaveBeenCalledWith("document-1")
   })
 })

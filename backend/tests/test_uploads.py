@@ -219,6 +219,74 @@ async def test_create_upload_rejects_oversized_documents_before_signing(
 
 
 @pytest.mark.asyncio
+async def test_shared_storage_quota_reserves_space_and_reopens_after_deletion(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, _, storage, settings = authenticated_upload_client
+    settings.r2_storage_quota_bytes = 1_000
+
+    initial = await client.get("/api/v1/uploads/quota")
+    assert initial.status_code == 200
+    assert initial.headers["cache-control"] == "no-store"
+    assert initial.json() == {
+        "used_bytes": 0,
+        "limit_bytes": 1_000,
+        "available_bytes": 1_000,
+        "usage_percent": 0.0,
+        "upload_allowed": True,
+    }
+
+    reserved = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "reserved.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": 600,
+        },
+    )
+    assert reserved.status_code == 201
+    usage = await client.get("/api/v1/uploads/quota")
+    assert usage.json() == {
+        "used_bytes": 600,
+        "limit_bytes": 1_000,
+        "available_bytes": 400,
+        "usage_percent": 60.0,
+        "upload_allowed": True,
+    }
+
+    blocked = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "over-quota.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": 401,
+        },
+    )
+    assert blocked.status_code == 507
+    assert blocked.json()["error"]["message"] == (
+        "Shared document storage is full. Delete stored files before uploading more."
+    )
+    assert len(storage.calls) == 1
+
+    assert (
+        await client.delete(f"/api/v1/uploads/{reserved.json()['document_id']}")
+    ).status_code == 204
+    released = await client.get("/api/v1/uploads/quota")
+    assert released.json()["used_bytes"] == 0
+    assert released.json()["available_bytes"] == 1_000
+
+    unblocked = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "now-allowed.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": 401,
+        },
+    )
+    assert unblocked.status_code == 201
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("filename", "mime_type"),
     [
