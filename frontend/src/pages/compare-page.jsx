@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button"
 import { compareDocument, getDocument } from "@/lib/api"
 import { adaptivePollingInterval } from "@/lib/polling"
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"])
+const TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "needs_confirmation",
+  "unsupported",
+])
 const COMPARISON_COMPLETE = new Set(["succeeded"])
 
 function RunCard({ run }) {
@@ -190,7 +196,9 @@ export function ComparePage() {
                 ({comparisonQuery.data.agreement.matching_observations} of{" "}
                 {comparisonQuery.data.agreement.compared_observations})
               </p>
-              <ObservationDifferences agreement={comparisonQuery.data.agreement} />
+              <ObservationDifferences
+                agreement={comparisonQuery.data.agreement}
+              />
             </>
           ) : null}
         </>

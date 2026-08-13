@@ -13,6 +13,8 @@ class DocumentStatus(StrEnum):
     PROCESSING = "processing"
     READY = "ready"
     FAILED = "failed"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    UNSUPPORTED = "unsupported"
 
 
 class RunStatus(StrEnum):
@@ -23,6 +25,8 @@ class RunStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    UNSUPPORTED = "unsupported"
 
 
 class ProcessingStage(StrEnum):
@@ -37,6 +41,8 @@ class ProcessingStage(StrEnum):
     COMPLETE = "complete"
     CANCELLED = "cancelled"
     FAILED = "failed"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    UNSUPPORTED = "unsupported"
 
 
 class ReviewStatus(StrEnum):

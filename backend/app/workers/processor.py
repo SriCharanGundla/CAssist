@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, or_, select
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings, settings
 from app.core.database import async_session_factory
 from app.models import (
+    AuditEvent,
     Document,
     DocumentStatus,
     ExtractionResult,
@@ -18,6 +20,7 @@ from app.models import (
     ProcessingStage,
     RunStatus,
 )
+from app.schemas.extraction import DocumentClassification
 from app.services.model_provider import (
     ExtractionProvider,
     ModelSelection,
@@ -26,6 +29,7 @@ from app.services.model_provider import (
     ProviderExtraction,
     ProviderExtractionError,
     ProviderRateLimitError,
+    ProviderScopeBlocked,
     create_extraction_provider,
 )
 from app.services.object_storage import (
@@ -58,6 +62,7 @@ class ClaimedRun:
     mime_type: str
     model_selection: ModelSelection
     attempt_count: int
+    classification_override: DocumentClassification | None
 
 
 PreprocessedConsumer = Callable[[ClaimedRun, PreprocessedDocument], Awaitable[None]]
@@ -114,6 +119,15 @@ async def claim_next_run(
     document.updated_at = claimed_at
     await session.commit()
 
+    classification_override = None
+    if run.classification_override:
+        classification_override = DocumentClassification(
+            scope=run.classification_scope,
+            document_type=run.classification_document_type,
+            confidence=float(run.classification_confidence or 0),
+            reason_code=run.classification_reason_code,
+        )
+
     return ClaimedRun(
         run_id=run.id,
         document_id=document.id,
@@ -123,6 +137,7 @@ async def claim_next_run(
         mime_type=document.mime_type,
         model_selection=ModelSelection(provider=run.provider.value, model_id=run.model_id),
         attempt_count=run.attempt_count,
+        classification_override=classification_override,
     )
 
 
@@ -220,6 +235,13 @@ async def _complete_run(
 
         completed_at = datetime.now(UTC)
         run, document = run_and_document
+        if extraction.classification is not None:
+            run.classification_scope = extraction.classification.scope
+            run.classification_document_type = extraction.classification.document_type
+            run.classification_confidence = Decimal(
+                str(extraction.classification.confidence)
+            )
+            run.classification_reason_code = extraction.classification.reason_code
         session.add(
             ExtractionResult(
                 processing_run_id=run.id,
@@ -242,6 +264,74 @@ async def _complete_run(
         run.completed_at = completed_at
         document.status = DocumentStatus.READY
         document.updated_at = completed_at
+        await session.commit()
+        return True
+
+
+async def _block_run_for_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ClaimedRun,
+    worker_id: str,
+    decision: ProviderScopeBlocked,
+) -> bool:
+    async with session_factory() as session:
+        run_and_document = (
+            await session.execute(
+                select(ProcessingRun, Document)
+                .join(Document, Document.id == ProcessingRun.document_id)
+                .where(
+                    ProcessingRun.id == claim.run_id,
+                    ProcessingRun.status == RunStatus.EXTRACTING,
+                    ProcessingRun.worker_id == worker_id,
+                    ProcessingRun.cancellation_requested_at.is_(None),
+                )
+                .with_for_update()
+            )
+        ).first()
+        if run_and_document is None:
+            await session.rollback()
+            return False
+
+        completed_at = datetime.now(UTC)
+        classification = decision.classification
+        run, document = run_and_document
+        needs_confirmation = classification.scope == "uncertain"
+        run.status = (
+            RunStatus.NEEDS_CONFIRMATION if needs_confirmation else RunStatus.UNSUPPORTED
+        )
+        run.progress_stage = (
+            ProcessingStage.NEEDS_CONFIRMATION.value
+            if needs_confirmation
+            else ProcessingStage.UNSUPPORTED.value
+        )
+        run.classification_scope = classification.scope
+        run.classification_document_type = classification.document_type
+        run.classification_confidence = Decimal(str(classification.confidence))
+        run.classification_reason_code = classification.reason_code
+        run.input_tokens = decision.input_tokens
+        run.output_tokens = decision.output_tokens
+        run.worker_id = None
+        run.lease_expires_at = None
+        run.completed_at = completed_at
+        document.status = (
+            DocumentStatus.NEEDS_CONFIRMATION
+            if needs_confirmation
+            else DocumentStatus.UNSUPPORTED
+        )
+        document.updated_at = completed_at
+        session.add(
+            AuditEvent(
+                workspace_id=document.workspace_id,
+                actor_user_id=run.requested_by_user_id,
+                action="document.classification_stopped_processing",
+                entity_type="processing_run",
+                entity_id=run.id,
+                metadata_={
+                    "scope": classification.scope,
+                    "reason_code": classification.reason_code,
+                },
+            )
+        )
         await session.commit()
         return True
 
@@ -467,6 +557,7 @@ async def process_next_document(
                 preprocessed.page_paths,
                 preprocessed.page_text,
                 report_stage,
+                claim.classification_override,
             )
         finally:
             cancellation_watcher.cancel()
@@ -489,6 +580,11 @@ async def process_next_document(
         return completed
     except ProviderCancellationError:
         await _acknowledge_cancellation(session_factory, claim, worker_id)
+        return True
+    except ProviderScopeBlocked as decision:
+        if await _acknowledge_cancellation(session_factory, claim, worker_id):
+            return True
+        await _block_run_for_scope(session_factory, claim, worker_id, decision)
         return True
     except ProviderConfigurationError:
         if await _acknowledge_cancellation(session_factory, claim, worker_id):

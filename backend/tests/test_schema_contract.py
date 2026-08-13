@@ -63,6 +63,11 @@ EXPECTED_COLUMNS = {
         "worker_id",
         "lease_expires_at",
         "cancellation_requested_at",
+        "classification_scope",
+        "classification_document_type",
+        "classification_confidence",
+        "classification_reason_code",
+        "classification_override",
         "queued_at",
         "started_at",
         "completed_at",
@@ -117,7 +122,15 @@ EXPECTED_COLUMNS = {
 
 EXPECTED_ENUMS = {
     "member_role": ["owner", "admin", "member"],
-    "document_status": ["upload_pending", "uploaded", "processing", "ready", "failed"],
+    "document_status": [
+        "upload_pending",
+        "uploaded",
+        "processing",
+        "ready",
+        "failed",
+        "needs_confirmation",
+        "unsupported",
+    ],
     "run_status": [
         "queued",
         "preprocessing",
@@ -126,6 +139,8 @@ EXPECTED_ENUMS = {
         "succeeded",
         "failed",
         "cancelled",
+        "needs_confirmation",
+        "unsupported",
     ],
     "review_status": ["unreviewed", "in_review", "approved"],
     "model_provider": ["openai", "gemini"],

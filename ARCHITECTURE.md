@@ -51,7 +51,9 @@ CREATE TYPE document_status AS ENUM (
     'uploaded',
     'processing',
     'ready',
-    'failed'
+    'failed',
+    'needs_confirmation',
+    'unsupported'
 );
 CREATE TYPE run_status AS ENUM (
     'queued',
@@ -60,7 +62,9 @@ CREATE TYPE run_status AS ENUM (
     'validating',
     'succeeded',
     'failed',
-    'cancelled'
+    'cancelled',
+    'needs_confirmation',
+    'unsupported'
 );
 CREATE TYPE review_status AS ENUM ('unreviewed', 'in_review', 'approved');
 CREATE TYPE model_provider AS ENUM ('openai', 'gemini');
@@ -136,7 +140,8 @@ CREATE TABLE processing_runs (
                                 progress_stage IN (
                                     'queued', 'preparing', 'classifying', 'extracting',
                                     'organizing', 'quality_check', 'saving', 'stopping',
-                                    'complete', 'cancelled', 'failed'
+                                    'complete', 'cancelled', 'failed',
+                                    'needs_confirmation', 'unsupported'
                                 )
                             ),
     attempt_count           integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
@@ -147,6 +152,17 @@ CREATE TABLE processing_runs (
                             ),
     error_code              text,
     error_message_safe      text,
+    classification_scope    text CHECK (
+                                classification_scope IS NULL OR
+                                classification_scope IN ('supported', 'unrelated', 'uncertain')
+                            ),
+    classification_document_type text,
+    classification_confidence numeric(4, 3) CHECK (
+                                classification_confidence IS NULL OR
+                                classification_confidence BETWEEN 0 AND 1
+                            ),
+    classification_reason_code text,
+    classification_override boolean NOT NULL DEFAULT false,
     worker_id               text,
     lease_expires_at        timestamptz,
     cancellation_requested_at timestamptz CHECK (
@@ -676,7 +692,17 @@ Queues a new run for the current environment-locked provider configuration when 
 failed and the private original still exists. It does not accept a provider/model override. The
 document returns to `uploaded`, and the action creates a content-free
 `document.processing_retried` audit event. Response: `202` with `document_id`, `run_id`, and
-`status: "uploaded"`.
+`status: "uploaded"`. If the failed run followed an explicit uncertain-document confirmation, the
+new run preserves that audited classification override instead of asking the user again.
+
+### `POST /api/v1/documents/{document_id}/confirm-processing`
+
+Available only when the latest classifier verdict is `uncertain` and the document is waiting for
+confirmation. It atomically creates a forced queued run that preserves the classifier metadata,
+marks `classification_override = true`, returns the document to `uploaded`, and records a
+`document.classification_override_confirmed` audit event. Response: `202` with `document_id`,
+`run_id`, and `status: "uploaded"`. Clearly `unrelated` documents return `409` and cannot use this
+endpoint.
 
 ### `POST /api/v1/documents/{document_id}/runs`
 
@@ -977,8 +1003,12 @@ stage order and an auditable failure boundary.
 
 ```mermaid
 flowchart LR
-    PRE["Render page images and extract native document text"] --> CLASSIFY["Classification agent"]
-    CLASSIFY --> EXTRACT["Generic extraction agent"]
+    PRE["Render page images and extract native document text"] --> PREVIEW["Build low-resolution preview of first three pages"]
+    PREVIEW --> CLASSIFY["Classification agent"]
+    CLASSIFY -->|"supported"| EXTRACT["Generic extraction agent with full pages"]
+    CLASSIFY -->|"uncertain"| CONFIRM["Pause for explicit user confirmation"]
+    CONFIRM -->|"process anyway"| EXTRACT
+    CLASSIFY -->|"unrelated"| BLOCK["Hard stop"]
     EXTRACT --> ORGANIZE["Presentation organizer agent"]
     ORGANIZE --> CHECK["Deterministic suspicion checks"]
     CHECK -->|"suspicious output only"| QUALITY["Quality-review agent"]
@@ -987,9 +1017,23 @@ flowchart LR
     STRUCTURE --> PERSIST["Persist immutable extraction"]
 ```
 
-Classification is descriptive metadata and never selects a fixed extraction schema. The classifier
-uses broad labels such as invoice, receipt, credit note, debit note, cheque, bank statement, or
-other financial document. Every classification routes to the same generic extraction format.
+Classification is a cost-control and scope guardrail, not a fixed extraction schema. The classifier
+sees only in-memory JPEG previews of the first three pages, each bounded to 1024 pixels, before the
+full document is sent to extraction. It treats visible document text as untrusted data rather than
+instructions. It returns `supported`, `unrelated`, or `uncertain`, a broad document type, a bounded
+confidence value, and a non-sensitive reason code.
+
+`supported` continues automatically only at confidence 0.70 or above with a known broad document
+type. `unrelated` is a hard stop only at confidence 0.85 or above and cannot be overridden. Every
+other result becomes `uncertain`: processing pauses before extraction and the dashboard offers an
+explicit **Process anyway** action. That action creates a new run, copies the classifier decision,
+marks the override, and records an audit event. A failed overridden run retains that decision when
+retried, so it is not trapped at the same confirmation gate. Originals remain privately stored in
+R2 in either stopped state and can still be deleted through the normal authorized flow.
+
+The classifier and the extraction pipeline are separate bounded Strands Graph executions. This
+ensures a stopped document never reaches the extraction, organizer, or quality-review agents. All
+supported and confirmed documents still use the same generic extraction format.
 
 The extraction agent receives the rendered page images directly through the model's vision input.
 It preserves visible labels and values as strings, maintains table headers and row order, and emits
@@ -1039,7 +1083,9 @@ issues are persisted atomically before the document is marked `ready`.
 
 `processing_runs.progress_stage` exposes the real bounded workflow stage to the authenticated UI:
 queued, preparing pages, classifying, extracting, organizing, conditional quality check, saving, and the terminal
-complete/failed stage. Strands `BeforeNodeCallEvent` hooks update agent stages without exposing event
+complete, failed, confirmation-needed, or unsupported stage. The run stores the safe classification
+decision and whether it was overridden; classifier reasoning and document content are not logged.
+Strands `BeforeNodeCallEvent` hooks update agent stages without exposing event
 payloads or document content. An optional evidence region outside the rendered page is discarded;
 it must never cause an otherwise valid extracted label/value to fail.
 

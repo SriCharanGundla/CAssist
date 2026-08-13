@@ -373,6 +373,20 @@ export async function retryDocumentProcessing(documentId) {
   return response.json()
 }
 
+export async function confirmDocumentProcessing(documentId) {
+  const response = await csrfRequest(
+    `/documents/${documentId}/confirm-processing`,
+    { method: "POST" }
+  )
+  if (!response.ok) {
+    throw await responseError(
+      response,
+      "Unable to confirm document processing."
+    )
+  }
+  return response.json()
+}
+
 export async function createProcessingRun(documentId, options = {}) {
   const response = await csrfRequest(`/documents/${documentId}/runs`, {
     method: "POST",

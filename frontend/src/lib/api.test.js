@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   API_BASE_URL,
+  confirmDocumentProcessing,
   correctResult,
   deleteDocumentOriginal,
   getCurrentAuth,
@@ -303,23 +304,49 @@ describe("getCurrentAuth", () => {
   })
 })
 
+describe("confirmDocumentProcessing", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("uses a CSRF-protected server-side confirmation endpoint", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "confirm-csrf" }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { document_id: "document-1", run_id: "run-2", status: "uploaded" },
+          { status: 202 }
+        )
+      )
+
+    await confirmDocumentProcessing("document-1")
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/documents/document-1/confirm-processing`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "X-CSRF-Token": "confirm-csrf" }),
+      })
+    )
+  })
+})
+
 describe("auth sessions", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
   })
 
   it("loads a requested page without caching", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        jsonResponse({
-          items: [],
-          page: 2,
-          page_size: 5,
-          total: 6,
-          total_pages: 2,
-        })
-      )
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        items: [],
+        page: 2,
+        page_size: 5,
+        total: 6,
+        total_pages: 2,
+      })
+    )
 
     await listAuthSessions({ page: 2, pageSize: 5 })
 

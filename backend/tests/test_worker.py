@@ -30,6 +30,7 @@ from app.models import (
     WorkspaceMember,
 )
 from app.schemas.extraction import (
+    DocumentClassification,
     DocumentPresentation,
     ExtractedField,
     ExtractedTable,
@@ -43,6 +44,7 @@ from app.services.model_provider import (
     ProviderExtraction,
     ProviderExtractionError,
     ProviderRateLimitError,
+    ProviderScopeBlocked,
 )
 from app.services.object_storage import ObjectNotFoundError, PresignedUpload, StoredObject
 from app.workers.processor import ClaimedRun, claim_next_run, process_next_document
@@ -90,7 +92,13 @@ class FakeExtractionProvider:
         self.rate_limited = rate_limited
         self.observed_paths: tuple[Path, ...] = ()
 
-    def extract_document(self, page_paths, page_text, on_stage=None) -> ProviderExtraction:
+    def extract_document(
+        self,
+        page_paths,
+        page_text,
+        on_stage=None,
+        classification_override=False,
+    ) -> ProviderExtraction:
         self.observed_paths = tuple(page_paths)
         assert all(path.exists() for path in self.observed_paths)
         assert tuple(page_text) == (None,)
@@ -159,6 +167,41 @@ class FakeExtractionProvider:
         )
 
 
+class ScopeBlockingProvider(FakeExtractionProvider):
+    def __init__(self, scope: str) -> None:
+        super().__init__()
+        self.scope = scope
+
+    def extract_document(
+        self,
+        page_paths,
+        page_text,
+        on_stage=None,
+        classification_override=None,
+    ) -> ProviderExtraction:
+        if classification_override is not None:
+            return super().extract_document(
+                page_paths,
+                page_text,
+                on_stage,
+                classification_override,
+            )
+        raise ProviderScopeBlocked(
+            DocumentClassification(
+                scope=self.scope,
+                document_type="unknown",
+                confidence=0.92,
+                reason_code=(
+                    "unrelated_content"
+                    if self.scope == "unrelated"
+                    else "insufficient_visible_content"
+                ),
+            ),
+            input_tokens=9,
+            output_tokens=3,
+        )
+
+
 class CancellableExtractionProvider(FakeExtractionProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -168,7 +211,13 @@ class CancellableExtractionProvider(FakeExtractionProvider):
     def cancel(self) -> None:
         self.cancelled.set()
 
-    def extract_document(self, page_paths, page_text, on_stage=None) -> ProviderExtraction:
+    def extract_document(
+        self,
+        page_paths,
+        page_text,
+        on_stage=None,
+        classification_override=False,
+    ) -> ProviderExtraction:
         self.started.set()
         if not self.cancelled.wait(timeout=5):
             raise AssertionError("Cancellation was not forwarded to the provider")
@@ -185,11 +234,22 @@ class CancellationIgnoringExtractionProvider(FakeExtractionProvider):
     def cancel(self) -> None:
         self.cancelled.set()
 
-    def extract_document(self, page_paths, page_text, on_stage=None) -> ProviderExtraction:
+    def extract_document(
+        self,
+        page_paths,
+        page_text,
+        on_stage=None,
+        classification_override=False,
+    ) -> ProviderExtraction:
         self.started.set()
         if not self.release.wait(timeout=5):
             raise AssertionError("Test did not release the provider")
-        return super().extract_document(page_paths, page_text, on_stage)
+        return super().extract_document(
+            page_paths,
+            page_text,
+            on_stage,
+            classification_override,
+        )
 
 
 @pytest_asyncio.fixture
@@ -434,6 +494,55 @@ async def test_processes_one_image_to_result_and_removes_temporary_pages(
         assert result.presentation_data["sections"][0]["title"] == "Invoice details"
         assert result.raw_provider_output == {"provider_response": "structured"}
         assert [issue["code"] for issue in result.validation_issues] == ["possible_ocr_error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scope", "run_status", "document_status"),
+    [
+        ("uncertain", RunStatus.NEEDS_CONFIRMATION, DocumentStatus.NEEDS_CONFIRMATION),
+        ("unrelated", RunStatus.UNSUPPORTED, DocumentStatus.UNSUPPORTED),
+    ],
+)
+async def test_classification_gate_stops_before_extraction(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+    scope: str,
+    run_status: RunStatus,
+    document_status: DocumentStatus,
+) -> None:
+    factory, user_id, workspace_id, settings = worker_database
+    content = _png_bytes()
+    object_key = f"originals/{scope}"
+    document_id, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        content,
+        "image/png",
+        object_key,
+    )
+    storage = WorkerObjectStorage()
+    storage.objects[object_key] = (content, "image/png")
+
+    assert await process_next_document(
+        session_factory=factory,
+        app_settings=settings,
+        storage=storage,
+        extraction_provider=ScopeBlockingProvider(scope),
+        worker_id=f"worker-{scope}",
+    )
+
+    async with factory() as session:
+        document = await session.get(Document, document_id)
+        run = await session.get(ProcessingRun, run_id)
+        result = await session.scalar(
+            select(ExtractionResult).where(ExtractionResult.processing_run_id == run_id)
+        )
+        assert document is not None and document.status == document_status
+        assert run is not None and run.status == run_status
+        assert run.classification_scope == scope
+        assert run.input_tokens == 9
+        assert result is None
 
 
 @pytest.mark.asyncio

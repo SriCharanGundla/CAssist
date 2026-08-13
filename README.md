@@ -7,6 +7,11 @@ After extraction, a bounded organizer groups the observed fields, tables, and te
 document-specific sections for review. Sections reference immutable observations and cannot change
 their labels or values.
 
+A low-cost classification agent first checks a bounded preview for CA, financial, and related
+professional-document scope. Supported documents continue automatically, clearly unrelated files
+stop before extraction, and ambiguous documents pause for an explicit audited **Process anyway**
+confirmation.
+
 Uploads support PDF, JPEG, and PNG files up to 25 MiB each. The upload screen accepts up to ten files
 at once.
 

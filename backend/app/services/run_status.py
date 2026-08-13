@@ -15,6 +15,8 @@ _TERMINAL_PROGRESS = {
     RunStatus.SUCCEEDED: ProcessingStage.COMPLETE,
     RunStatus.FAILED: ProcessingStage.FAILED,
     RunStatus.CANCELLED: ProcessingStage.CANCELLED,
+    RunStatus.NEEDS_CONFIRMATION: ProcessingStage.NEEDS_CONFIRMATION,
+    RunStatus.UNSUPPORTED: ProcessingStage.UNSUPPORTED,
 }
 
 
@@ -33,6 +35,8 @@ def run_summary(
         cancellation_requested_at=run.cancellation_requested_at,
         result_id=result.id if result is not None else None,
         review_status=result.review_status if result is not None else None,
+        classification_scope=run.classification_scope,
+        classification_reason_code=run.classification_reason_code,
     )
 
 

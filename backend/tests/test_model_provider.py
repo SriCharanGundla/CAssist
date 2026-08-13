@@ -20,6 +20,7 @@ from app.services.model_provider import (
     ModelSelection,
     ProviderConfigurationError,
     ProviderRateLimitError,
+    ProviderScopeBlocked,
     StrandsExtractionProvider,
     create_extraction_provider,
     resolve_model_selection,
@@ -108,10 +109,14 @@ def test_agent_graph_has_bounded_specialists_and_only_native_text_tools() -> Non
         Settings(app_env="test", _env_file=None, gemini_api_key="test-key"),
         ModelSelection(provider="gemini", model_id="gemini-3.5-flash-lite"),
     )
-    graph = provider._build_graph(DocumentTextTools((None,)))  # type: ignore[attr-defined]
+    classifier, classification_graph = provider._build_classification_graph()  # type: ignore[attr-defined]
+    specialists, graph = provider._build_extraction_graph(  # type: ignore[attr-defined]
+        DocumentTextTools((None,))
+    )
 
-    assert list(graph.nodes) == ["classify", "extract", "organize", "quality"]
-    assert graph.nodes["classify"].executor.tool_names == []
+    assert list(classification_graph.nodes) == ["classify"]
+    assert classifier.tool_names == []
+    assert list(graph.nodes) == ["extract", "organize", "quality"]
     assert graph.nodes["extract"].executor.tool_names == [
         "read_document_text",
         "search_document_text",
@@ -125,7 +130,6 @@ def test_agent_graph_has_bounded_specialists_and_only_native_text_tools() -> Non
         (edge.from_node.node_id, edge.to_node.node_id, edge.condition is not None)
         for edge in graph.edges
     } == {
-        ("classify", "extract", False),
         ("extract", "organize", False),
         ("extract", "quality", True),
         ("organize", "quality", True),
@@ -156,9 +160,8 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
     page_path = tmp_path / "page-0001.png"
     Image.new("RGB", (120, 80), "white").save(page_path)
 
-    class FakeGraph:
-        def __init__(self, text_tools) -> None:
-            self.text_tools = text_tools
+    class FakeClassificationGraph:
+        def __init__(self) -> None:
             self.prompt = None
 
         def __call__(self, prompt):
@@ -168,12 +171,27 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
                     "classify": SimpleNamespace(
                         result=SimpleNamespace(
                             structured_output=DocumentClassification(
+                                scope="supported",
                                 document_type="invoice",
                                 confidence=0.99,
+                                reason_code="financial_content",
                             ),
                             stop_reason="end_turn",
                         )
-                    ),
+                    )
+                },
+                accumulated_usage={"inputTokens": 3, "outputTokens": 2},
+            )
+
+    class FakeExtractionGraph:
+        def __init__(self, text_tools) -> None:
+            self.text_tools = text_tools
+            self.prompt = None
+
+        def __call__(self, prompt):
+            self.prompt = prompt
+            return SimpleNamespace(
+                results={
                     "extract": SimpleNamespace(
                         result=SimpleNamespace(
                             structured_output=GenericExtractionDraft(
@@ -204,21 +222,25 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
                 },
                 accumulated_usage={"inputTokens": 12, "outputTokens": 8},
                 execution_order=[
-                    SimpleNamespace(node_id="classify"),
                     SimpleNamespace(node_id="extract"),
                     SimpleNamespace(node_id="organize"),
                 ],
             )
 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
+    classification_graph = FakeClassificationGraph()
     graph = None
 
     def build_graph(text_tools, _on_stage=None):
         nonlocal graph
-        graph = FakeGraph(text_tools)
-        return graph
+        graph = FakeExtractionGraph(text_tools)
+        return (SimpleNamespace(), SimpleNamespace(), SimpleNamespace()), graph
 
-    provider._build_graph = build_graph  # type: ignore[method-assign]
+    provider._build_classification_graph = lambda: (  # type: ignore[method-assign]
+        SimpleNamespace(),
+        classification_graph,
+    )
+    provider._build_extraction_graph = build_graph  # type: ignore[method-assign]
     extraction = provider.extract_document([page_path], ("Bill No. INV-1",))
 
     assert extraction.document.document_type == "invoice"
@@ -228,30 +250,41 @@ def test_strands_adapter_sends_page_images_and_returns_usage(tmp_path: Path) -> 
     assert extraction.presentation.sections[0].title == "Invoice details"
     assert extraction.presentation.sections[0].target_ids == ["field-0001"]
     assert extraction.quality_issues == []
-    assert extraction.input_tokens == 12
-    assert extraction.output_tokens == 8
+    assert extraction.input_tokens == 15
+    assert extraction.output_tokens == 10
     assert extraction.raw_provider_output["extraction_stop_reason"] == "end_turn"
     assert graph is not None
     assert graph.prompt[1]["image"]["source"]["bytes"] == page_path.read_bytes()
+    assert classification_graph.prompt[1]["image"]["format"] == "jpeg"
 
 
 def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Path) -> None:
     page_path = tmp_path / "page.png"
     Image.new("RGB", (120, 80), "white").save(page_path)
 
-    class FakeGraph:
+    class FakeClassificationGraph:
         def __call__(self, _prompt):
             return SimpleNamespace(
                 results={
                     "classify": SimpleNamespace(
                         result=SimpleNamespace(
                             structured_output=DocumentClassification(
+                                scope="supported",
                                 document_type="receipt",
                                 confidence=0.9,
+                                reason_code="financial_content",
                             ),
                             stop_reason="end_turn",
                         )
-                    ),
+                    )
+                },
+                accumulated_usage={"inputTokens": 4, "outputTokens": 2},
+            )
+
+    class FakeExtractionGraph:
+        def __call__(self, _prompt):
+            return SimpleNamespace(
+                results={
                     "extract": SimpleNamespace(
                         result=SimpleNamespace(
                             structured_output=GenericExtractionDraft(
@@ -298,7 +331,6 @@ def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Pat
                 },
                 accumulated_usage={"inputTokens": 20, "outputTokens": 10},
                 execution_order=[
-                    SimpleNamespace(node_id="classify"),
                     SimpleNamespace(node_id="extract"),
                     SimpleNamespace(node_id="organize"),
                     SimpleNamespace(node_id="quality"),
@@ -306,7 +338,14 @@ def test_quality_review_is_recorded_without_overwriting_extraction(tmp_path: Pat
             )
 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
-    provider._build_graph = lambda _tools, _on_stage=None: FakeGraph()  # type: ignore[method-assign]
+    provider._build_classification_graph = lambda: (  # type: ignore[method-assign]
+        SimpleNamespace(),
+        FakeClassificationGraph(),
+    )
+    provider._build_extraction_graph = lambda _tools, _on_stage=None: (  # type: ignore[method-assign]
+        (SimpleNamespace(), SimpleNamespace(), SimpleNamespace()),
+        FakeExtractionGraph(),
+    )
 
     extraction = provider.extract_document([page_path], (None,))
 
@@ -324,7 +363,62 @@ def test_provider_preserves_throttling_as_a_safe_retryable_error(tmp_path: Path)
             raise ModelThrottledException("provider details must not escape")
 
     provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
-    provider._build_graph = lambda _tools, _on_stage=None: ThrottledGraph()  # type: ignore[method-assign]
+    provider._build_classification_graph = lambda: (  # type: ignore[method-assign]
+        SimpleNamespace(),
+        ThrottledGraph(),
+    )
 
     with pytest.raises(ProviderRateLimitError, match="rate limit"):
         provider.extract_document([page_path], (None,))
+
+
+def test_unrelated_and_low_confidence_documents_stop_before_extraction(tmp_path: Path) -> None:
+    page_path = tmp_path / "page.png"
+    Image.new("RGB", (2000, 1200), "white").save(page_path)
+
+    class ClassificationGraph:
+        def __init__(self, classification: DocumentClassification) -> None:
+            self.classification = classification
+
+        def __call__(self, _prompt):
+            return SimpleNamespace(
+                results={
+                    "classify": SimpleNamespace(
+                        result=SimpleNamespace(
+                            structured_output=self.classification,
+                            stop_reason="end_turn",
+                        )
+                    )
+                },
+                accumulated_usage={"inputTokens": 7, "outputTokens": 3},
+            )
+
+    for classification, expected_scope in (
+        (
+            DocumentClassification(
+                scope="unrelated",
+                document_type="unknown",
+                confidence=0.95,
+                reason_code="unrelated_content",
+            ),
+            "unrelated",
+        ),
+        (
+            DocumentClassification(
+                scope="supported",
+                document_type="invoice",
+                confidence=0.4,
+                reason_code="financial_content",
+            ),
+            "uncertain",
+        ),
+    ):
+        provider = StrandsExtractionProvider(model=object(), node_timeout_seconds=120)  # type: ignore[arg-type]
+        provider._build_classification_graph = lambda classification=classification: (  # type: ignore[method-assign]
+            SimpleNamespace(),
+            ClassificationGraph(classification),
+        )
+        with pytest.raises(ProviderScopeBlocked) as blocked:
+            provider.extract_document([page_path], (None,))
+        assert blocked.value.classification.scope == expected_scope
+        assert blocked.value.input_tokens == 7

@@ -13,6 +13,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...original,
     cancelProcessingRun: vi.fn(),
+    confirmDocumentProcessing: vi.fn(),
     createOriginalViewUrl: vi.fn(),
     deleteDocumentOriginal: vi.fn(),
     getRun: vi.fn(),
@@ -185,6 +186,85 @@ describe("DashboardPage", () => {
       "run-1",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  it("confirms only uncertain documents through a dialog", async () => {
+    const user = userEvent.setup()
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-uncertain",
+          original_filename: "unclear.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "needs_confirmation",
+          created_at: "2026-08-13T12:00:00Z",
+          latest_run: {
+            id: "run-uncertain",
+            status: "needs_confirmation",
+            classification_scope: "uncertain",
+            classification_reason_code: "insufficient_visible_content",
+            result_id: null,
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    api.confirmDocumentProcessing.mockResolvedValue({
+      document_id: "document-uncertain",
+      run_id: "run-confirmed",
+      status: "uploaded",
+    })
+    renderDashboard()
+
+    expect(await screen.findByText("unclear.pdf")).toBeInTheDocument()
+    expect(screen.getAllByText("Confirmation needed")).not.toHaveLength(0)
+    await user.click(
+      screen.getByRole("button", { name: "Confirm document processing" })
+    )
+    expect(
+      screen.getByRole("heading", { name: "Process this document anyway?" })
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Process anyway" }))
+
+    await waitFor(() =>
+      expect(api.confirmDocumentProcessing).toHaveBeenCalledWith(
+        "document-uncertain"
+      )
+    )
+    expect(toast.success).toHaveBeenCalledWith(
+      "Document confirmed and queued for extraction."
+    )
+  })
+
+  it("hard-blocks unsupported documents without a confirmation action", async () => {
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-unrelated",
+          original_filename: "holiday-photo.png",
+          mime_type: "image/png",
+          original_available: true,
+          status: "unsupported",
+          created_at: "2026-08-13T12:00:00Z",
+          latest_run: {
+            id: "run-unrelated",
+            status: "unsupported",
+            classification_scope: "unrelated",
+            classification_reason_code: "unrelated_content",
+            result_id: null,
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    renderDashboard()
+
+    expect(await screen.findByText("holiday-photo.png")).toBeInTheDocument()
+    expect(screen.getAllByText("Unsupported document")).not.toHaveLength(0)
+    expect(
+      screen.queryByRole("button", { name: "Confirm document processing" })
+    ).not.toBeInTheDocument()
   })
 
   it("requests cancellation for an active extraction", async () => {

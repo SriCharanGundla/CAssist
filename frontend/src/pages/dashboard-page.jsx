@@ -4,6 +4,7 @@ import {
   RiDeleteBinLine,
   RiEditLine,
   RiExternalLinkLine,
+  RiPlayCircleLine,
   RiRestartLine,
   RiStopFill,
   RiTestTubeLine,
@@ -37,6 +38,7 @@ import {
 } from "@/components/ui/tooltip"
 import {
   cancelProcessingRun,
+  confirmDocumentProcessing,
   createOriginalViewUrl,
   deleteDocumentOriginal,
   getRun,
@@ -46,7 +48,13 @@ import {
 } from "@/lib/api"
 import { adaptivePollingInterval } from "@/lib/polling"
 
-const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"])
+const TERMINAL_RUN_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "needs_confirmation",
+  "unsupported",
+])
 const DOCUMENT_TYPE_OPTIONS = [
   ["tax_invoice", "Tax invoice"],
   ["invoice", "Invoice"],
@@ -63,6 +71,8 @@ const STATUS_FILTER_OPTIONS = [
   ["processing", "Processing"],
   ["ready", "Ready"],
   ["failed", "Failed"],
+  ["needs_confirmation", "Confirmation needed"],
+  ["unsupported", "Unsupported"],
 ]
 
 const STATUS_LABELS = {
@@ -84,6 +94,8 @@ const STATUS_LABELS = {
   complete: "Extraction complete",
   succeeded: "Extraction complete",
   cancelled: "Cancelled",
+  needs_confirmation: "Confirmation needed",
+  unsupported: "Unsupported document",
 }
 
 function statusBadgeClass(status) {
@@ -92,6 +104,12 @@ function statusBadgeClass(status) {
   }
   if (["failed", "cancelled"].includes(status)) {
     return "bg-destructive/15 text-destructive"
+  }
+  if (status === "unsupported") {
+    return "bg-destructive/15 text-destructive"
+  }
+  if (status === "needs_confirmation") {
+    return "bg-amber-500/15 text-amber-700 dark:text-amber-400"
   }
   return "bg-secondary text-secondary-foreground"
 }
@@ -146,6 +164,7 @@ function DocumentListSkeleton() {
 function DocumentRow({ document }) {
   const queryClient = useQueryClient()
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
+  const [confirmDialogOpen, setConfirmDialogOpen] = React.useState(false)
   const runId = document.latest_run?.id
   const initialRun = document.latest_run
   const runQuery = useQuery({
@@ -176,6 +195,14 @@ function DocumentRow({ document }) {
     mutationFn: () => retryDocumentProcessing(document.id),
     onSuccess: refreshDocuments,
   })
+  const confirmMutation = useMutation({
+    mutationFn: () => confirmDocumentProcessing(document.id),
+    onSuccess: async () => {
+      setConfirmDialogOpen(false)
+      await refreshDocuments()
+      toast.success("Document confirmed and queued for extraction.")
+    },
+  })
   const cancelMutation = useMutation({
     mutationFn: () => cancelProcessingRun(runId),
     onSuccess: () =>
@@ -198,6 +225,7 @@ function DocumentRow({ document }) {
   const actionError =
     viewMutation.error ||
     retryMutation.error ||
+    confirmMutation.error ||
     cancelMutation.error ||
     originalDeleteMutation.error ||
     permanentDeleteMutation.error
@@ -282,6 +310,16 @@ function DocumentRow({ document }) {
             <RiRestartLine />
           </IconAction>
         ) : null}
+        {run?.status === "needs_confirmation" && document.original_available ? (
+          <IconAction
+            disabled={confirmMutation.isPending}
+            label="Confirm document processing"
+            onClick={() => setConfirmDialogOpen(true)}
+            variant="ghost"
+          >
+            <RiPlayCircleLine />
+          </IconAction>
+        ) : null}
         {isRunning ? (
           <IconAction
             disabled={cancelMutation.isPending || isStopping}
@@ -336,6 +374,29 @@ function DocumentRow({ document }) {
             <DialogClose render={<Button variant="ghost" />}>
               Cancel
             </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog onOpenChange={setConfirmDialogOpen} open={confirmDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Process this document anyway?</DialogTitle>
+            <DialogDescription>
+              CAssist could not confidently verify that this is a financial or
+              professional document. Continuing will use the extraction model.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose render={<Button variant="ghost" />}>
+              Cancel
+            </DialogClose>
+            <Button
+              disabled={confirmMutation.isPending}
+              onClick={() => confirmMutation.mutate()}
+            >
+              {confirmMutation.isPending ? "Queuing…" : "Process anyway"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -15,6 +15,7 @@ class EvidenceRegion(CanonicalModel):
 
 
 class DocumentClassification(CanonicalModel):
+    scope: Literal["supported", "unrelated", "uncertain"]
     document_type: Literal[
         "tax_invoice",
         "invoice",
@@ -24,8 +25,16 @@ class DocumentClassification(CanonicalModel):
         "cheque",
         "bank_statement",
         "other_financial_document",
+        "unknown",
     ]
     confidence: float = Field(ge=0, le=1)
+    reason_code: Literal[
+        "financial_content",
+        "professional_supporting_document",
+        "mixed_content",
+        "insufficient_visible_content",
+        "unrelated_content",
+    ]
 
 
 class DraftField(CanonicalModel):

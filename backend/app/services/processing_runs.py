@@ -54,6 +54,7 @@ def queue_processing_run(
     settings: Settings,
     *,
     force: bool = False,
+    classification_override: bool = False,
 ) -> ProcessingRun:
     prompt_version = settings.prompt_version
     if force:
@@ -68,6 +69,7 @@ def queue_processing_run(
         preprocessing_version=settings.preprocessing_version,
         status=RunStatus.QUEUED,
         attempt_count=0,
+        classification_override=classification_override,
     )
     session.add(run)
     return run

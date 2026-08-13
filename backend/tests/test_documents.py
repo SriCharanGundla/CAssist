@@ -686,6 +686,113 @@ async def test_manual_run_creation_reuses_cache_and_active_work(
 
 
 @pytest.mark.asyncio
+async def test_only_uncertain_documents_can_be_confirmed_for_processing(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, _, _, document_id, _ = document_client
+    document = await session.get(Document, document_id)
+    assert document is not None
+    prior_run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=document.uploaded_by_user_id,
+        provider=ModelProvider.GEMINI,
+        model_id="guardrail-model",
+        prompt_version="guardrail-prompt",
+        schema_version="guardrail-schema",
+        preprocessing_version="guardrail-preprocessing",
+        status=RunStatus.NEEDS_CONFIRMATION,
+        progress_stage=ProcessingStage.NEEDS_CONFIRMATION.value,
+        classification_scope="uncertain",
+        classification_document_type="unknown",
+        classification_confidence="0.620",
+        classification_reason_code="insufficient_visible_content",
+        attempt_count=1,
+        queued_at=datetime.now(UTC) + timedelta(seconds=1),
+        completed_at=datetime.now(UTC),
+    )
+    session.add(prior_run)
+    document.status = DocumentStatus.NEEDS_CONFIRMATION
+    await session.commit()
+
+    response = await client.post(
+        f"/api/v1/documents/{document_id}/confirm-processing"
+    )
+
+    assert response.status_code == 202
+    confirmed = await session.get(ProcessingRun, UUID(response.json()["run_id"]))
+    assert confirmed is not None
+    assert confirmed.status == RunStatus.QUEUED
+    assert confirmed.classification_override is True
+    assert confirmed.classification_scope == "uncertain"
+    assert confirmed.classification_reason_code == "insufficient_visible_content"
+    await session.refresh(document)
+    assert document.status == DocumentStatus.UPLOADED
+
+    repeated = await client.post(
+        f"/api/v1/documents/{document_id}/confirm-processing"
+    )
+    assert repeated.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_unrelated_document_cannot_be_overridden_or_requeued(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, _, document_id, _ = document_client
+    document = await session.get(Document, document_id)
+    assert document is not None
+    blocked_run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="guardrail-model",
+        prompt_version="blocked-prompt",
+        schema_version="guardrail-schema",
+        preprocessing_version="guardrail-preprocessing",
+        status=RunStatus.UNSUPPORTED,
+        progress_stage=ProcessingStage.UNSUPPORTED.value,
+        classification_scope="unrelated",
+        classification_document_type="unknown",
+        classification_confidence="0.980",
+        classification_reason_code="unrelated_content",
+        attempt_count=1,
+        completed_at=datetime.now(UTC),
+    )
+    session.add(blocked_run)
+    document.status = DocumentStatus.UNSUPPORTED
+    await session.commit()
+
+    confirm = await client.post(
+        f"/api/v1/documents/{document_id}/confirm-processing"
+    )
+    create = await client.post(
+        f"/api/v1/documents/{document_id}/runs",
+        json={"force": True},
+    )
+
+    assert confirm.status_code == 409
+    assert create.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_active_run_can_be_cancelled_idempotently(
     document_client: tuple[
         AsyncClient,
@@ -1131,6 +1238,54 @@ async def test_failed_document_can_queue_a_new_current_model_run(
         )
     )
     assert audit is not None
+
+
+@pytest.mark.asyncio
+async def test_retry_preserves_a_previously_confirmed_classification(
+    document_client: tuple[
+        AsyncClient,
+        AsyncSession,
+        DocumentObjectStorage,
+        Settings,
+        UUID,
+        UUID,
+        UUID,
+        UUID,
+    ],
+) -> None:
+    client, session, _, _, owner_id, _, document_id, _ = document_client
+    document = await session.get(Document, document_id)
+    assert document is not None
+    failed_run = ProcessingRun(
+        document_id=document_id,
+        requested_by_user_id=owner_id,
+        provider=ModelProvider.GEMINI,
+        model_id="guardrail-model",
+        prompt_version="guardrail-prompt",
+        schema_version="guardrail-schema",
+        preprocessing_version="guardrail-preprocessing",
+        status=RunStatus.FAILED,
+        attempt_count=1,
+        classification_scope="uncertain",
+        classification_document_type="unknown",
+        classification_confidence="0.620",
+        classification_reason_code="insufficient_visible_content",
+        classification_override=True,
+        queued_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+    )
+    session.add(failed_run)
+    document.status = DocumentStatus.FAILED
+    await session.commit()
+
+    response = await client.post(f"/api/v1/documents/{document_id}/retry")
+
+    assert response.status_code == 202
+    retry_run = await session.get(ProcessingRun, UUID(response.json()["run_id"]))
+    assert retry_run is not None
+    assert retry_run.classification_override is True
+    assert retry_run.classification_scope == "uncertain"
+    assert retry_run.classification_reason_code == "insufficient_visible_content"
 
 
 @pytest.mark.asyncio

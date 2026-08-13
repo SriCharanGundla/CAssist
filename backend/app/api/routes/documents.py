@@ -35,6 +35,7 @@ from app.schemas.documents import (
     ComparisonDifferenceResponse,
     ComparisonResponse,
     ComparisonRunResponse,
+    ConfirmDocumentResponse,
     CreateRunRequest,
     CreateRunResponse,
     DocumentDetailResponse,
@@ -284,6 +285,19 @@ def _require_available_original(document: Document) -> None:
         )
 
 
+def _require_scope_allows_new_run(document: Document) -> None:
+    if document.status == DocumentStatus.UNSUPPORTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This document was classified as unrelated and cannot be processed",
+        )
+    if document.status == DocumentStatus.NEEDS_CONFIRMATION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Confirm this document before processing it",
+        )
+
+
 @router.post("/{document_id}/runs", response_model=CreateRunResponse)
 async def create_processing_run(
     document_id: UUID,
@@ -298,6 +312,7 @@ async def create_processing_run(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     document, _ = row
     _require_available_original(document)
+    _require_scope_allows_new_run(document)
     try:
         selection = resolve_model_selection(
             app_settings,
@@ -416,6 +431,7 @@ async def compare_document_models(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     document, _ = row
     _require_available_original(document)
+    _require_scope_allows_new_run(document)
 
     selections = (
         ModelSelection("gemini", app_settings.comparison_gemini_model_id),
@@ -555,6 +571,11 @@ async def retry_document_processing(
         preprocessing_version=app_settings.preprocessing_version,
         status=RunStatus.QUEUED,
         attempt_count=0,
+        classification_scope=latest_run.classification_scope,
+        classification_document_type=latest_run.classification_document_type,
+        classification_confidence=latest_run.classification_confidence,
+        classification_reason_code=latest_run.classification_reason_code,
+        classification_override=latest_run.classification_override,
     )
     session.add(retry_run)
     await session.flush()
@@ -572,6 +593,72 @@ async def retry_document_processing(
     )
     await session.commit()
     return RetryDocumentResponse(document_id=document.id, run_id=retry_run.id)
+
+
+@router.post(
+    "/{document_id}/confirm-processing",
+    response_model=ConfirmDocumentResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def confirm_document_processing(
+    document_id: UUID,
+    current_auth: Annotated[CurrentAuth, Depends(require_csrf)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> ConfirmDocumentResponse:
+    row = await _authorized_document(session, document_id, current_auth.user.id, lock=True)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    document, _ = row
+    _require_available_original(document)
+    latest_run = await session.scalar(
+        select(ProcessingRun)
+        .where(ProcessingRun.document_id == document.id)
+        .order_by(ProcessingRun.queued_at.desc(), ProcessingRun.id.desc())
+        .limit(1)
+    )
+    if (
+        document.status != DocumentStatus.NEEDS_CONFIRMATION
+        or latest_run is None
+        or latest_run.status != RunStatus.NEEDS_CONFIRMATION
+        or latest_run.classification_scope != "uncertain"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only uncertain documents can be confirmed",
+        )
+
+    selection = ModelSelection(
+        provider=latest_run.provider.value,
+        model_id=latest_run.model_id,
+    )
+    confirmed_run = queue_processing_run(
+        session,
+        document,
+        current_auth.user.id,
+        selection,
+        app_settings,
+        force=True,
+        classification_override=True,
+    )
+    confirmed_run.classification_scope = latest_run.classification_scope
+    confirmed_run.classification_document_type = latest_run.classification_document_type
+    confirmed_run.classification_confidence = latest_run.classification_confidence
+    confirmed_run.classification_reason_code = latest_run.classification_reason_code
+    document.status = DocumentStatus.UPLOADED
+    document.updated_at = datetime.now(UTC)
+    session.add(
+        AuditEvent(
+            workspace_id=document.workspace_id,
+            actor_user_id=current_auth.user.id,
+            action="document.classification_override_confirmed",
+            entity_type="document",
+            entity_id=document.id,
+            metadata_={"prior_run_id": str(latest_run.id)},
+        )
+    )
+    await session.commit()
+    return ConfirmDocumentResponse(document_id=document.id, run_id=confirmed_run.id)
 
 
 @router.post("/{document_id}/view-url", response_model=ViewOriginalResponse)

@@ -24,6 +24,8 @@ class RunSummaryResponse(BaseModel):
     cancellation_requested_at: datetime | None
     result_id: UUID | None
     review_status: ReviewStatus | None
+    classification_scope: Literal["supported", "unrelated", "uncertain"] | None
+    classification_reason_code: str | None
 
 
 class DocumentDetailResponse(BaseModel):
@@ -74,6 +76,12 @@ class ViewOriginalResponse(BaseModel):
 
 
 class RetryDocumentResponse(BaseModel):
+    document_id: UUID
+    run_id: UUID
+    status: Literal["uploaded"] = "uploaded"
+
+
+class ConfirmDocumentResponse(BaseModel):
     document_id: UUID
     run_id: UUID
     status: Literal["uploaded"] = "uploaded"

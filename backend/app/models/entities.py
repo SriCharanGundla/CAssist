@@ -203,6 +203,22 @@ class ProcessingRun(Base):
             "status IN ('preprocessing', 'extracting', 'validating', 'cancelled')",
             name="processing_runs_cancellation_terminal_state",
         ),
+        CheckConstraint(
+            "classification_scope IS NULL OR "
+            "classification_scope IN ('supported', 'unrelated', 'uncertain')",
+            name="processing_runs_classification_scope_valid",
+        ),
+        CheckConstraint(
+            "classification_confidence IS NULL OR "
+            "(classification_confidence >= 0 AND classification_confidence <= 1)",
+            name="processing_runs_classification_confidence_valid",
+        ),
+        CheckConstraint(
+            "progress_stage IN ('queued', 'preparing', 'classifying', 'extracting', "
+            "'organizing', 'quality_check', 'saving', 'stopping', 'complete', "
+            "'cancelled', 'failed', 'needs_confirmation', 'unsupported')",
+            name="processing_runs_progress_stage_valid",
+        ),
         Index(
             "processing_runs_success_cache_idx",
             "document_id",
@@ -251,6 +267,11 @@ class ProcessingRun(Base):
     cancellation_requested_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    classification_scope: Mapped[str | None] = mapped_column(Text)
+    classification_document_type: Mapped[str | None] = mapped_column(Text)
+    classification_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    classification_reason_code: Mapped[str | None] = mapped_column(Text)
+    classification_override: Mapped[bool] = mapped_column(server_default="false")
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
