@@ -18,15 +18,18 @@ def build_reviewed_document(
     fields = {field.id: field for field in document.fields}
     tables = {table.id: table for table in document.tables}
     text_blocks = {block.id: block for block in document.text_blocks}
+    excluded_target_ids = set(presentation.excluded_target_ids)
     sections: list[dict[str, Any]] = []
     for section in presentation.sections:
         section_fields = [
             {"label": fields[target_id].label, "value": fields[target_id].value}
             for target_id in section.target_ids
-            if target_id in fields
+            if target_id in fields and target_id not in excluded_target_ids
         ]
         section_tables = []
         for target_id in section.target_ids:
+            if target_id in excluded_target_ids:
+                continue
             table = tables.get(target_id)
             if table is None:
                 continue
@@ -40,8 +43,10 @@ def build_reviewed_document(
         section_text = [
             text_blocks[target_id].text
             for target_id in section.target_ids
-            if target_id in text_blocks
+            if target_id in text_blocks and target_id not in excluded_target_ids
         ]
+        if not section_fields and not section_tables and not section_text:
+            continue
         section_data: dict[str, Any] = {"title": section.title}
         if section_fields:
             section_data["fields"] = section_fields

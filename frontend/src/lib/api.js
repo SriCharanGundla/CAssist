@@ -353,6 +353,25 @@ export async function updateResultReview(resultId, expectedVersion, status) {
   return response.json()
 }
 
+export async function updateTallySelection(
+  resultId,
+  expectedVersion,
+  excludedTargetIds
+) {
+  const response = await csrfRequest(`/results/${resultId}/selection`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      expected_version: expectedVersion,
+      excluded_target_ids: excludedTargetIds,
+    }),
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to save the Tally selection.")
+  }
+  return response.json()
+}
+
 export async function createOriginalViewUrl(documentId) {
   const response = await csrfRequest(`/documents/${documentId}/view-url`, {
     method: "POST",

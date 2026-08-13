@@ -21,6 +21,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   correctResult: vi.fn(),
   downloadTallyExport: vi.fn(),
   updateResultReview: vi.fn(),
+  updateTallySelection: vi.fn(),
 }))
 
 vi.mock("sonner", () => ({
@@ -82,6 +83,7 @@ const initialResult = {
   extracted_data: structuredClone(extraction),
   effective_data: structuredClone(extraction),
   presentation: {
+    excluded_target_ids: [],
     sections: [
       {
         id: "section-0001",
@@ -161,11 +163,7 @@ describe("ReviewPage", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled()
     expect(
       screen.getByRole("region", { name: "Invoice details content" })
-    ).toHaveClass(
-      "max-h-[36rem]",
-      "overflow-y-auto",
-      "overscroll-contain"
-    )
+    ).toHaveClass("max-h-[36rem]", "overflow-y-auto", "overscroll-contain")
   })
 
   it("toggles the inline original preview", async () => {
@@ -177,6 +175,49 @@ describe("ReviewPage", () => {
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Show document" })).toBeEnabled()
     expect(localStorage.getItem("cassist-review-source-visible")).toBe("false")
+  })
+
+  it("selects sections and individual items for Tally JSON", async () => {
+    const user = userEvent.setup()
+    const saved = structuredClone(initialResult)
+    saved.version = 2
+    saved.review_status = "in_review"
+    saved.presentation.excluded_target_ids = ["field-0001", "field-0002"]
+    api.updateTallySelection.mockResolvedValue(saved)
+    renderReviewPage()
+
+    const sectionSelection = await screen.findByRole("checkbox", {
+      name: "Include Invoice details section in Tally JSON",
+    })
+    expect(sectionSelection).toBeChecked()
+    await user.click(sectionSelection)
+
+    expect(
+      screen.getByRole("heading", { name: "Tally JSON content" }).parentElement
+    ).toHaveTextContent("2 of 4 items selected.")
+    expect(
+      screen.getByText("Save this selection before approval.")
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled()
+    await user.click(
+      screen.getByRole("button", { name: "Save Tally selection" })
+    )
+
+    expect(api.updateTallySelection).toHaveBeenCalledWith("result-1", 1, [
+      "field-0001",
+      "field-0002",
+    ])
+    expect(await screen.findByText("Version 2 · In review")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled()
+
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Include Bill No. in Tally JSON",
+      })
+    )
+    expect(
+      screen.getByRole("heading", { name: "Tally JSON content" }).parentElement
+    ).toHaveTextContent("3 of 4 items selected.")
   })
 
   it("highlights field evidence in the source preview", async () => {

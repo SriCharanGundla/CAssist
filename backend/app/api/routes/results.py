@@ -22,6 +22,7 @@ from app.schemas.review import (
     CorrectionResponse,
     ResultResponse,
     ReviewRequest,
+    UpdateSelectionRequest,
 )
 from app.services.auth import CurrentAuth
 from app.services.corrections import InvalidCorrectionPath, apply_corrections, replace_pointer
@@ -289,6 +290,91 @@ async def apply_result_corrections(
         document,
         [*existing_corrections, *pending_corrections],
     )
+
+
+@router.patch("/results/{result_id}/selection", response_model=ResultResponse)
+async def update_result_selection(
+    result_id: UUID,
+    payload: UpdateSelectionRequest,
+    current_auth: Annotated[CurrentAuth, Depends(require_csrf)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> ResultResponse:
+    result_row = await _authorized_result_by_id(
+        session,
+        result_id,
+        current_auth.user.id,
+        lock=True,
+    )
+    if result_row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
+    result, run, document = result_row
+    if result.review_status == ReviewStatus.APPROVED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Return the result to review before changing the Tally selection",
+        )
+    if result.version != payload.expected_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Result changed; reload before changing the Tally selection",
+        )
+
+    extracted_data, _ = coerce_stored_extraction(
+        result.canonical_data,
+        result.document_type,
+    )
+    presentation = coerce_stored_presentation(result.presentation_data, extracted_data)
+    known_target_ids = {
+        target_id for section in presentation.sections for target_id in section.target_ids
+    }
+    excluded_target_ids = set(payload.excluded_target_ids)
+    if not excluded_target_ids.issubset(known_target_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Tally selection contains an unknown target",
+        )
+    if known_target_ids and excluded_target_ids == known_target_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Select at least one item for the Tally JSON export",
+        )
+    ordered_excluded_target_ids = [
+        target_id
+        for section in presentation.sections
+        for target_id in section.target_ids
+        if target_id in excluded_target_ids
+    ]
+    if ordered_excluded_target_ids == presentation.excluded_target_ids:
+        corrections = await _corrections_for_result(session, result.id)
+        return _response(result, run, document, corrections)
+
+    presentation = presentation.model_copy(
+        update={"excluded_target_ids": ordered_excluded_target_ids}
+    )
+    changed_at = datetime.now(UTC)
+    result.presentation_data = presentation.model_dump(mode="json")
+    result.review_status = ReviewStatus.IN_REVIEW
+    result.reviewed_by_user_id = None
+    result.reviewed_at = None
+    result.version += 1
+    result.updated_at = changed_at
+    session.add(
+        AuditEvent(
+            workspace_id=document.workspace_id,
+            actor_user_id=current_auth.user.id,
+            action="result.tally_selection_changed",
+            entity_type="extraction_result",
+            entity_id=result.id,
+            metadata_={
+                "excluded_target_count": len(ordered_excluded_target_ids),
+                "included_target_count": len(known_target_ids) - len(ordered_excluded_target_ids),
+                "result_version": result.version,
+            },
+        )
+    )
+    await session.commit()
+    corrections = await _corrections_for_result(session, result.id)
+    return _response(result, run, document, corrections)
 
 
 @router.post("/results/{result_id}/review", response_model=ResultResponse)

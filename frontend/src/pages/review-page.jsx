@@ -24,6 +24,7 @@ import {
   downloadTallyExport,
   getResult,
   updateResultReview,
+  updateTallySelection,
 } from "@/lib/api"
 
 const REVIEW_LABELS = {
@@ -119,6 +120,10 @@ function EditableValue({
   originalValue,
   pageNumber,
   saving,
+  selected = true,
+  selectionDisabled = false,
+  selectionLabel,
+  onSelectionChange,
   targetId,
   value,
 }) {
@@ -180,7 +185,7 @@ function EditableValue({
 
   return (
     <div
-      className="border-b py-4 last:border-b-0"
+      className={`border-b py-4 transition-opacity last:border-b-0 ${selected ? "" : "opacity-55"}`}
       data-review-target={targetId}
       onBlur={() => onEvidenceChange?.(null)}
       onFocus={() => onEvidenceChange?.()}
@@ -188,6 +193,16 @@ function EditableValue({
       onMouseLeave={() => onEvidenceChange?.(null)}
     >
       <div className="flex items-start justify-between gap-4">
+        {onSelectionChange ? (
+          <input
+            aria-label={selectionLabel || `Include ${label} in Tally JSON`}
+            checked={selected}
+            className="mt-1 size-4 shrink-0 accent-primary"
+            disabled={selectionDisabled}
+            onChange={(event) => onSelectionChange(event.target.checked)}
+            type="checkbox"
+          />
+        ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {!hideLabel ? (
@@ -282,26 +297,32 @@ function Card({
   children,
   collapsible = false,
   description,
+  headerControl,
   itemCount,
+  itemSummary,
   title,
 }) {
   const [open, setOpen] = React.useState(true)
   return (
     <section className="rounded-2xl border bg-card p-5 shadow-sm">
       {collapsible ? (
-        <button
-          aria-expanded={open}
-          aria-label={`${open ? "Collapse" : "Expand"} ${title} section`}
-          className="flex w-full items-center justify-between gap-3 text-left"
-          onClick={() => setOpen((current) => !current)}
-          type="button"
-        >
-          <span className="font-semibold">{title}</span>
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            {itemCount} {itemCount === 1 ? "item" : "items"}
-            {open ? <RiArrowDownSLine /> : <RiArrowRightSLine />}
-          </span>
-        </button>
+        <div className="flex items-center gap-3">
+          {headerControl}
+          <button
+            aria-expanded={open}
+            aria-label={`${open ? "Collapse" : "Expand"} ${title} section`}
+            className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+            onClick={() => setOpen((current) => !current)}
+            type="button"
+          >
+            <span className="font-semibold">{title}</span>
+            <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+              {itemSummary ||
+                `${itemCount} ${itemCount === 1 ? "item" : "items"}`}
+              {open ? <RiArrowDownSLine /> : <RiArrowRightSLine />}
+            </span>
+          </button>
+        </div>
       ) : (
         <h2 className="font-semibold">{title}</h2>
       )}
@@ -319,6 +340,33 @@ function Card({
         </div>
       ) : null}
     </section>
+  )
+}
+
+function SectionSelectionCheckbox({
+  disabled,
+  onChange,
+  selectedCount,
+  targetCount,
+  title,
+}) {
+  const checkboxRef = React.useRef(null)
+  const partiallySelected = selectedCount > 0 && selectedCount < targetCount
+  React.useEffect(() => {
+    if (checkboxRef.current) {
+      checkboxRef.current.indeterminate = partiallySelected
+    }
+  }, [partiallySelected])
+  return (
+    <input
+      aria-label={`Include ${title} section in Tally JSON`}
+      checked={selectedCount === targetCount}
+      className="size-4 shrink-0 accent-primary"
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+      ref={checkboxRef}
+      type="checkbox"
+    />
   )
 }
 
@@ -357,15 +405,34 @@ function CorrectionHistory({ corrections, targetLabels }) {
   )
 }
 
-function ReviewTable({ editableProps, sectionTitle, table }) {
+function ReviewTable({
+  editableProps,
+  onSelectionChange,
+  sectionTitle,
+  selected,
+  selectionDisabled,
+  table,
+}) {
   return (
-    <div className="border-t pt-4 first:border-t-0 first:pt-0">
+    <div
+      className={`border-t pt-4 transition-opacity first:border-t-0 first:pt-0 ${selected ? "" : "opacity-55"}`}
+    >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        {table.title && table.title !== sectionTitle ? (
-          <h3 className="text-sm font-medium">{table.title}</h3>
-        ) : (
-          <span />
-        )}
+        <div className="flex items-center gap-3">
+          <input
+            aria-label={`Include ${table.title || sectionTitle} table in Tally JSON`}
+            checked={selected}
+            className="size-4 shrink-0 accent-primary"
+            disabled={selectionDisabled}
+            onChange={(event) => onSelectionChange(event.target.checked)}
+            type="checkbox"
+          />
+          {table.title && table.title !== sectionTitle ? (
+            <h3 className="text-sm font-medium">{table.title}</h3>
+          ) : (
+            <span className="text-sm font-medium">Table</span>
+          )}
+        </div>
         <span className="text-[11px] text-muted-foreground">
           Page{table.page_numbers.length === 1 ? "" : "s"}{" "}
           {table.page_numbers.join(", ")}
@@ -417,6 +484,8 @@ export function ReviewPage() {
     () => localStorage.getItem(SOURCE_VISIBILITY_STORAGE_KEY) !== "false"
   )
   const [activeEvidence, setActiveEvidence] = React.useState(null)
+  const [draftExcludedTargetIds, setDraftExcludedTargetIds] =
+    React.useState(null)
   const toggleOriginal = () => {
     setShowOriginal((current) => {
       const next = !current
@@ -456,6 +525,15 @@ export function ReviewPage() {
     mutationFn: ({ expectedVersion, status }) =>
       updateResultReview(resultId, expectedVersion, status),
     onSuccess: updateCachedResult,
+    onError: handleMutationError,
+  })
+  const selectionMutation = useMutation({
+    mutationFn: ({ excludedTargetIds, expectedVersion }) =>
+      updateTallySelection(resultId, expectedVersion, excludedTargetIds),
+    onSuccess: (result) => {
+      setDraftExcludedTargetIds(null)
+      updateCachedResult(result)
+    },
     onError: handleMutationError,
   })
   const exportMutation = useMutation({
@@ -558,6 +636,24 @@ export function ReviewPage() {
           ],
         },
       ]
+  const presentationTargetIds = presentationSections.flatMap(
+    (section) => section.target_ids
+  )
+  const savedExcludedTargetIds = new Set(
+    result.presentation?.excluded_target_ids || []
+  )
+  const effectiveExcludedTargetIds =
+    draftExcludedTargetIds || savedExcludedTargetIds
+  const orderedDraftExcludedTargetIds = presentationTargetIds.filter(
+    (targetId) => effectiveExcludedTargetIds.has(targetId)
+  )
+  const selectionIsDirty =
+    orderedDraftExcludedTargetIds.length !== savedExcludedTargetIds.size ||
+    orderedDraftExcludedTargetIds.some(
+      (targetId) => !savedExcludedTargetIds.has(targetId)
+    )
+  const selectedTargetCount =
+    presentationTargetIds.length - orderedDraftExcludedTargetIds.length
   const targetOrder = presentationSections.flatMap((section) =>
     section.target_ids.flatMap((targetId) => {
       const table = tablesById.get(targetId)
@@ -586,6 +682,7 @@ export function ReviewPage() {
   const mutationError = [
     correctionMutation.error,
     reviewMutation.error,
+    selectionMutation.error,
     exportMutation.error,
   ].find((error) => error && error.status !== 409)
   const saveCorrection = (targetId, value, reason) => {
@@ -596,6 +693,26 @@ export function ReviewPage() {
       value,
       reason,
     })
+  }
+  const setTargetSelected = (targetId, selected) => {
+    setDraftExcludedTargetIds((current) => {
+      const next = new Set(current || savedExcludedTargetIds)
+      if (selected) next.delete(targetId)
+      else next.add(targetId)
+      return next
+    })
+    selectionMutation.reset()
+  }
+  const setSectionSelected = (targetIds, selected) => {
+    setDraftExcludedTargetIds((current) => {
+      const next = new Set(current || savedExcludedTargetIds)
+      targetIds.forEach((targetId) => {
+        if (selected) next.delete(targetId)
+        else next.add(targetId)
+      })
+      return next
+    })
+    selectionMutation.reset()
   }
   const extractedCount =
     data.fields.length +
@@ -696,7 +813,10 @@ export function ReviewPage() {
           ) : (
             <Button
               disabled={
-                reviewMutation.isPending || correctionMutation.isPending
+                reviewMutation.isPending ||
+                correctionMutation.isPending ||
+                selectionMutation.isPending ||
+                selectionIsDirty
               }
               onClick={() =>
                 reviewMutation.mutate({
@@ -712,6 +832,48 @@ export function ReviewPage() {
       </div>
 
       <div className="mt-4">
+        {presentationTargetIds.length ? (
+          <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 shadow-sm">
+            <div>
+              <h2 className="text-sm font-semibold">Tally JSON content</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {selectedTargetCount} of {presentationTargetIds.length} items
+                selected. Unchecked items stay in CAssist but are omitted from
+                the export.
+              </p>
+              {selectionIsDirty ? (
+                <p className="mt-1 text-xs font-medium text-amber-700">
+                  Save this selection before approval.
+                </p>
+              ) : null}
+              {!selectedTargetCount ? (
+                <p className="mt-1 text-xs text-destructive">
+                  Select at least one item for export.
+                </p>
+              ) : null}
+            </div>
+            {result.review_status !== "approved" ? (
+              <Button
+                disabled={
+                  !selectionIsDirty ||
+                  !selectedTargetCount ||
+                  selectionMutation.isPending
+                }
+                onClick={() =>
+                  selectionMutation.mutate({
+                    excludedTargetIds: orderedDraftExcludedTargetIds,
+                    expectedVersion: result.version,
+                  })
+                }
+                variant="outline"
+              >
+                {selectionMutation.isPending
+                  ? "Saving selection…"
+                  : "Save Tally selection"}
+              </Button>
+            ) : null}
+          </section>
+        ) : null}
         {unmappedIssues.length ? (
           <section
             aria-label="Document quality issues"
@@ -763,60 +925,96 @@ export function ReviewPage() {
               : "grid items-start gap-5 lg:grid-cols-2"
           }
         >
-          {presentationSections.map((section) => (
-            <Card
-              collapsible
-              itemCount={section.target_ids.length}
-              key={section.id}
-              title={section.title}
-            >
-              {section.target_ids.map((targetId) => {
-                const field = fieldsById.get(targetId)
-                if (field) {
-                  return (
-                    <EditableValue
-                      key={field.id}
-                      label={field.label}
-                      pageNumber={field.page_number}
-                      value={field.value}
-                      {...editableProps(field.id, {
-                        pageNumber: field.page_number,
-                        region: field.region,
-                      })}
-                    />
-                  )
+          {presentationSections.map((section) => {
+            const sectionSelectedCount = section.target_ids.filter(
+              (targetId) => !effectiveExcludedTargetIds.has(targetId)
+            ).length
+            const selectionDisabled =
+              result.review_status === "approved" || selectionMutation.isPending
+            return (
+              <Card
+                collapsible
+                headerControl={
+                  <SectionSelectionCheckbox
+                    disabled={selectionDisabled}
+                    onChange={(selected) =>
+                      setSectionSelected(section.target_ids, selected)
+                    }
+                    selectedCount={sectionSelectedCount}
+                    targetCount={section.target_ids.length}
+                    title={section.title}
+                  />
                 }
-                const table = tablesById.get(targetId)
-                if (table) {
-                  return (
-                    <ReviewTable
-                      editableProps={editableProps}
-                      key={table.id}
-                      sectionTitle={section.title}
-                      table={table}
-                    />
-                  )
-                }
-                const block = textBlocksById.get(targetId)
-                if (block) {
-                  return (
-                    <EditableValue
-                      hideLabel
-                      key={block.id}
-                      label={`${section.title} text`}
-                      pageNumber={block.page_number}
-                      value={block.text}
-                      {...editableProps(block.id, {
-                        pageNumber: block.page_number,
-                        region: block.region,
-                      })}
-                    />
-                  )
-                }
-                return null
-              })}
-            </Card>
-          ))}
+                itemCount={section.target_ids.length}
+                itemSummary={`${sectionSelectedCount} of ${section.target_ids.length} selected`}
+                key={section.id}
+                title={section.title}
+              >
+                {section.target_ids.map((targetId) => {
+                  const selected = !effectiveExcludedTargetIds.has(targetId)
+                  const field = fieldsById.get(targetId)
+                  if (field) {
+                    return (
+                      <EditableValue
+                        key={field.id}
+                        label={field.label}
+                        pageNumber={field.page_number}
+                        selected={selected}
+                        selectionDisabled={selectionDisabled}
+                        onSelectionChange={(nextSelected) =>
+                          setTargetSelected(field.id, nextSelected)
+                        }
+                        value={field.value}
+                        {...editableProps(field.id, {
+                          pageNumber: field.page_number,
+                          region: field.region,
+                        })}
+                      />
+                    )
+                  }
+                  const table = tablesById.get(targetId)
+                  if (table) {
+                    return (
+                      <ReviewTable
+                        editableProps={editableProps}
+                        key={table.id}
+                        onSelectionChange={(nextSelected) =>
+                          setTargetSelected(table.id, nextSelected)
+                        }
+                        selected={selected}
+                        selectionDisabled={selectionDisabled}
+                        sectionTitle={section.title}
+                        table={table}
+                      />
+                    )
+                  }
+                  const block = textBlocksById.get(targetId)
+                  if (block) {
+                    return (
+                      <EditableValue
+                        hideLabel
+                        key={block.id}
+                        label={`${section.title} text`}
+                        pageNumber={block.page_number}
+                        selected={selected}
+                        selectionDisabled={selectionDisabled}
+                        selectionLabel={`Include ${section.title} text in Tally JSON`}
+                        onSelectionChange={(nextSelected) =>
+                          setTargetSelected(block.id, nextSelected)
+                        }
+                        value={block.text}
+                        {...editableProps(block.id, {
+                          pageNumber: block.page_number,
+                          region: block.region,
+                        })}
+                      />
+                    )
+                  }
+                  return null
+                })}
+              </Card>
+            )
+          })}
           {!data.fields.length &&
           !data.tables.length &&
           !data.text_blocks.length ? (

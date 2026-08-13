@@ -237,6 +237,7 @@ async def test_get_result_returns_generic_data_without_provider_output(
         "title": "Invoice details",
         "target_ids": ["field-0001", "field-0002"],
     }
+    assert payload["presentation"]["excluded_target_ids"] == []
     assert payload["effective_data"]["fields"][0] == {
         "id": "field-0001",
         "label": "Bill No.",
@@ -465,6 +466,95 @@ async def test_approved_result_requires_explicit_return_to_review_before_correct
 
 
 @pytest.mark.asyncio
+async def test_tally_selection_is_reversible_versioned_and_audited(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, session, _, _, _, result_id = result_client
+
+    selected = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={
+            "expected_version": 1,
+            "excluded_target_ids": ["field-0002", "text-0001"],
+        },
+    )
+
+    assert selected.status_code == 200
+    assert selected.json()["version"] == 2
+    assert selected.json()["review_status"] == "in_review"
+    assert selected.json()["presentation"]["excluded_target_ids"] == [
+        "field-0002",
+        "text-0001",
+    ]
+    stored_result = await session.get(ExtractionResult, result_id)
+    assert stored_result is not None
+    assert stored_result.canonical_data["fields"][1]["value"] == "1NV-1O2"
+    audit = await session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.entity_id == result_id,
+            AuditEvent.action == "result.tally_selection_changed",
+        )
+    )
+    assert audit is not None
+    assert audit.metadata_ == {
+        "excluded_target_count": 2,
+        "included_target_count": 2,
+        "result_version": 2,
+    }
+
+    restored = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={"expected_version": 2, "excluded_target_ids": []},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["presentation"]["excluded_target_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_tally_selection_rejects_unknown_empty_and_approved_changes(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, _, _, _, _, result_id = result_client
+
+    unknown = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={"expected_version": 1, "excluded_target_ids": ["field-9999"]},
+    )
+    assert unknown.status_code == 422
+
+    empty = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={
+            "expected_version": 1,
+            "excluded_target_ids": [
+                "field-0001",
+                "field-0002",
+                "table-0001",
+                "text-0001",
+            ],
+        },
+    )
+    assert empty.status_code == 422
+    assert empty.json()["error"]["message"] == (
+        "Select at least one item for the Tally JSON export"
+    )
+
+    approved = await client.post(
+        f"/api/v1/results/{result_id}/review",
+        json={"expected_version": 1, "status": "approved"},
+    )
+    assert approved.status_code == 200
+    blocked = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={"expected_version": 2, "excluded_target_ids": ["text-0001"]},
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["message"] == (
+        "Return the result to review before changing the Tally selection"
+    )
+
+
+@pytest.mark.asyncio
 async def test_result_operations_hide_other_workspaces(
     result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
 ) -> None:
@@ -501,6 +591,11 @@ async def test_result_operations_hide_other_workspaces(
         json={"expected_version": 1, "status": "approved"},
     )
     assert review.status_code == 404
+    selection = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={"expected_version": 1, "excluded_target_ids": ["text-0001"]},
+    )
+    assert selection.status_code == 404
     export = await client.post(
         f"/api/v1/results/{result_id}/exports",
         json={"expected_version": 1, "format": "tally_json"},
@@ -625,3 +720,37 @@ async def test_tally_handoff_preserves_effective_strings_and_records_safe_events
         "exporter_version": "tally-handoff-v3",
         "result_version": 3,
     }
+
+
+@pytest.mark.asyncio
+async def test_tally_handoff_omits_excluded_targets_and_empty_sections(
+    result_client: tuple[AsyncClient, AsyncSession, Settings, UUID, UUID, UUID],
+) -> None:
+    client, _, _, _, _, result_id = result_client
+    selected = await client.patch(
+        f"/api/v1/results/{result_id}/selection",
+        json={
+            "expected_version": 1,
+            "excluded_target_ids": ["field-0002", "table-0001", "text-0001"],
+        },
+    )
+    assert selected.status_code == 200
+    approved = await client.post(
+        f"/api/v1/results/{result_id}/review",
+        json={"expected_version": 2, "status": "approved"},
+    )
+    assert approved.status_code == 200
+
+    exported = await client.post(
+        f"/api/v1/results/{result_id}/exports",
+        json={"expected_version": 3, "format": "tally_json"},
+    )
+
+    assert exported.status_code == 200
+    reviewed = exported.json()["reviewed_document"]
+    assert reviewed["sections"] == [
+        {
+            "title": "Invoice details",
+            "fields": [{"label": "Bill No.", "value": "INV-1"}],
+        }
+    ]

@@ -270,7 +270,8 @@ The initial physical column names `canonical_data`, `validation_issues`, and `fi
 avoid a cosmetic data migration. They now store the generic extraction, quality issues, and an
 internal value pointer respectively. The public API uses `extracted_data`, `quality_issues`, and
 stable `target_id` values; clients do not depend on those legacy storage names.
-`presentation_data` stores only an ordered dynamic section plan referencing those stable target IDs;
+`presentation_data` stores an ordered dynamic section plan referencing those stable target IDs plus
+a reversible `excluded_target_ids` list used only to filter reviewed exports;
 it never duplicates or rewrites extracted labels or values.
 
 ### Authentication session migration
@@ -1091,7 +1092,9 @@ it must never cause an otherwise valid extracted label/value to fail.
 
 The review UI renders only non-empty dynamic sections. Fields, tables, and narrative text appear
 inside the relevant section rather than separate storage-oriented `Fields`, `Tables`, or `Other text`
-cards. Hovering a value uses a pointer cursor and subtle text-color change; clicking copies the value
+cards. Section and item checkboxes update the persisted Tally selection; excluded observations remain
+available for review and correction but are omitted from the handoff JSON. Hovering a value uses a
+pointer cursor and subtle text-color change; clicking copies the value
 and briefly confirms `Copied`. No copy icon is shown. Corrections remain append-only and never erase
 the original model observation. Corrected values show an inline edited indicator, while the complete
 append-only history lives behind a compact `Changes (n)` disclosure.

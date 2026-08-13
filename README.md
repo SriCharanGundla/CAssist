@@ -73,8 +73,10 @@ and can be cancelled individually or as a batch. Review uses an embedded PDF.js 
 selectable text, page thumbnails, and source-evidence highlighting. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
 The review screen presents collapsible dynamic sections rather than storage-oriented field/table
-buckets and supports Tab navigation between correction editors. Tally
-handoff JSON preserves the reviewed section order while omitting internal IDs and source regions.
+buckets and supports Tab navigation between correction editors. Reviewers can reversibly include or
+exclude whole sections and individual fields, tables, or text blocks from Tally JSON without deleting
+the underlying extraction. Tally handoff JSON preserves the selected section order while omitting
+internal IDs and source regions.
 Authenticated routes use descriptive browser titles and keyboard skip navigation; compact controls
 expand their touch targets on coarse-pointer devices.
 The frontend reports offline state explicitly and restores normal operation when the browser

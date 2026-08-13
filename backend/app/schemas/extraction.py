@@ -131,6 +131,14 @@ class PresentationSection(CanonicalModel):
 
 class DocumentPresentation(CanonicalModel):
     sections: list[PresentationSection] = Field(default_factory=list, max_length=101)
+    excluded_target_ids: list[str] = Field(default_factory=list, max_length=2_600)
+
+    @field_validator("excluded_target_ids")
+    @classmethod
+    def validate_excluded_target_ids(cls, target_ids: list[str]) -> list[str]:
+        if len(target_ids) != len(set(target_ids)):
+            raise ValueError("Excluded target IDs must be unique")
+        return target_ids
 
 
 class DraftQualityIssue(CanonicalModel):

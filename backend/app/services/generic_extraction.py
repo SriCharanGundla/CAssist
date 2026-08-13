@@ -374,7 +374,14 @@ def remove_non_accounting_boilerplate(
             cleaned_sections.append(section.model_copy(update={"target_ids": target_ids}))
     return (
         cleaned_document,
-        DocumentPresentation(sections=cleaned_sections),
+        DocumentPresentation(
+            sections=cleaned_sections,
+            excluded_target_ids=[
+                target_id
+                for target_id in presentation.excluded_target_ids
+                if target_id not in removed_ids
+            ],
+        ),
         [issue for issue in quality_issues if issue.target_id not in removed_ids],
     )
 
@@ -420,7 +427,14 @@ def coerce_stored_presentation(
                     target_ids=ordered_missing,
                 )
             )
-        return DocumentPresentation(sections=sections)
+        return DocumentPresentation(
+            sections=sections,
+            excluded_target_ids=[
+                target_id
+                for target_id in presentation.excluded_target_ids
+                if target_id in known_ids
+            ],
+        )
     return finalize_presentation(document, None)
 
 
