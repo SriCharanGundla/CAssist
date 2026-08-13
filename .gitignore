@@ -2,6 +2,7 @@
 .env
 .dev.vars*
 .vscode/
+.wrangler/
 .venv/
 __pycache__/
 *.py[cod]

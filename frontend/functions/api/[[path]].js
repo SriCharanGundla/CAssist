@@ -37,6 +37,10 @@ export async function onRequest(context) {
   const targetUrl = new URL(`${incomingUrl.pathname}${incomingUrl.search}`, origin)
   const headers = new Headers(context.request.headers)
   headers.set(PROXY_HEADER, proxySecret)
+  // Same-origin GET requests do not reliably include Origin. The API requires
+  // it when issuing a CSRF token, so derive the trusted frontend origin from
+  // the Pages request URL instead of accepting a client-supplied value.
+  headers.set("Origin", incomingUrl.origin)
   headers.set("X-Forwarded-Host", incomingUrl.host)
   headers.set("X-Forwarded-Proto", "https")
 

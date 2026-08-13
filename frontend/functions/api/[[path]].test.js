@@ -63,6 +63,38 @@ describe("Pages API proxy", () => {
     await expect(forwarded.text()).resolves.toBe("{}")
   })
 
+  it("supplies the trusted Pages origin for same-origin CSRF bootstrap", async () => {
+    const upstream = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok"))
+
+    await onRequest({
+      env: environment,
+      request: new Request("https://cassist.pages.dev/api/v1/auth/csrf"),
+    })
+
+    expect(upstream.mock.calls[0][0].headers.get("origin")).toBe(
+      "https://cassist.pages.dev"
+    )
+  })
+
+  it("does not trust a client-supplied origin", async () => {
+    const upstream = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("ok"))
+
+    await onRequest({
+      env: environment,
+      request: new Request("https://cassist.pages.dev/api/v1/auth/csrf", {
+        headers: { Origin: "https://attacker.example" },
+      }),
+    })
+
+    expect(upstream.mock.calls[0][0].headers.get("origin")).toBe(
+      "https://cassist.pages.dev"
+    )
+  })
+
   it("does not forward to an insecure origin", async () => {
     const upstream = vi.spyOn(globalThis, "fetch")
     const response = await onRequest({
