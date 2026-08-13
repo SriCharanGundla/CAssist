@@ -75,6 +75,31 @@ expand their touch targets on coarse-pointer devices.
 The frontend reports offline state explicitly and restores normal operation when the browser
 reconnects.
 
+## Prepare private deployment
+
+The free-domain pilot uses `cassist.pages.dev` as one browser origin. A Pages Function streams
+`/api/*` to the NAS Tailscale Funnel origin, so production cookies remain host-only and the Funnel
+hostname is not exposed to frontend code. Set these Pages Function bindings in the Cloudflare
+dashboard; encrypt `CASSIST_PROXY_SECRET`:
+
+```text
+CASSIST_ORIGIN=https://replace-with-nas-name.tailnet-name.ts.net
+CASSIST_PROXY_SECRET=replace-with-at-least-32-random-characters
+```
+
+Use the same secret as `EDGE_PROXY_SECRET` in the NAS deployment environment. Do not set
+`VITE_API_BASE_URL` for the Pages production build; it defaults to same-origin `/api/v1`. Copy
+`deploy/.env.production.example` to ignored `deploy/.env.production` only on the deployment host.
+Validate the production Compose file from the repository root with:
+
+```bash
+docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yaml config --quiet
+```
+
+No NAS deployment is performed by these files. `ARCHITECTURE.md` contains the approval-gated rollout
+order and security boundaries.
+
 ## Configure authentication
 
 CAssist uses Auth0 through the FastAPI backend and forces Google OAuth. In the Auth0 Regular Web

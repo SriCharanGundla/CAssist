@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://cassist:cassist@localhost:5432/cassist"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     frontend_url: str = "http://localhost:5173"
+    edge_proxy_secret: str | None = None
 
     auth_issuer_url: str | None = None
     auth_client_id: str | None = None
@@ -130,6 +131,32 @@ class Settings(BaseSettings):
                 raise ValueError(f"Production authentication settings are missing: {missing}")
             if len(self.auth_state_secret or "") < 32:
                 raise ValueError("AUTH_STATE_SECRET must contain at least 32 characters")
+            missing_runtime_settings = [
+                name
+                for name, value in {
+                    "EDGE_PROXY_SECRET": self.edge_proxy_secret,
+                    "OPENAI_API_KEY": self.openai_api_key,
+                    "R2_ENDPOINT_URL": self.r2_endpoint_url,
+                    "R2_ACCESS_KEY_ID": self.r2_access_key_id,
+                    "R2_SECRET_ACCESS_KEY": self.r2_secret_access_key,
+                    "R2_BUCKET_NAME": self.r2_bucket_name,
+                }.items()
+                if not value
+            ]
+            if missing_runtime_settings:
+                missing = ", ".join(missing_runtime_settings)
+                raise ValueError(f"Production runtime settings are missing: {missing}")
+            if len(self.edge_proxy_secret or "") < 32:
+                raise ValueError("EDGE_PROXY_SECRET must contain at least 32 characters")
+            if not self.frontend_url.startswith("https://"):
+                raise ValueError("FRONTEND_URL must use HTTPS in production")
+            if self.cors_origins != [self.frontend_url]:
+                raise ValueError("CORS_ORIGINS must contain only FRONTEND_URL in production")
+            expected_callback_url = f"{self.frontend_url}{self.api_v1_prefix}/auth/callback"
+            if self.auth_callback_url != expected_callback_url:
+                raise ValueError("AUTH_CALLBACK_URL must use the Pages API proxy")
+            if self.auth_post_logout_redirect_url != self.frontend_url:
+                raise ValueError("AUTH_POST_LOGOUT_REDIRECT_URL must equal FRONTEND_URL")
             self.auth_session_cookie_name = "__Host-cassist_session"
         return self
 

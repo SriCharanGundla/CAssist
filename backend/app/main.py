@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import JSONResponse
 
 from app.api.errors import (
     http_exception_handler,
@@ -15,6 +16,7 @@ from app.api.router import api_router
 from app.core.access_logging import configure_safe_access_logging
 from app.core.config import settings
 from app.core.database import engine
+from app.core.edge_proxy import EDGE_PROXY_HEADER, edge_proxy_authorized
 
 configure_safe_access_logging()
 
@@ -35,6 +37,19 @@ app = FastAPI(
 @app.middleware("http")
 async def attach_request_id(request: Request, call_next):
     request.state.request_id = new_request_id()
+    if not edge_proxy_authorized(request.headers.get(EDGE_PROXY_HEADER), settings):
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "EDGE_PROXY_REQUIRED",
+                    "message": "Request origin is not permitted",
+                    "request_id": request.state.request_id,
+                    "details": {},
+                }
+            },
+            status_code=404,
+            headers={"X-Request-ID": request.state.request_id},
+        )
     response = await call_next(request)
     response.headers["X-Request-ID"] = request.state.request_id
     return response

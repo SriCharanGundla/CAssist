@@ -2,7 +2,8 @@ const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL
 const API_REQUEST_TIMEOUT_MS = 30_000
 
 export const API_BASE_URL = (
-  configuredApiBaseUrl || "http://localhost:8000/api/v1"
+  configuredApiBaseUrl ||
+  (import.meta.env.DEV ? "http://localhost:8000/api/v1" : "/api/v1")
 ).replace(/\/$/, "")
 
 async function apiRequest(path, options = {}) {

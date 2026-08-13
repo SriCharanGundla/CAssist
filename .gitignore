@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.dev.vars*
 .vscode/
 .venv/
 __pycache__/
@@ -11,3 +12,4 @@ frontend/dist/
 .pnpm-store/
 backend/*.egg-info/
 backend/dist/
+deploy/.env.production

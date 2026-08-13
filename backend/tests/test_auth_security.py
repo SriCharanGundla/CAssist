@@ -121,6 +121,44 @@ def test_production_authentication_configuration_fails_closed() -> None:
         auth_client_id="client-id",
         auth_client_secret="client-secret",
         auth_state_secret="x" * 32,
+        edge_proxy_secret="e" * 32,
+        openai_api_key="openai-key",
+        r2_endpoint_url="https://account.r2.cloudflarestorage.com",
+        r2_access_key_id="access-key",
+        r2_secret_access_key="secret-key",
+        frontend_url="https://cassist.pages.dev",
+        cors_origins=["https://cassist.pages.dev"],
+        auth_callback_url="https://cassist.pages.dev/api/v1/auth/callback",
+        auth_post_logout_redirect_url="https://cassist.pages.dev",
     )
     assert production.auth_session_cookie_name == "__Host-cassist_session"
     assert production.auth_cookie_secure is True
+
+
+def test_production_runtime_and_pages_proxy_configuration_fails_closed() -> None:
+    common = {
+        "app_env": "production",
+        "_env_file": None,
+        "auth_issuer_url": "https://tenant.example/",
+        "auth_client_id": "client-id",
+        "auth_client_secret": "client-secret",
+        "auth_state_secret": "x" * 32,
+        "openai_api_key": "openai-key",
+        "r2_endpoint_url": "https://account.r2.cloudflarestorage.com",
+        "r2_access_key_id": "access-key",
+        "r2_secret_access_key": "secret-key",
+        "frontend_url": "https://cassist.pages.dev",
+        "cors_origins": ["https://cassist.pages.dev"],
+        "auth_callback_url": "https://cassist.pages.dev/api/v1/auth/callback",
+        "auth_post_logout_redirect_url": "https://cassist.pages.dev",
+    }
+    with pytest.raises(ValueError, match="EDGE_PROXY_SECRET"):
+        Settings(**common)
+    with pytest.raises(ValueError, match="Pages API proxy"):
+        Settings(
+            **{
+                **common,
+                "edge_proxy_secret": "e" * 32,
+                "auth_callback_url": "https://nas.example.ts.net/api/v1/auth/callback",
+            }
+        )

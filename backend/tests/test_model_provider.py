@@ -34,7 +34,15 @@ def _production_settings() -> Settings:
         auth_client_id="client-id",
         auth_client_secret="client-secret",
         auth_state_secret="x" * 32,
+        edge_proxy_secret="e" * 32,
         openai_api_key="test-openai-key",
+        r2_endpoint_url="https://account.r2.cloudflarestorage.com",
+        r2_access_key_id="access-key",
+        r2_secret_access_key="secret-key",
+        frontend_url="https://cassist.pages.dev",
+        cors_origins=["https://cassist.pages.dev"],
+        auth_callback_url="https://cassist.pages.dev/api/v1/auth/callback",
+        auth_post_logout_redirect_url="https://cassist.pages.dev",
     )
 
 

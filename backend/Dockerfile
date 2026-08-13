@@ -12,7 +12,14 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 COPY app ./app
+COPY alembic.ini ./
+COPY alembic ./alembic
 RUN uv sync --locked --no-dev --no-editable --no-cache
+
+RUN groupadd --system cassist \
+    && useradd --system --gid cassist --no-create-home --home-dir /nonexistent cassist
+
+USER cassist
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
