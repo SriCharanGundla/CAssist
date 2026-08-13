@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+
+require_environment() {
+  variable_name="$1"
+  eval "variable_value=\${${variable_name}:-}"
+  if [ -z "$variable_value" ]; then
+    echo "Required backup configuration is missing: $variable_name" >&2
+    exit 2
+  fi
+}
+
+for variable_name in \
+  PGHOST \
+  PGDATABASE \
+  PGUSER \
+  PGPASSWORD \
+  RESTIC_REPOSITORY \
+  RESTIC_PASSWORD
+do
+  require_environment "$variable_name"
+done
+
+export RESTIC_CACHE_DIR="${RESTIC_CACHE_DIR:-/tmp/restic-cache}"
+backup_host="${RESTIC_HOST:-cassist-production}"
+backup_tag="${RESTIC_TAG:-cassist-postgresql}"
+
+if ! restic cat config >/dev/null 2>&1; then
+  restic init
+fi
+
+restic backup \
+  --host "$backup_host" \
+  --tag "$backup_tag" \
+  --stdin-filename cassist.dump \
+  --stdin-from-command \
+  -- pg_dump \
+    --format=custom \
+    --no-owner \
+    --no-privileges \
+    --dbname="$PGDATABASE"
+
+restic forget \
+  --host "$backup_host" \
+  --tag "$backup_tag" \
+  --group-by host,tags \
+  --keep-daily "${RESTIC_KEEP_DAILY:-7}" \
+  --keep-weekly "${RESTIC_KEEP_WEEKLY:-4}" \
+  --keep-monthly "${RESTIC_KEEP_MONTHLY:-6}" \
+  --prune

@@ -1,3 +1,5 @@
+name: cassist
+
 x-backend: &backend
   image: cassist-backend:${CASSIST_IMAGE_TAG:-latest}
   build:
@@ -89,6 +91,45 @@ services:
     mem_limit: 3g
     mem_reservation: 512m
     stop_grace_period: 180s
+
+  backup:
+    profiles: ["ops"]
+    build:
+      context: ./backup
+    image: cassist-backup:${CASSIST_IMAGE_TAG:-latest}
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: cassist
+      PGUSER: cassist
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env.production}
+      RESTIC_REPOSITORY: s3:${R2_ENDPOINT_URL:?Set R2_ENDPOINT_URL}/${R2_BACKUP_BUCKET_NAME:?Set R2_BACKUP_BUCKET_NAME}/${R2_BACKUP_PREFIX:-postgresql/restic}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:?Set RESTIC_PASSWORD in deploy/.env.production}
+      RESTIC_HOST: cassist-production
+      RESTIC_TAG: cassist-postgresql
+      RESTIC_KEEP_DAILY: "7"
+      RESTIC_KEEP_WEEKLY: "4"
+      RESTIC_KEEP_MONTHLY: "6"
+      RESTIC_CACHE_DIR: /tmp/restic-cache
+      AWS_ACCESS_KEY_ID: ${R2_BACKUP_ACCESS_KEY_ID:?Set R2_BACKUP_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${R2_BACKUP_SECRET_ACCESS_KEY:?Set R2_BACKUP_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: auto
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cassist_internal
+      - cassist_egress
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    cpus: "0.50"
+    mem_limit: 512m
 
 networks:
   cassist_internal:

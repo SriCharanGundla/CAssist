@@ -1,0 +1,10 @@
+[Unit]
+Description=CAssist encrypted PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/cassist/deploy
+ExecStart=/usr/bin/docker compose --project-name cassist --env-file .env.production --file compose.production.yaml --profile ops run --rm backup
+TimeoutStartSec=4h

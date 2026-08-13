@@ -98,7 +98,8 @@ docker compose --env-file deploy/.env.production \
 ```
 
 No NAS deployment is performed by these files. `ARCHITECTURE.md` contains the approval-gated rollout
-order and security boundaries.
+order and security boundaries. [`deploy/README.md`](deploy/README.md) documents encrypted database
+backups, retention, scheduling, and the clean-container restore test.
 
 ## Configure authentication
 

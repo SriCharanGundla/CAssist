@@ -1182,7 +1182,7 @@ flowchart TD
 | PostgreSQL | Dedicated NAS container on NVMe | Never published to the LAN or internet |
 | Originals | Private Cloudflare R2 | Retained until user deletion |
 | Temporary derivatives | Ephemeral worker storage | Deleted after processing |
-| Database backups | Private R2 backup prefix | Encrypted before upload and kept separately from live database storage |
+| Database backups | Dedicated private R2 backup bucket | PostgreSQL custom dumps are encrypted client-side by Restic before upload; backup credentials are not shared with the originals bucket |
 
 ### Network and access boundaries
 
@@ -1218,17 +1218,22 @@ loopback port `18000`, for Funnel; the database and worker remain internal.
 
 ### Recovery and portability
 
-1. Create an encrypted logical PostgreSQL backup every night and upload it to R2.
-2. Retain a documented rotation of daily and weekly backups; finalize exact retention before the private pilot.
-3. Test restoration into a clean PostgreSQL container before inviting external users.
-4. Keep production Compose files, migrations, health checks, and configuration documentation in this repository.
-5. Treat the NAS as replaceable compute: a clean VPS must be able to run the same images using restored database data and the existing R2 objects.
+1. At 02:15 each night, stream a PostgreSQL custom-format dump directly into a client-side-encrypted
+   Restic repository in the dedicated private R2 backup bucket. No plaintext dump is written to disk.
+2. Keep seven daily, four weekly, and six monthly snapshots, plus any oldest safety snapshot retained
+   by Restic. Apply retention and pruning after a successful backup.
+3. Use separate bucket-scoped R2 credentials for backups. Keep the Restic password outside both the
+   NAS and R2; loss of that password makes the backups unrecoverable.
+4. Test repository integrity and restoration into a clean PostgreSQL container before inviting
+   external users and periodically afterward. Never make the only production database the first
+   target of a restore test.
+5. Keep production Compose files, migrations, health checks, and configuration documentation in this repository. Treat the NAS as replaceable compute: a clean VPS must be able to run the same images using restored database data and the existing R2 objects.
 
 ### Deployment order
 
 1. Validate the production image, Compose configuration, same-origin Pages proxy, resource limits,
    health checks, and fail-closed production settings locally.
-2. Implement encrypted nightly PostgreSQL backups, bounded retention, and a clean-container restore
+2. Validate encrypted nightly PostgreSQL backups, bounded retention, and a clean-container restore
    test locally.
 3. Create the `cassist.pages.dev` Pages project, configure encrypted `CASSIST_ORIGIN` and
    `CASSIST_PROXY_SECRET` Function bindings, update Auth0 callback/logout URLs, and restrict R2 CORS

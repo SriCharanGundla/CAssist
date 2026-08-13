@@ -1,0 +1,136 @@
+#!/bin/sh
+set -eu
+
+repository_root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
+test_suffix="$$"
+image_name="cassist-backup:restore-test"
+network_name="cassist-backup-test-$test_suffix"
+source_name="cassist-backup-source-$test_suffix"
+target_name="cassist-backup-target-$test_suffix"
+repository_volume="cassist-backup-repository-$test_suffix"
+database_password="local-restore-test-password"
+restic_password="local-restic-test-password"
+
+cleanup() {
+  docker rm --force "$source_name" "$target_name" >/dev/null 2>&1 || true
+  docker volume rm "$repository_volume" >/dev/null 2>&1 || true
+  docker network rm "$network_name" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT HUP INT TERM
+
+wait_for_postgres() {
+  container_name="$1"
+  attempt=0
+  until docker exec "$container_name" psql --username=cassist --dbname=cassist \
+    --command="SELECT 1" >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+      echo "PostgreSQL did not become ready: $container_name" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+}
+
+run_backup() {
+  docker run --rm \
+    --network "$network_name" \
+    --volume "$repository_volume:/repository" \
+    --env PGHOST="$source_name" \
+    --env PGDATABASE=cassist \
+    --env PGUSER=cassist \
+    --env PGPASSWORD="$database_password" \
+    --env RESTIC_REPOSITORY=/repository \
+    --env RESTIC_PASSWORD="$restic_password" \
+    --env RESTIC_HOST=cassist-restore-test \
+    "$image_name"
+}
+
+cleanup
+docker build --tag "$image_name" "$repository_root/deploy/backup"
+docker network create "$network_name" >/dev/null
+docker volume create "$repository_volume" >/dev/null
+docker run --rm \
+  --user root \
+  --volume "$repository_volume:/repository" \
+  --entrypoint chown \
+  "$image_name" postgres:postgres /repository
+
+docker run --detach \
+  --name "$source_name" \
+  --network "$network_name" \
+  --env POSTGRES_DB=cassist \
+  --env POSTGRES_USER=cassist \
+  --env POSTGRES_PASSWORD="$database_password" \
+  postgres:17-alpine >/dev/null
+wait_for_postgres "$source_name"
+
+docker exec "$source_name" psql --username=cassist --dbname=cassist --set=ON_ERROR_STOP=1 \
+  --command="CREATE TABLE restore_probe (id integer PRIMARY KEY, amount numeric(12,2) NOT NULL); INSERT INTO restore_probe VALUES (1, 125.50);" >/dev/null
+run_backup
+
+docker exec "$source_name" psql --username=cassist --dbname=cassist --set=ON_ERROR_STOP=1 \
+  --command="INSERT INTO restore_probe VALUES (2, 374.50);" >/dev/null
+run_backup
+
+docker exec "$source_name" psql --username=cassist --dbname=cassist --set=ON_ERROR_STOP=1 \
+  --command="INSERT INTO restore_probe VALUES (3, 100.00);" >/dev/null
+run_backup
+
+snapshot_count="$(docker run --rm \
+  --volume "$repository_volume:/repository" \
+  --env RESTIC_REPOSITORY=/repository \
+  --env RESTIC_PASSWORD="$restic_password" \
+  --entrypoint restic \
+  "$image_name" snapshots --json | grep -o '"id"' | wc -l | tr -d ' ')"
+if [ "$snapshot_count" -ne 2 ]; then
+  echo "Retention check failed: expected oldest and latest same-day snapshots, found $snapshot_count" >&2
+  exit 1
+fi
+
+if docker run --rm \
+  --volume "$repository_volume:/repository" \
+  --env RESTIC_REPOSITORY=/repository \
+  --env RESTIC_PASSWORD=incorrect-password \
+  --entrypoint restic \
+  "$image_name" snapshots >/dev/null 2>&1; then
+  echo "Encryption check failed: repository opened with the wrong password" >&2
+  exit 1
+fi
+
+docker run --rm \
+  --volume "$repository_volume:/repository" \
+  --env RESTIC_REPOSITORY=/repository \
+  --env RESTIC_PASSWORD="$restic_password" \
+  --entrypoint restic \
+  "$image_name" check
+
+docker run --detach \
+  --name "$target_name" \
+  --network "$network_name" \
+  --env POSTGRES_DB=cassist \
+  --env POSTGRES_USER=cassist \
+  --env POSTGRES_PASSWORD="$database_password" \
+  postgres:17-alpine >/dev/null
+wait_for_postgres "$target_name"
+
+docker run --rm \
+  --network "$network_name" \
+  --volume "$repository_volume:/repository" \
+  --env PGHOST="$target_name" \
+  --env PGDATABASE=cassist \
+  --env PGUSER=cassist \
+  --env PGPASSWORD="$database_password" \
+  --env RESTIC_REPOSITORY=/repository \
+  --env RESTIC_PASSWORD="$restic_password" \
+  --entrypoint restore-postgres \
+  "$image_name"
+
+restored_value="$(docker exec "$target_name" psql --username=cassist --dbname=cassist --tuples-only --no-align \
+  --command="SELECT count(*) || ':' || sum(amount) FROM restore_probe;")"
+if [ "$restored_value" != "3:600.00" ]; then
+  echo "Restore verification failed" >&2
+  exit 1
+fi
+
+echo "Encrypted backup, retention, repository check, and clean-container restore passed."
