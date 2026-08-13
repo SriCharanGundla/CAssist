@@ -71,7 +71,8 @@ comparison, cancellation, and deletion actions without an intermediate document 
 cancellation is acknowledged by the worker before deletion is enabled. Uploads show byte progress
 and can be cancelled individually or as a batch. A shared dashboard meter reports the document
 bucket allocation against an application-enforced 8 GB cap; pending uploads reserve capacity and
-deleting an original releases it immediately. Review uses an embedded PDF.js viewer with
+deleting an original releases it immediately. Dashboard selection mode can apply file-only or full
+file-and-data deletion to multiple eligible documents through one confirmation dialog. Review uses an embedded PDF.js viewer with
 selectable text, page thumbnails, and source-evidence highlighting. Account and workspace information is available at
 `/settings`; `/dev/compare/:documentId` is available only in development builds.
 The review screen presents collapsible dynamic sections rather than storage-oriented field/table

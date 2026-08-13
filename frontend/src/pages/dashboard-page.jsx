@@ -136,6 +136,11 @@ function formatDate(value) {
   }).format(new Date(value))
 }
 
+function documentDeletionDisabled(document, run = document.latest_run) {
+  if (run) return !TERMINAL_RUN_STATUSES.has(run.status)
+  return ["upload_pending", "uploaded", "processing"].includes(document.status)
+}
+
 function IconAction({ label, ...buttonProps }) {
   return (
     <Tooltip>
@@ -166,7 +171,13 @@ function DocumentListSkeleton() {
   )
 }
 
-function DocumentRow({ document }) {
+function DocumentRow({
+  bulkDeleting,
+  document,
+  onSelectionChange,
+  selected,
+  selectionMode,
+}) {
   const queryClient = useQueryClient()
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [confirmDialogOpen, setConfirmDialogOpen] = React.useState(false)
@@ -182,9 +193,7 @@ function DocumentRow({ document }) {
   const run = runQuery.data || initialRun
   const isRunning = Boolean(run && !TERMINAL_RUN_STATUSES.has(run.status))
   const isStopping = Boolean(isRunning && run?.cancellation_requested_at)
-  const deleteDisabled = run
-    ? isRunning
-    : ["upload_pending", "uploaded", "processing"].includes(document.status)
+  const deleteDisabled = documentDeletionDisabled(document, run)
   const displayStatus =
     runQuery.data?.progress?.stage || run?.status || document.status
   const statusText = `${STATUS_LABELS[displayStatus] || displayStatus.replaceAll("_", " ")}${isRunning ? "…" : ""}`
@@ -241,7 +250,19 @@ function DocumentRow({ document }) {
     originalDeleteMutation.isPending || permanentDeleteMutation.isPending
 
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/50">
+    <li
+      className={`grid items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/50 ${selectionMode ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]"}`}
+    >
+      {selectionMode ? (
+        <input
+          aria-label={`Select ${document.original_filename}`}
+          checked={selected}
+          className="size-4 rounded border-border accent-primary"
+          disabled={deleteDisabled || bulkDeleting}
+          onChange={(event) => onSelectionChange(event.target.checked)}
+          type="checkbox"
+        />
+      ) : null}
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {document.original_available ? (
@@ -339,7 +360,7 @@ function DocumentRow({ document }) {
           </IconAction>
         ) : null}
         <IconAction
-          disabled={deleteDisabled}
+          disabled={deleteDisabled || bulkDeleting}
           label="Delete document"
           onClick={() => setDeleteDialogOpen(true)}
           variant="destructive"
@@ -415,15 +436,24 @@ function DocumentRow({ document }) {
 export function DashboardPage() {
   const location = useLocation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [search, setSearch] = React.useState("")
   const [debouncedSearch, setDebouncedSearch] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState("")
   const [documentTypeFilter, setDocumentTypeFilter] = React.useState("")
   const [pageIndex, setPageIndex] = React.useState(0)
   const [pageCursors, setPageCursors] = React.useState([null])
+  const [selectedDocumentIds, setSelectedDocumentIds] = React.useState(
+    () => new Set()
+  )
+  const [selectionMode, setSelectionMode] = React.useState(false)
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = React.useState(false)
+  const [bulkDeleteError, setBulkDeleteError] = React.useState(null)
   const resetPagination = React.useCallback(() => {
     setPageIndex(0)
     setPageCursors([null])
+    setSelectedDocumentIds(new Set())
+    setSelectionMode(false)
   }, [])
   React.useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -477,18 +507,89 @@ export function DashboardPage() {
   })
   const quota = quotaQuery.data
   const documents = documentsQuery.data?.items || []
+  const eligibleDocuments = documents.filter(
+    (document) => !documentDeletionDisabled(document)
+  )
+  const selectedDocuments = documents.filter((document) =>
+    selectedDocumentIds.has(document.id)
+  )
+  const allEligibleSelected = Boolean(
+    eligibleDocuments.length &&
+    eligibleDocuments.every((document) => selectedDocumentIds.has(document.id))
+  )
+  const someEligibleSelected = eligibleDocuments.some((document) =>
+    selectedDocumentIds.has(document.id)
+  )
+  const anySelectedOriginal = selectedDocuments.some(
+    (document) => document.original_available
+  )
+  const selectAllRef = React.useRef(null)
+  React.useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate =
+        someEligibleSelected && !allEligibleSelected
+    }
+  }, [allEligibleSelected, someEligibleSelected])
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async ({ documents: targets, mode }) => {
+      const actionableTargets =
+        mode === "original"
+          ? targets.filter((document) => document.original_available)
+          : targets
+      const outcomes = await Promise.allSettled(
+        actionableTargets.map((document) =>
+          mode === "original"
+            ? deleteDocumentOriginal(document.id)
+            : permanentlyDeleteDocument(document.id)
+        )
+      )
+      return {
+        failedIds: actionableTargets
+          .filter((_, index) => outcomes[index].status === "rejected")
+          .map((document) => document.id),
+        mode,
+      }
+    },
+    onSuccess: async ({ failedIds, mode }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["documents"] }),
+        queryClient.invalidateQueries({ queryKey: ["storage-quota"] }),
+      ])
+      if (failedIds.length) {
+        setSelectedDocumentIds(new Set(failedIds))
+        setBulkDeleteError(
+          `${failedIds.length} ${failedIds.length === 1 ? "document" : "documents"} could not be deleted. Try again.`
+        )
+        return
+      }
+      setSelectedDocumentIds(new Set())
+      setSelectionMode(false)
+      setBulkDeleteError(null)
+      setBulkDeleteDialogOpen(false)
+      toast.success(
+        mode === "original"
+          ? "Selected files deleted. Extracted data was kept."
+          : "Selected files and extraction data deleted."
+      )
+    },
+  })
   const hasPreviousPage = pageIndex > 0
   const nextCursor = documentsQuery.data?.next_cursor
   const hasNextPage = Boolean(nextCursor)
 
   const showPreviousPage = (event) => {
     event.preventDefault()
+    setSelectedDocumentIds(new Set())
+    setSelectionMode(false)
     setPageIndex((current) => Math.max(0, current - 1))
   }
 
   const showNextPage = (event) => {
     event.preventDefault()
     if (!nextCursor) return
+    setSelectedDocumentIds(new Set())
+    setSelectionMode(false)
     setPageCursors((current) => {
       if (current[pageIndex + 1] === nextCursor) return current
       return [...current.slice(0, pageIndex + 1), nextCursor]
@@ -558,7 +659,49 @@ export function DashboardPage() {
 
         <div className="mt-7 overflow-hidden rounded-2xl border bg-card shadow-sm">
           <div className="border-b px-5 py-4">
-            <h2 className="font-semibold">Recent documents</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-semibold">Recent documents</h2>
+              {selectionMode ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {selectedDocuments.length} selected
+                  </span>
+                  {selectedDocuments.length ? (
+                    <Button
+                      disabled={bulkDeleteMutation.isPending}
+                      onClick={() => {
+                        setBulkDeleteError(null)
+                        setBulkDeleteDialogOpen(true)
+                      }}
+                      size="sm"
+                      variant="destructive"
+                    >
+                      <RiDeleteBinLine /> Delete selected
+                    </Button>
+                  ) : null}
+                  <Button
+                    disabled={bulkDeleteMutation.isPending}
+                    onClick={() => {
+                      setSelectedDocumentIds(new Set())
+                      setSelectionMode(false)
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Done
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  disabled={!eligibleDocuments.length}
+                  onClick={() => setSelectionMode(true)}
+                  size="sm"
+                  variant="outline"
+                >
+                  Select
+                </Button>
+              )}
+            </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto_auto]">
               <input
                 aria-label="Search documents"
@@ -602,7 +745,31 @@ export function DashboardPage() {
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b bg-muted/30 px-5 py-2 text-xs font-medium text-muted-foreground">
+          <div
+            className={`grid items-center gap-4 border-b bg-muted/30 px-5 py-2 text-xs font-medium text-muted-foreground ${selectionMode ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]"}`}
+          >
+            {selectionMode ? (
+              <input
+                aria-label="Select all deletable documents"
+                checked={allEligibleSelected}
+                className="size-4 rounded border-border accent-primary"
+                disabled={
+                  !eligibleDocuments.length || bulkDeleteMutation.isPending
+                }
+                onChange={(event) => {
+                  setSelectedDocumentIds((current) => {
+                    const next = new Set(current)
+                    for (const document of eligibleDocuments) {
+                      if (event.target.checked) next.add(document.id)
+                      else next.delete(document.id)
+                    }
+                    return next
+                  })
+                }}
+                ref={selectAllRef}
+                type="checkbox"
+              />
+            ) : null}
             <span>Document</span>
             <span>Actions</span>
           </div>
@@ -624,7 +791,21 @@ export function DashboardPage() {
           ) : documents.length ? (
             <ul className="divide-y">
               {documents.map((document) => (
-                <DocumentRow document={document} key={document.id} />
+                <DocumentRow
+                  bulkDeleting={bulkDeleteMutation.isPending}
+                  document={document}
+                  key={document.id}
+                  onSelectionChange={(checked) =>
+                    setSelectedDocumentIds((current) => {
+                      const next = new Set(current)
+                      if (checked) next.add(document.id)
+                      else next.delete(document.id)
+                      return next
+                    })
+                  }
+                  selected={selectedDocumentIds.has(document.id)}
+                  selectionMode={selectionMode}
+                />
               ))}
             </ul>
           ) : (
@@ -667,6 +848,70 @@ export function DashboardPage() {
             </Pagination>
           ) : null}
         </div>
+
+        <Dialog
+          onOpenChange={(open) => {
+            if (!bulkDeleteMutation.isPending) {
+              setBulkDeleteDialogOpen(open)
+              if (!open) setBulkDeleteError(null)
+            }
+          }}
+          open={bulkDeleteDialogOpen}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                Delete {selectedDocuments.length} selected documents?
+              </DialogTitle>
+              <DialogDescription>
+                Apply one deletion choice to every selected document. This
+                cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            {bulkDeleteError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {bulkDeleteError}
+              </p>
+            ) : null}
+            <DialogFooter className="sm:justify-start">
+              {anySelectedOriginal ? (
+                <Button
+                  disabled={bulkDeleteMutation.isPending}
+                  onClick={() =>
+                    bulkDeleteMutation.mutate({
+                      documents: selectedDocuments,
+                      mode: "original",
+                    })
+                  }
+                  variant="outline"
+                >
+                  {bulkDeleteMutation.isPending
+                    ? "Deleting…"
+                    : "Delete Files, Keep Data"}
+                </Button>
+              ) : null}
+              <Button
+                disabled={bulkDeleteMutation.isPending}
+                onClick={() =>
+                  bulkDeleteMutation.mutate({
+                    documents: selectedDocuments,
+                    mode: "permanent",
+                  })
+                }
+                variant="destructive"
+              >
+                {bulkDeleteMutation.isPending
+                  ? "Deleting…"
+                  : anySelectedOriginal
+                    ? "Delete Files and Data"
+                    : "Delete Data"}
+              </Button>
+              <DialogClose render={<Button variant="ghost" />}>
+                Cancel
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </section>
     </TooltipProvider>
   )

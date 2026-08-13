@@ -317,6 +317,7 @@ describe("DashboardPage", () => {
     expect(
       screen.getByRole("button", { name: "Delete document" })
     ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Select" })).toBeDisabled()
   })
 
   it("shows an explicit empty state", async () => {
@@ -490,5 +491,139 @@ describe("DashboardPage", () => {
     ).not.toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Delete Data" }))
     expect(api.permanentlyDeleteDocument).toHaveBeenCalledWith("document-1")
+  })
+
+  it("bulk deletes selected originals while keeping all extracted data", async () => {
+    const user = userEvent.setup()
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-1",
+          original_filename: "invoice-one.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "ready",
+          created_at: "2026-08-12T12:00:00Z",
+          latest_run: {
+            id: "run-1",
+            status: "succeeded",
+            result_id: "result-1",
+          },
+        },
+        {
+          id: "document-2",
+          original_filename: "invoice-two.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "ready",
+          created_at: "2026-08-11T12:00:00Z",
+          latest_run: {
+            id: "run-2",
+            status: "succeeded",
+            result_id: "result-2",
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    api.deleteDocumentOriginal.mockResolvedValue(undefined)
+    renderDashboard()
+
+    await screen.findByText("invoice-one.pdf")
+    expect(
+      screen.queryByRole("checkbox", { name: "Select invoice-one.pdf" })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Select" }))
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Select all deletable documents",
+      })
+    )
+    expect(screen.getByText("2 selected")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Delete selected" }))
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Delete 2 selected documents?",
+      })
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole("dialog")).toHaveLength(1)
+    await user.click(
+      screen.getByRole("button", { name: "Delete Files, Keep Data" })
+    )
+
+    await waitFor(() => {
+      expect(api.deleteDocumentOriginal).toHaveBeenCalledTimes(2)
+      expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-1")
+      expect(api.deleteDocumentOriginal).toHaveBeenCalledWith("document-2")
+    })
+    expect(api.permanentlyDeleteDocument).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith(
+      "Selected files deleted. Extracted data was kept."
+    )
+  })
+
+  it("bulk deletes files and data for a mixed selection in one dialog", async () => {
+    const user = userEvent.setup()
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-with-file",
+          original_filename: "invoice.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "ready",
+          created_at: "2026-08-12T12:00:00Z",
+          latest_run: {
+            id: "run-1",
+            status: "succeeded",
+            result_id: "result-1",
+          },
+        },
+        {
+          id: "document-data-only",
+          original_filename: "receipt.png",
+          mime_type: "image/png",
+          original_available: false,
+          status: "ready",
+          created_at: "2026-08-11T12:00:00Z",
+          latest_run: {
+            id: "run-2",
+            status: "succeeded",
+            result_id: "result-2",
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    api.permanentlyDeleteDocument.mockResolvedValue(undefined)
+    renderDashboard()
+
+    await screen.findByText("invoice.pdf")
+    await user.click(screen.getByRole("button", { name: "Select" }))
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select invoice.pdf" })
+    )
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select receipt.png" })
+    )
+    await user.click(screen.getByRole("button", { name: "Delete selected" }))
+    await user.click(
+      screen.getByRole("button", { name: "Delete Files and Data" })
+    )
+
+    await waitFor(() => {
+      expect(api.permanentlyDeleteDocument).toHaveBeenCalledTimes(2)
+      expect(api.permanentlyDeleteDocument).toHaveBeenCalledWith(
+        "document-with-file"
+      )
+      expect(api.permanentlyDeleteDocument).toHaveBeenCalledWith(
+        "document-data-only"
+      )
+    })
+    expect(api.deleteDocumentOriginal).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith(
+      "Selected files and extraction data deleted."
+    )
   })
 })
