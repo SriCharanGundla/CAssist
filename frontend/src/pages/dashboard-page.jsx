@@ -358,11 +358,13 @@ export function DashboardPage() {
   }, [])
   React.useEffect(() => {
     const timeout = window.setTimeout(() => {
-      setDebouncedSearch(search.trim())
+      const nextSearch = search.trim()
+      if (nextSearch === debouncedSearch) return
+      setDebouncedSearch(nextSearch)
       resetPagination()
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [resetPagination, search])
+  }, [debouncedSearch, resetPagination, search])
   React.useEffect(() => {
     if (location.state?.deleted) {
       toast.success("Document and extraction data deleted.")

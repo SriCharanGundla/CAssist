@@ -130,9 +130,9 @@ describe("DashboardPage", () => {
     expect(deleteButton).toHaveClass("text-destructive")
     expect(screen.getByText("1")).toHaveAttribute("aria-current", "page")
     await user.click(screen.getByRole("button", { name: "Go to next page" }))
-    expect(
-      await screen.findByText("invoice-two.png", {}, { timeout: 3_000 })
-    ).toBeInTheDocument()
+    expect(await screen.findByText("invoice-two.png")).toBeInTheDocument()
+    await new Promise((resolve) => window.setTimeout(resolve, 300))
+    expect(screen.getByText("invoice-two.png")).toBeInTheDocument()
     expect(screen.queryByText("invoice-one.pdf")).not.toBeInTheDocument()
     expect(screen.getByText("2")).toHaveAttribute("aria-current", "page")
     expect(api.listDocuments).toHaveBeenLastCalledWith(
@@ -141,9 +141,7 @@ describe("DashboardPage", () => {
     await user.click(
       screen.getByRole("button", { name: "Go to previous page" })
     )
-    expect(
-      await screen.findByText("invoice-one.pdf", {}, { timeout: 3_000 })
-    ).toBeInTheDocument()
+    expect(await screen.findByText("invoice-one.pdf")).toBeInTheDocument()
     expect(screen.queryByText("invoice-two.png")).not.toBeInTheDocument()
   })
 
