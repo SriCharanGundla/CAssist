@@ -159,6 +159,13 @@ describe("ReviewPage", () => {
     expect(screen.getByAltText("Original document")).toBeInTheDocument()
     expect(screen.queryByText("Supplier GSTIN")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled()
+    expect(
+      screen.getByRole("region", { name: "Invoice details content" })
+    ).toHaveClass(
+      "max-h-[36rem]",
+      "overflow-y-auto",
+      "overscroll-contain"
+    )
   })
 
   it("toggles the inline original preview", async () => {
@@ -166,9 +173,9 @@ describe("ReviewPage", () => {
     renderReviewPage()
 
     expect(await screen.findByAltText("Original document")).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Hide original" }))
+    await user.click(screen.getByRole("button", { name: "Hide document" }))
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Show original" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Show document" })).toBeEnabled()
     expect(localStorage.getItem("cassist-review-source-visible")).toBe("false")
   })
 
@@ -232,13 +239,13 @@ describe("ReviewPage", () => {
     const user = userEvent.setup()
     const firstRender = renderReviewPage()
     await screen.findByAltText("Original document")
-    await user.click(screen.getByRole("button", { name: "Hide original" }))
+    await user.click(screen.getByRole("button", { name: "Hide document" }))
     firstRender.unmount()
 
     renderReviewPage()
 
     expect(
-      await screen.findByRole("button", { name: "Show original" })
+      await screen.findByRole("button", { name: "Show document" })
     ).toBeEnabled()
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
   })

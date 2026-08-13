@@ -308,7 +308,16 @@ function Card({
       {description ? (
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       ) : null}
-      {!collapsible || open ? <div className="mt-3">{children}</div> : null}
+      {!collapsible || open ? (
+        <div
+          aria-label={`${title} content`}
+          className="mt-3 max-h-[36rem] overflow-y-auto overscroll-contain pr-2"
+          role="region"
+          tabIndex={0}
+        >
+          {children}
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -656,7 +665,7 @@ export function ReviewPage() {
           {result.original_available ? (
             <Button onClick={toggleOriginal} variant="outline">
               {showOriginal ? <RiEyeOffLine /> : <RiEyeLine />}
-              {showOriginal ? "Hide original" : "Show original"}
+              {showOriginal ? "Hide document" : "Show document"}
             </Button>
           ) : null}
           {result.review_status === "approved" ? (
