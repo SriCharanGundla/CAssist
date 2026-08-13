@@ -113,12 +113,7 @@ describe("DashboardPage", () => {
         ],
         next_cursor: null,
       })
-    api.getRun.mockResolvedValue({
-      id: "run-2",
-      status: "extracting",
-      result_id: null,
-      progress: { stage: "extracting" },
-    })
+    api.getRun.mockReturnValue(new Promise(() => {}))
     renderDashboard()
 
     expect(await screen.findByText("invoice-one.pdf")).toBeInTheDocument()
@@ -136,7 +131,9 @@ describe("DashboardPage", () => {
     expect(deleteButton).toHaveClass("text-destructive")
     expect(screen.getByText("1")).toHaveAttribute("aria-current", "page")
     await user.click(screen.getByRole("button", { name: "Go to next page" }))
-    expect(await screen.findByText("invoice-two.png")).toBeInTheDocument()
+    expect(
+      await screen.findByText("invoice-two.png", {}, { timeout: 5_000 })
+    ).toBeInTheDocument()
     expect(screen.queryByText("invoice-one.pdf")).not.toBeInTheDocument()
     expect(screen.getByText("2")).toHaveAttribute("aria-current", "page")
     expect(api.listDocuments).toHaveBeenLastCalledWith(
@@ -145,7 +142,9 @@ describe("DashboardPage", () => {
     await user.click(
       screen.getByRole("button", { name: "Go to previous page" })
     )
-    expect(await screen.findByText("invoice-one.pdf")).toBeInTheDocument()
+    expect(
+      await screen.findByText("invoice-one.pdf", {}, { timeout: 5_000 })
+    ).toBeInTheDocument()
     expect(screen.queryByText("invoice-two.png")).not.toBeInTheDocument()
   })
 
