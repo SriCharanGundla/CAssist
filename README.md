@@ -1,34 +1,24 @@
 # CAssist
 
-CAssist is a side-tool for Chartered Accountants to upload accounting documents and images, extract
-the labels, values, tables, and text actually present, review or copy them, and export reviewed data.
-Extraction is document-led: it does not require an invoice template or invent missing fields.
-After extraction, a bounded organizer groups the observed fields, tables, and text into non-empty
-document-specific sections for review. Sections reference immutable observations and cannot change
-their labels or values.
+CAssist extracts fields, tables, and text from accounting documents for review and Tally JSON
+export. Extraction is document-led: it does not require templates or invent missing values.
 
-A low-cost classification agent first checks a bounded preview for CA, financial, and related
-professional-document scope. Supported documents continue automatically, clearly unrelated files
-stop before extraction, and ambiguous documents pause for an explicit audited **Process anyway**
-confirmation.
+A classification step rejects unrelated files and asks for confirmation when a document is
+ambiguous. CAssist accepts up to 10 PDF, JPEG, or PNG files per upload, with a 25 MiB limit per file.
 
-Uploads support PDF, JPEG, and PNG files up to 25 MiB each. The upload screen accepts up to ten files
-at once.
-
-## Structure
+## Stack
 
 ```text
-frontend/       Vite, React JavaScript, Tailwind CSS v4, shadcn/ui
-backend/        FastAPI, PostgreSQL, Strands Agents, Cloudflare R2 integration
-ARCHITECTURE.md Data model and REST API contract
+frontend/       Vite, React 19, Tailwind CSS 4, shadcn/ui
+backend/        FastAPI, PostgreSQL, Strands Agents, Cloudflare R2
+ARCHITECTURE.md Data model, API contract, and security design
 compose.yaml    Local PostgreSQL service
 ```
 
 ## Run locally
 
-Prerequisites: Docker, `uv`, nvm, and `pnpm`. Node 24 LTS is pinned in `.nvmrc`; run `nvm use` before
-frontend commands. The backend Python version and environment are managed by `uv`; do not create or
-activate a virtual environment manually.
+Requirements: Docker, `uv`, nvm, and `pnpm`. The project pins Node 24 in `.nvmrc` and Python 3.12 in
+`backend/.python-version`.
 
 1. Start PostgreSQL:
 
@@ -46,7 +36,7 @@ activate a virtual environment manually.
    uv run --locked uvicorn app.main:app --reload
    ```
 
-3. Start the single-concurrency extraction worker in another terminal:
+3. Start the single-concurrency worker in another terminal:
 
    ```bash
    cd backend
@@ -62,113 +52,84 @@ activate a virtual environment manually.
    pnpm dev
    ```
 
-Open `http://localhost:5173`. API documentation is at
-`http://localhost:8000/docs`.
+Open `http://localhost:5173`. API docs are at `http://localhost:8000/docs`.
 
-The dashboard is the document hub: it supports filename search plus status and document-type
-filters, shows processing state, and provides original viewing, review, development model
-comparison, cancellation, and deletion actions without an intermediate document page. Active
-cancellation is acknowledged by the worker before deletion is enabled. Uploads show byte progress
-and can be cancelled individually or as a batch. A shared dashboard meter reports the document
-bucket allocation against an application-enforced 8 GB cap; pending uploads reserve capacity and
-deleting an original releases it immediately. Dashboard selection mode can apply file-only or full
-file-and-data deletion to multiple eligible documents through one confirmation dialog. Review uses an embedded PDF.js viewer with
-selectable text, page thumbnails, and source-evidence highlighting. Account and workspace information is available at
-`/settings`; `/dev/compare/:documentId` is available only in development builds.
-The review screen presents collapsible dynamic sections rather than storage-oriented field/table
-buckets and supports Tab navigation between correction editors. Reviewers can reversibly include or
-exclude whole sections and individual fields, tables, or text blocks from Tally JSON without deleting
-the underlying extraction. Tally handoff JSON preserves the selected section order while omitting
-internal IDs and source regions.
-Authenticated routes use descriptive browser titles and keyboard skip navigation; compact controls
-expand their touch targets on coarse-pointer devices.
-The frontend reports offline state explicitly and restores normal operation when the browser
-reconnects.
+The dashboard handles upload, search, filtering, processing, review, export, cancellation, and
+deletion. The shared document bucket has an application-enforced 8 GB limit. Development builds
+also expose model comparison at `/dev/compare/:documentId`.
 
-## Prepare private deployment
+## Authentication
 
-The free-domain pilot is deployed at `https://cassist.pages.dev` as one browser origin. A Pages Function streams
-`/api/*` to the NAS Tailscale Funnel origin, so production cookies remain host-only and the Funnel
-hostname is not exposed to frontend code. Set these Pages Function bindings in the Cloudflare
-dashboard; encrypt `CASSIST_PROXY_SECRET`:
-
-```text
-CASSIST_ORIGIN=https://replace-with-nas-name.tailnet-name.ts.net
-CASSIST_PROXY_SECRET=replace-with-at-least-32-random-characters
-```
-
-Use the same secret as `EDGE_PROXY_SECRET` in the NAS deployment environment. Do not set
-`VITE_API_BASE_URL` for the Pages production build; it defaults to same-origin `/api/v1`. Copy
-`deploy/.env.production.example` to ignored `deploy/.env.production` only on the deployment host.
-Validate the production Compose file from the repository root with:
-
-```bash
-docker compose --env-file deploy/.env.production \
-  -f deploy/compose.production.yaml config --quiet
-```
-
-No NAS deployment is performed by these files. `ARCHITECTURE.md` contains the approval-gated rollout
-order and security boundaries. [`deploy/README.md`](deploy/README.md) documents encrypted database
-backups, retention, scheduling, and the clean-container restore test.
-
-The Pages project uses Wrangler Direct Upload. Build and deploy from `frontend/` with:
-
-```bash
-pnpm build
-pnpm exec wrangler pages deploy dist --project-name cassist --branch main
-```
-
-## Configure authentication
-
-CAssist uses Auth0 through the FastAPI backend and forces Google OAuth. In the Auth0 Regular Web
-Application, enable the `google-oauth2` social connection and disable the database, passwordless,
-and every other social connection for this application. Configure these development URLs:
+CAssist uses an Auth0 Regular Web Application with Google OAuth. Enable only the `google-oauth2`
+connection and configure:
 
 ```text
 Allowed Callback URL: http://localhost:8000/api/v1/auth/callback
 Allowed Logout URL:   http://localhost:5173
 ```
 
-Set `AUTH_ISSUER_URL`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, and a random
-`AUTH_STATE_SECRET` of at least 32 characters in `backend/.env`. The Vite app
-uses `http://localhost:8000/api/v1` by default; override it with
-`VITE_API_BASE_URL` in `frontend/.env` when needed. Credentials and tokens must
-never be committed.
+Set `AUTH_ISSUER_URL`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, and a random 32-character-or-longer
+`AUTH_STATE_SECRET` in `backend/.env`. The backend also restricts access to its configured Google
+account allowlist.
 
-FastAPI independently accepts only the verified Google accounts `owner@example.test`,
-`reviewer@example.test`, and `accountant@example.test`. This server-side allowlist also blocks or revokes sessions even if another
-Auth0 connection is accidentally enabled later.
+Sessions idle after 12 hours, expire after 14 days, and allow up to 10 signed-in devices per account.
+The frontend uses `http://localhost:8000/api/v1` by default; set `VITE_API_BASE_URL` in
+`frontend/.env` to override it.
 
-Application sessions idle after 12 hours and expire absolutely after 14 days. Each account may keep
-up to ten devices signed in; Settings lists them five at a time and can sign out other devices.
+## Object storage
 
-To verify the development model adapter with generated synthetic data only:
+Create a private Cloudflare R2 bucket and an Object Read & Write token scoped to that bucket. Set
+`R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` in
+`backend/.env`.
+
+Keep public access disabled. For local development, allow CORS from `http://localhost:5173` for
+`PUT`, `GET`, and `HEAD`, including the `Content-Type` request header.
+
+## Verification
+
+Run the synthetic model smoke test:
 
 ```bash
 cd backend
 uv run --locked python scripts/live_model_smoke.py
 ```
 
-The script creates its financial-document image inside a temporary directory, never uploads it to R2 or stores
-it in PostgreSQL, prints no extracted financial values or provider output, and deletes the image on
-exit. It refuses to run when `APP_ENV=production`.
-
-After the ordinary test suites pass, verify the complete local workflow with synthetic data:
+After the normal test suites pass, run the complete synthetic workflow:
 
 ```bash
 cd backend
 uv run --locked python scripts/local_vertical_smoke.py
 ```
 
-This gate refuses production and refuses to run while another processing job is active. It creates a
-temporary synthetic user/workspace, exercises authenticated upload, private R2, the real development
-model, review, correction, approval, export, original viewing, and permanent deletion, then removes
-its synthetic database and R2 data.
+Both scripts refuse to run in production. The vertical smoke test exercises upload, private R2,
+extraction, review, correction, approval, export, viewing, and deletion, then removes its test data.
 
-## Configure development object storage
+## Private deployment
 
-Create a private Cloudflare R2 bucket and an Object Read & Write API token scoped only to that
-bucket. Set `R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET_NAME` in
-`backend/.env`. `R2_STORAGE_QUOTA_BYTES` defaults to the shared 8,000,000,000-byte application cap.
-The bucket must keep public access disabled and allow CORS only from
-`http://localhost:5173` for `PUT`, `GET`, and `HEAD` with the `Content-Type` request header.
+Production serves the frontend and proxied API from `https://cassist.pages.dev`. Configure these
+Cloudflare Pages Function bindings:
+
+```text
+CASSIST_ORIGIN=https://replace-with-nas-name.tailnet-name.ts.net
+CASSIST_PROXY_SECRET=replace-with-at-least-32-random-characters
+```
+
+Use the same secret as `EDGE_PROXY_SECRET` on the NAS. Leave `VITE_API_BASE_URL` unset for the
+production build so requests use same-origin `/api/v1`.
+
+Validate the production Compose configuration from the repository root:
+
+```bash
+docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yaml config --quiet
+```
+
+Build and deploy Cloudflare Pages from `frontend/`:
+
+```bash
+pnpm build
+pnpm exec wrangler pages deploy dist --project-name cassist --branch main
+```
+
+See [`deploy/README.md`](deploy/README.md) for NAS deployment, encrypted backups, retention, and
+restore testing. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full rollout and security design.
