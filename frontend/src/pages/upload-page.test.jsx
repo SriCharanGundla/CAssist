@@ -12,17 +12,23 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...original,
     getStorageQuota: vi.fn(),
+    getUploadCapabilities: vi.fn(),
     uploadDocument: vi.fn(),
   }
 })
 
 function renderUploadPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  queryClient.setQueryData(["upload-capabilities"], {
+    accepted_mime_types: ["application/pdf", "image/jpeg", "image/png"],
+    accepted_extensions: [".pdf", ".jpg", ".jpeg", ".png"],
+    maximum_file_bytes: 25 * 1024 * 1024,
+    maximum_batch_files: 10,
+  })
   return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/upload"]}>
         <Routes>
           <Route element={<UploadPage />} path="/upload" />
@@ -42,6 +48,12 @@ describe("UploadPage", () => {
       available_bytes: 7_000_000_000,
       usage_percent: 12.5,
       upload_allowed: true,
+    })
+    api.getUploadCapabilities.mockResolvedValue({
+      accepted_mime_types: ["application/pdf", "image/jpeg", "image/png"],
+      accepted_extensions: [".pdf", ".jpg", ".jpeg", ".png"],
+      maximum_file_bytes: 25 * 1024 * 1024,
+      maximum_batch_files: 10,
     })
   })
 

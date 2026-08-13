@@ -27,6 +27,7 @@ from app.models import (
     ExtractionResult,
     MemberRole,
     ModelProvider,
+    PendingObjectDeletion,
     ProcessingRun,
     ProcessingStage,
     RunStatus,
@@ -36,6 +37,7 @@ from app.models import (
 from app.schemas.extraction import ExtractedField, GenericDocumentExtraction
 from app.services.auth import establish_session
 from app.services.identity_provider import VerifiedIdentity
+from app.services.object_deletion import process_one_object_deletion
 from app.services.object_storage import (
     ObjectStorageError,
     PresignedDownload,
@@ -960,7 +962,7 @@ async def test_idempotency_key_is_accepted_and_validated(
         UUID,
     ],
 ) -> None:
-    client, _, _, _, _, _, document_id, _ = document_client
+    client, _, storage, _, _, _, document_id, _ = document_client
     accepted = await client.post(
         f"/api/v1/documents/{document_id}/view-url",
         headers={"Idempotency-Key": "view-original-0001"},
@@ -969,8 +971,15 @@ async def test_idempotency_key_is_accepted_and_validated(
         f"/api/v1/documents/{document_id}/view-url",
         headers={"Idempotency-Key": "short"},
     )
+    replayed = await client.post(
+        f"/api/v1/documents/{document_id}/view-url",
+        headers={"Idempotency-Key": "view-original-0001"},
+    )
 
     assert accepted.status_code == 200
+    assert replayed.status_code == 200
+    assert replayed.json() == accepted.json()
+    assert len(storage.download_calls) == 1
     assert rejected.status_code == 422
     assert rejected.json()["error"]["code"] == "REQUEST_VALIDATION_FAILED"
     assert rejected.headers["x-request-id"] == rejected.json()["error"]["request_id"]
@@ -1125,7 +1134,7 @@ async def test_permanent_deletion_cascades_history_and_retains_only_safe_audit(
 
 
 @pytest.mark.asyncio
-async def test_storage_failures_leave_database_and_audit_unchanged(
+async def test_storage_deletion_failures_are_retained_for_retry(
     document_client: tuple[
         AsyncClient,
         AsyncSession,
@@ -1143,18 +1152,22 @@ async def test_storage_failures_leave_database_and_audit_unchanged(
 
     storage.fail_sign = False
     storage.fail_delete = True
-    assert (await client.delete(f"/api/v1/documents/{document_id}/original")).status_code == 503
-    assert (await client.delete(f"/api/v1/documents/{document_id}")).status_code == 503
+    assert (await client.delete(f"/api/v1/documents/{document_id}/original")).status_code == 204
+    assert (await client.delete(f"/api/v1/documents/{document_id}")).status_code == 204
 
     document = await session.get(Document, document_id)
-    assert document is not None and document.r2_object_key is not None
-    assert document.original_deleted_at is None
+    assert document is None
     assert (
         await session.scalar(
-            select(func.count()).select_from(AuditEvent).where(AuditEvent.entity_id == document_id)
+            select(func.count())
+            .select_from(PendingObjectDeletion)
+            .where(PendingObjectDeletion.object_key.is_not(None))
         )
-        == 0
+        == 1
     )
+    storage.fail_delete = False
+    assert await process_one_object_deletion(session, storage) is True
+    assert await session.scalar(select(func.count()).select_from(PendingObjectDeletion)) == 0
 
 
 @pytest.mark.asyncio

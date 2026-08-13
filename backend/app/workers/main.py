@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import Settings, settings
 from app.core.database import async_session_factory, engine
+from app.services.object_deletion import process_one_object_deletion
 from app.services.object_storage import R2ObjectStorage
 from app.services.session_cleanup import cleanup_expired_sessions
 from app.services.upload_cleanup import cleanup_one_expired_upload
@@ -40,6 +41,7 @@ async def run_worker(
                 session,
                 storage,
             )
+            await process_one_object_deletion(session, storage)
         return await process_next_document(app_settings=app_settings)
 
     process = process_once or configured_process
@@ -56,9 +58,7 @@ async def run_worker(
         if processed or stopping.is_set():
             continue
         wait_seconds = (
-            error_backoff_seconds
-            if iteration_failed
-            else app_settings.worker_poll_seconds
+            error_backoff_seconds if iteration_failed else app_settings.worker_poll_seconds
         )
         if iteration_failed:
             error_backoff_seconds = min(

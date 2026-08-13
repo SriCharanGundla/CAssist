@@ -298,6 +298,11 @@ CREATE INDEX auth_sessions_user_active_idx
     WHERE revoked_at IS NULL;
 ```
 
+Request replay and recoverable object deletion use two operational tables added by a later
+migration. Idempotency records contain only hashes of the session token and client key, a request
+hash, and the bounded response needed for replay; they expire after five minutes. Pending object
+deletions retain opaque R2 keys until an idempotent worker attempt succeeds.
+
 Only SHA-256 hashes of the opaque session and CSRF tokens are stored. The raw session token exists
 only in the HttpOnly API cookie. The raw CSRF token exists only in frontend memory and its request
 header. The optional, client-supplied user agent is retained only to derive an approximate browser
@@ -453,10 +458,12 @@ allowlisted Auth0 logout URL for browser navigation.
 `DELETE /api/v1/documents/{document_id}/original`
 
 1. Authorize workspace membership.
-2. Delete the object from R2.
-3. Set `r2_object_key = NULL`, `original_deleted_at`, and `original_deleted_by` in one database transaction after R2 confirms deletion.
-4. Retain the hash, extraction, corrections, and export-event history.
-5. Add `document.original_deleted` to `audit_events`.
+2. Set `r2_object_key = NULL`, set deletion metadata, and enqueue the opaque object key in one
+   database transaction.
+3. Retain the hash, extraction, corrections, and export-event history.
+4. Add `document.original_deleted` to `audit_events`.
+5. Attempt R2 deletion immediately; if storage is unavailable, the worker retries the durable
+   outbox entry without restoring a stale database pointer.
 
 The document remains usable for copying and exporting extracted information, but it cannot be visually reviewed again.
 
@@ -465,9 +472,10 @@ The document remains usable for copying and exporting extracted information, but
 `DELETE /api/v1/documents/{document_id}`
 
 1. Authorize a workspace owner/admin or the document uploader. Other workspace members receive `403`.
-2. Delete the R2 object if it still exists.
+2. Enqueue the opaque R2 key and hard-delete the document row in one database transaction; dependent
+   runs, results, corrections, and export events cascade.
 3. Insert a content-free `document.permanently_deleted` audit event.
-4. Hard-delete the document row; dependent runs, results, corrections, and export events cascade.
+4. Attempt R2 deletion immediately and retry it from the durable outbox on failure.
 5. Do not retain the SHA-256, filename, extracted values, or provider output.
 
 The deletion operation is idempotent. A repeated deletion returns `204 No Content`; requests from a
@@ -480,10 +488,10 @@ non-member also return `204` rather than disclosing whether the document exists.
 - Every extracted value is preserved as a string, including monetary values; JSON floating-point
   numbers are never used for document values.
 - List endpoints use cursor pagination.
-- Every mutation accepts and validates a printable `Idempotency-Key` header. The key is available for
-  request correlation; replay behavior remains endpoint-specific. Upload completion, deletion,
-  cancellation, and run creation are independently safe to retry through their resource state and
-  cache constraints.
+- Every mutation accepts and validates a printable `Idempotency-Key` header. The backend hashes the
+  key and session token, atomically claims the request, rejects reuse with a different request,
+  blocks concurrent duplicates, and replays the completed response for five minutes. Raw keys and
+  session tokens are never persisted.
 - Every response includes a server-generated `X-Request-ID`.
 - Errors use the same envelope:
 
@@ -507,6 +515,12 @@ logs must not contain authorization codes, OIDC state, session or CSRF tokens, s
 contents, extracted financial values, hashes, or provider output.
 
 ## 7. Upload and document endpoints
+
+### `GET /api/v1/uploads/capabilities`
+
+Returns the authenticated, no-store upload MIME types, filename extensions, per-file byte limit,
+and browser batch limit. The frontend uses this response instead of compiling deployment limits
+into its JavaScript bundle.
 
 ### `GET /api/v1/uploads/quota`
 
@@ -579,6 +593,8 @@ those verified bytes to `originals/<same opaque 128-bit value as the incoming ke
 key is never signed for browser upload or download during finalization. Reusing the opaque value
 makes retries idempotent and lets pending-upload cancellation remove a final copy left by a hard
 process failure before the PostgreSQL commit. Temporary data is closed and deleted after the request.
+Definitively invalid content removes the pending document reservation and enqueues the incoming key
+for deletion immediately, so malformed uploads cannot occupy shared quota until expiry cleanup.
 
 For a new hash, the document hash, permanent key, `uploaded` status, and configured queued processing
 run are committed atomically in PostgreSQL. The incoming object is deleted after commit. Completion

@@ -20,11 +20,35 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getCurrentAuth, loginUrl, logout } from "@/lib/api"
-import { DashboardPage } from "@/pages/dashboard-page"
-import { ComparePage } from "@/pages/compare-page"
-import { ReviewPage } from "@/pages/review-page"
-import { SettingsPage } from "@/pages/settings-page"
-import { UploadPage } from "@/pages/upload-page"
+const DashboardPage = React.lazy(() =>
+  import("@/pages/dashboard-page").then((module) => ({
+    default: module.DashboardPage,
+  }))
+)
+const ReviewPage = React.lazy(() =>
+  import("@/pages/review-page").then((module) => ({
+    default: module.ReviewPage,
+  }))
+)
+const UploadPage = React.lazy(() =>
+  import("@/pages/upload-page").then((module) => ({
+    default: module.UploadPage,
+  }))
+)
+const SettingsPage = React.lazy(() =>
+  import("@/pages/settings-page").then((module) => ({
+    default: module.SettingsPage,
+  }))
+)
+const ComparePage = React.lazy(() =>
+  import("@/pages/compare-page").then((module) => ({
+    default: module.ComparePage,
+  }))
+)
+
+function RouteFallback() {
+  return <p className="text-sm text-muted-foreground">Loading…</p>
+}
 
 function AuthenticatedApp({ auth }) {
   const location = useLocation()
@@ -142,20 +166,25 @@ function AuthenticatedApp({ auth }) {
             {logoutError}
           </p>
         ) : null}
-        <Routes>
-          <Route element={<DashboardPage />} path="/" />
-          <Route element={<UploadPage />} path="/upload" />
-          <Route
-            element={<Navigate replace to="/" />}
-            path="/documents/:documentId"
-          />
-          <Route element={<ReviewPage />} path="/results/:resultId/review" />
-          <Route element={<SettingsPage auth={auth} />} path="/settings" />
-          {import.meta.env.DEV ? (
-            <Route element={<ComparePage />} path="/dev/compare/:documentId" />
-          ) : null}
-          <Route element={<Navigate replace to="/" />} path="*" />
-        </Routes>
+        <React.Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route element={<DashboardPage />} path="/" />
+            <Route element={<UploadPage />} path="/upload" />
+            <Route
+              element={<Navigate replace to="/" />}
+              path="/documents/:documentId"
+            />
+            <Route element={<ReviewPage />} path="/results/:resultId/review" />
+            <Route element={<SettingsPage auth={auth} />} path="/settings" />
+            {import.meta.env.DEV ? (
+              <Route
+                element={<ComparePage />}
+                path="/dev/compare/:documentId"
+              />
+            ) : null}
+            <Route element={<Navigate replace to="/" />} path="*" />
+          </Routes>
+        </React.Suspense>
       </main>
     </div>
   )

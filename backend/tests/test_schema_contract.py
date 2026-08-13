@@ -26,6 +26,27 @@ EXPECTED_COLUMNS = {
         "absolute_expires_at",
         "revoked_at",
     },
+    "idempotency_records": {
+        "id",
+        "session_token_hash",
+        "request_method",
+        "request_path",
+        "idempotency_key_hash",
+        "request_hash",
+        "completed",
+        "response_status",
+        "response_headers",
+        "response_body",
+        "created_at",
+        "expires_at",
+    },
+    "pending_object_deletions": {
+        "id",
+        "object_key",
+        "created_at",
+        "attempt_count",
+        "last_attempt_at",
+    },
     "documents": {
         "id",
         "workspace_id",
@@ -149,6 +170,8 @@ EXPECTED_ENUMS = {
 
 EXPECTED_INDEXES = {
     "auth_sessions_user_active_idx",
+    "idempotency_records_expires_idx",
+    "pending_object_deletions_created_idx",
     "users_email_lower_idx",
     "documents_workspace_sha256_idx",
     "documents_workspace_created_idx",

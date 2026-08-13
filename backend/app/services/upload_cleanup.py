@@ -2,11 +2,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.concurrency import run_in_threadpool
 
 from app.models import Document, DocumentStatus
+from app.services.object_deletion import enqueue_object_deletion, flush_enqueued_deletions
 from app.services.object_keys import permanent_key_for_incoming
-from app.services.object_storage import ObjectStorage, ObjectStorageError
+from app.services.object_storage import ObjectStorage
 
 
 async def cleanup_one_expired_upload(
@@ -32,17 +32,18 @@ async def cleanup_one_expired_upload(
         await session.rollback()
         return False
 
-    try:
-        if document.r2_object_key is not None:
-            await run_in_threadpool(storage.delete_object, document.r2_object_key)
-            await run_in_threadpool(
-                storage.delete_object,
+    pending_deletions = [enqueue_object_deletion(session, document.r2_object_key)]
+    if document.r2_object_key is not None:
+        pending_deletions.append(
+            enqueue_object_deletion(
+                session,
                 permanent_key_for_incoming(document.r2_object_key),
             )
-    except ObjectStorageError:
-        await session.rollback()
-        raise
+        )
 
     await session.delete(document)
+    await session.flush()
+    deletion_ids = [pending.id for pending in pending_deletions if pending is not None]
     await session.commit()
+    await flush_enqueued_deletions(session, storage, deletion_ids)
     return True

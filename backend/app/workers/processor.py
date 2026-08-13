@@ -68,6 +68,32 @@ class ClaimedRun:
 PreprocessedConsumer = Callable[[ClaimedRun, PreprocessedDocument], Awaitable[None]]
 
 
+async def _maintain_lease(
+    session_factory: async_sessionmaker[AsyncSession],
+    claim: ClaimedRun,
+    worker_id: str,
+    lease_seconds: int,
+) -> None:
+    interval = max(1.0, lease_seconds / 3)
+    while True:
+        await asyncio.sleep(interval)
+        async with session_factory() as session:
+            run = await session.scalar(
+                select(ProcessingRun)
+                .where(
+                    ProcessingRun.id == claim.run_id,
+                    ProcessingRun.status.in_(_ACTIVE_STATUSES),
+                    ProcessingRun.worker_id == worker_id,
+                )
+                .with_for_update()
+            )
+            if run is None:
+                await session.rollback()
+                return
+            run.lease_expires_at = datetime.now(UTC) + timedelta(seconds=lease_seconds)
+            await session.commit()
+
+
 async def claim_next_run(
     session: AsyncSession,
     worker_id: str,
@@ -238,9 +264,7 @@ async def _complete_run(
         if extraction.classification is not None:
             run.classification_scope = extraction.classification.scope
             run.classification_document_type = extraction.classification.document_type
-            run.classification_confidence = Decimal(
-                str(extraction.classification.confidence)
-            )
+            run.classification_confidence = Decimal(str(extraction.classification.confidence))
             run.classification_reason_code = extraction.classification.reason_code
         session.add(
             ExtractionResult(
@@ -296,9 +320,7 @@ async def _block_run_for_scope(
         classification = decision.classification
         run, document = run_and_document
         needs_confirmation = classification.scope == "uncertain"
-        run.status = (
-            RunStatus.NEEDS_CONFIRMATION if needs_confirmation else RunStatus.UNSUPPORTED
-        )
+        run.status = RunStatus.NEEDS_CONFIRMATION if needs_confirmation else RunStatus.UNSUPPORTED
         run.progress_stage = (
             ProcessingStage.NEEDS_CONFIRMATION.value
             if needs_confirmation
@@ -314,9 +336,7 @@ async def _block_run_for_scope(
         run.lease_expires_at = None
         run.completed_at = completed_at
         document.status = (
-            DocumentStatus.NEEDS_CONFIRMATION
-            if needs_confirmation
-            else DocumentStatus.UNSUPPORTED
+            DocumentStatus.NEEDS_CONFIRMATION if needs_confirmation else DocumentStatus.UNSUPPORTED
         )
         document.updated_at = completed_at
         session.add(
@@ -497,6 +517,14 @@ async def process_next_document(
         return False
 
     preprocessed: PreprocessedDocument | None = None
+    lease_heartbeat = asyncio.create_task(
+        _maintain_lease(
+            session_factory,
+            claim,
+            worker_id,
+            app_settings.worker_lease_seconds,
+        )
+    )
     try:
         object_storage = storage or R2ObjectStorage(app_settings)
         preprocessed = await asyncio.to_thread(
@@ -672,5 +700,8 @@ async def process_next_document(
         )
         return True
     finally:
+        lease_heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await lease_heartbeat
         if preprocessed is not None:
             preprocessed.close()

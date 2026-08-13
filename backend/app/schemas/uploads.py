@@ -50,3 +50,10 @@ class StorageQuotaResponse(BaseModel):
     available_bytes: int = Field(ge=0)
     usage_percent: float = Field(ge=0)
     upload_allowed: bool
+
+
+class UploadCapabilitiesResponse(BaseModel):
+    accepted_mime_types: list[AllowedUploadMimeType]
+    accepted_extensions: list[str]
+    maximum_file_bytes: int = Field(gt=0)
+    maximum_batch_files: int = Field(gt=0)

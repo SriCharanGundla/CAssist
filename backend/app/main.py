@@ -15,8 +15,9 @@ from app.api.errors import (
 from app.api.router import api_router
 from app.core.access_logging import configure_safe_access_logging
 from app.core.config import settings
-from app.core.database import engine
+from app.core.database import engine, idempotency_engine
 from app.core.edge_proxy import EDGE_PROXY_HEADER, edge_proxy_authorized
+from app.core.idempotency import IdempotencyMiddleware
 
 configure_safe_access_logging()
 
@@ -25,6 +26,7 @@ configure_safe_access_logging()
 async def lifespan(_: FastAPI):
     yield
     await engine.dispose()
+    await idempotency_engine.dispose()
 
 
 app = FastAPI(
@@ -66,6 +68,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(IdempotencyMiddleware, settings=settings)
 
 if settings.auth_configured:
     app.add_middleware(

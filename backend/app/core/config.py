@@ -35,9 +35,7 @@ class Settings(BaseSettings):
     auth_session_absolute_seconds: int = 14 * 24 * 60 * 60
     auth_max_active_sessions: int = 10
     auth_session_cookie_name: str = "cassist_session"
-    auth_allowed_emails: frozenset[str] = Field(
-        default_factory=lambda: LOCKED_ALLOWED_USER_EMAILS
-    )
+    auth_allowed_emails: frozenset[str] = Field(default_factory=lambda: LOCKED_ALLOWED_USER_EMAILS)
 
     model_provider: Literal["openai", "gemini"] = "gemini"
     model_id: str = "gemini-3.5-flash-lite"
@@ -57,9 +55,12 @@ class Settings(BaseSettings):
     r2_presigned_url_ttl_seconds: int = 300
     r2_storage_quota_bytes: int = 8_000_000_000
     upload_max_bytes: int = 25 * 1024 * 1024
+    upload_max_files: int = 10
     worker_lease_seconds: int = 5 * 60
     worker_poll_seconds: float = 2.0
     session_cleanup_batch_size: int = 100
+    idempotency_ttl_seconds: int = 5 * 60
+    idempotency_in_progress_seconds: int = 2 * 60
     provider_rate_limit_retry_seconds: int = 60
     provider_rate_limit_max_attempts: int = 3
     preprocessing_max_pages: int = 50
@@ -88,12 +89,20 @@ class Settings(BaseSettings):
             raise ValueError("R2_STORAGE_QUOTA_BYTES must be positive")
         if self.upload_max_bytes <= 0:
             raise ValueError("UPLOAD_MAX_BYTES must be positive")
+        if not 1 <= self.upload_max_files <= 100:
+            raise ValueError("UPLOAD_MAX_FILES must be between 1 and 100")
         if self.worker_lease_seconds <= 0:
             raise ValueError("WORKER_LEASE_SECONDS must be positive")
         if self.worker_poll_seconds <= 0:
             raise ValueError("WORKER_POLL_SECONDS must be positive")
         if not 1 <= self.session_cleanup_batch_size <= 10_000:
             raise ValueError("SESSION_CLEANUP_BATCH_SIZE must be between 1 and 10000")
+        if not 60 <= self.idempotency_ttl_seconds <= 24 * 60 * 60:
+            raise ValueError("IDEMPOTENCY_TTL_SECONDS must be between 60 and 86400")
+        if not 30 <= self.idempotency_in_progress_seconds < self.idempotency_ttl_seconds:
+            raise ValueError(
+                "IDEMPOTENCY_IN_PROGRESS_SECONDS must be at least 30 and less than the TTL"
+            )
         if self.provider_rate_limit_retry_seconds <= 0:
             raise ValueError("PROVIDER_RATE_LIMIT_RETRY_SECONDS must be positive")
         if not 1 <= self.provider_rate_limit_max_attempts <= 5:

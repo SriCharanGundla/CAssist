@@ -47,7 +47,12 @@ from app.services.model_provider import (
     ProviderScopeBlocked,
 )
 from app.services.object_storage import ObjectNotFoundError, PresignedUpload, StoredObject
-from app.workers.processor import ClaimedRun, claim_next_run, process_next_document
+from app.workers.processor import (
+    ClaimedRun,
+    _maintain_lease,
+    claim_next_run,
+    process_next_document,
+)
 
 
 class WorkerObjectStorage:
@@ -432,6 +437,44 @@ async def test_skip_locked_claims_the_next_available_run(
 
         assert claim is not None
         assert claim.run_id == second_run_id
+
+
+@pytest.mark.asyncio
+async def test_active_worker_renews_its_lease_independently(
+    worker_database: tuple[async_sessionmaker[AsyncSession], UUID, UUID, Settings],
+) -> None:
+    factory, user_id, workspace_id, _ = worker_database
+    _, run_id = await _queue_document(
+        factory,
+        user_id,
+        workspace_id,
+        _png_bytes(),
+        "image/png",
+        "originals/heartbeat",
+    )
+    claimed_at = datetime.now(UTC)
+    async with factory() as session:
+        claim = await claim_next_run(
+            session,
+            "worker-heartbeat",
+            lease_seconds=3,
+            current_time=claimed_at,
+        )
+    assert claim is not None
+
+    heartbeat = asyncio.create_task(
+        _maintain_lease(factory, claim, "worker-heartbeat", lease_seconds=3)
+    )
+    await asyncio.sleep(1.1)
+    heartbeat.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await heartbeat
+
+    async with factory() as session:
+        run = await session.get(ProcessingRun, run_id)
+        assert run is not None
+        assert run.lease_expires_at is not None
+        assert run.lease_expires_at > claimed_at + timedelta(seconds=3)
 
 
 @pytest.mark.asyncio

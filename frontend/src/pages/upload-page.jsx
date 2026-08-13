@@ -5,11 +5,8 @@ import { Link, useNavigate } from "react-router-dom"
 
 import { Button } from "@/components/ui/button"
 import {
-  ACCEPTED_UPLOAD_TYPES,
-  ACCEPTED_UPLOAD_EXTENSIONS,
-  MAX_UPLOAD_BYTES,
-  MAX_UPLOAD_FILES,
   getStorageQuota,
+  getUploadCapabilities,
   uploadMimeType,
   uploadDocument,
 } from "@/lib/api"
@@ -39,12 +36,12 @@ async function mapWithConcurrency(items, limit, operation) {
   return outcomes
 }
 
-function validateFile(file) {
-  if (!ACCEPTED_UPLOAD_TYPES.includes(uploadMimeType(file))) {
+function validateFile(file, capabilities) {
+  if (!capabilities.accepted_mime_types.includes(uploadMimeType(file))) {
     return "Choose a PDF, JPEG, or PNG file."
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return "Choose a file smaller than 25 MiB."
+  if (file.size > capabilities.maximum_file_bytes) {
+    return `Choose a file smaller than ${formatBytes(capabilities.maximum_file_bytes)}.`
   }
   if (file.size === 0) {
     return "The selected file is empty."
@@ -74,7 +71,13 @@ export function UploadPage() {
     queryFn: ({ signal }) => getStorageQuota({ signal }),
     staleTime: 5_000,
   })
+  const capabilitiesQuery = useQuery({
+    queryKey: ["upload-capabilities"],
+    queryFn: ({ signal }) => getUploadCapabilities({ signal }),
+    staleTime: 60 * 60 * 1_000,
+  })
   const quota = quotaQuery.data
+  const capabilities = capabilitiesQuery.data
 
   React.useEffect(() => {
     if (!uploading) return undefined
@@ -100,14 +103,17 @@ export function UploadPage() {
     if (!files.length) {
       return
     }
-    if (files.length > MAX_UPLOAD_FILES) {
-      setError(`Choose no more than ${MAX_UPLOAD_FILES} files at once.`)
+    if (!capabilities) return
+    if (files.length > capabilities.maximum_batch_files) {
+      setError(
+        `Choose no more than ${capabilities.maximum_batch_files} files at once.`
+      )
       setItems([])
       return
     }
     const selections = files.map((file) => ({
       file,
-      validationError: validateFile(file),
+      validationError: validateFile(file, capabilities),
     }))
     const invalidCount = selections.filter(
       ({ validationError }) => validationError
@@ -236,11 +242,13 @@ export function UploadPage() {
     .filter((item) => !item.result && !item.validationError)
     .reduce((total, item) => total + item.file.size, 0)
   const quotaUnavailable = quotaQuery.isPending || Boolean(quotaQuery.error)
+  const capabilitiesUnavailable =
+    capabilitiesQuery.isPending || Boolean(capabilitiesQuery.error)
   const storageFull = Boolean(quota && !quota.upload_allowed)
   const selectionExceedsQuota = Boolean(
     quota && pendingBytes > quota.available_bytes
   )
-  const selectionDisabled = uploading || storageFull
+  const selectionDisabled = uploading || storageFull || capabilitiesUnavailable
 
   return (
     <section className="mx-auto max-w-2xl">
@@ -259,8 +267,10 @@ export function UploadPage() {
         Upload documents
       </h1>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        Up to 10 PDF, JPEG, or PNG files, 25 MiB each. Originals stay private
-        and require review after extraction.
+        Up to {capabilities?.maximum_batch_files ?? "…"} PDF, JPEG, or PNG
+        files,{" "}
+        {capabilities ? formatBytes(capabilities.maximum_file_bytes) : "…"}{" "}
+        each. Originals stay private and require review after extraction.
       </p>
       {quota ? (
         <p className="mt-2 text-xs text-muted-foreground">
@@ -295,10 +305,14 @@ export function UploadPage() {
           }}
         >
           <input
-            accept={[
-              ...ACCEPTED_UPLOAD_TYPES,
-              ...ACCEPTED_UPLOAD_EXTENSIONS,
-            ].join(",")}
+            accept={
+              capabilities
+                ? [
+                    ...capabilities.accepted_mime_types,
+                    ...capabilities.accepted_extensions,
+                  ].join(",")
+                : undefined
+            }
             className="sr-only"
             disabled={selectionDisabled}
             multiple
@@ -388,7 +402,8 @@ export function UploadPage() {
           ) : (
             <div>
               <p className="text-sm font-medium">
-                Drop up to 10 documents here
+                Drop up to {capabilities?.maximum_batch_files ?? "…"} documents
+                here
               </p>
               <p className="mt-1 text-xs text-muted-foreground">or</p>
               <Button
@@ -432,6 +447,10 @@ export function UploadPage() {
           <p className="text-sm text-destructive" role="alert">
             {quotaQuery.error.message}
           </p>
+        ) : capabilitiesQuery.error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {capabilitiesQuery.error.message}
+          </p>
         ) : storageFull ? (
           <p className="text-sm text-destructive" role="alert">
             Shared document storage is full. Delete stored files before
@@ -449,6 +468,7 @@ export function UploadPage() {
             !pendingCount ||
             uploading ||
             quotaUnavailable ||
+            capabilitiesUnavailable ||
             storageFull ||
             selectionExceedsQuota
           }

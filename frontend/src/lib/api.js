@@ -157,16 +157,6 @@ export async function revokeAuthSession(sessionId) {
   }
 }
 
-export const ACCEPTED_UPLOAD_TYPES = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-]
-
-export const ACCEPTED_UPLOAD_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"]
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-export const MAX_UPLOAD_FILES = 10
-
 const UPLOAD_MIME_TYPE_BY_EXTENSION = {
   ".pdf": "application/pdf",
   ".jpg": "image/jpeg",
@@ -289,6 +279,14 @@ export async function getStorageQuota({ signal } = {}) {
   const response = await apiRequest("/uploads/quota", { signal })
   if (!response.ok) {
     throw await responseError(response, "Unable to load shared storage usage.")
+  }
+  return response.json()
+}
+
+export async function getUploadCapabilities({ signal } = {}) {
+  const response = await apiRequest("/uploads/capabilities", { signal })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load upload limits.")
   }
   return response.json()
 }

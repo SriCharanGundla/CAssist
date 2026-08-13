@@ -30,15 +30,19 @@ from app.schemas.uploads import (
     CreateUploadRequest,
     CreateUploadResponse,
     StorageQuotaResponse,
+    UploadCapabilitiesResponse,
     UploadTargetResponse,
 )
 from app.services.auth import CurrentAuth
+from app.services.object_deletion import enqueue_object_deletion, flush_enqueued_deletions
 from app.services.object_keys import permanent_key_for_incoming
 from app.services.object_storage import ObjectNotFoundError, ObjectStorage, ObjectStorageError
 from app.services.upload_verification import UploadValidationError, verify_upload
 
 router = APIRouter(prefix="/uploads")
 _STORAGE_QUOTA_ADVISORY_LOCK_ID = 1_434_152_835
+_ACCEPTED_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png"]
+_ACCEPTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"]
 
 
 async def _used_storage_bytes(session: AsyncSession) -> int:
@@ -63,6 +67,49 @@ def _storage_quota_response(used_bytes: int, limit_bytes: int) -> StorageQuotaRe
     )
 
 
+async def _discard_invalid_upload(
+    session: AsyncSession,
+    storage: ObjectStorage,
+    document_id: UUID,
+    user_id: UUID,
+    workspace_id: UUID,
+    incoming_key: str,
+) -> None:
+    await session.scalar(select(Workspace.id).where(Workspace.id == workspace_id).with_for_update())
+    document = await session.scalar(
+        select(Document)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Document.workspace_id)
+        .where(
+            Document.id == document_id,
+            WorkspaceMember.user_id == user_id,
+        )
+        .with_for_update(of=Document)
+    )
+    if (
+        document is None
+        or document.status != DocumentStatus.UPLOAD_PENDING
+        or document.r2_object_key != incoming_key
+    ):
+        await session.rollback()
+        return
+    pending = enqueue_object_deletion(session, incoming_key)
+    session.add(
+        AuditEvent(
+            workspace_id=document.workspace_id,
+            actor_user_id=user_id,
+            action="document.upload_rejected",
+            entity_type="document",
+            entity_id=document.id,
+            metadata_={},
+        )
+    )
+    await session.delete(document)
+    await session.flush()
+    deletion_ids = [pending.id] if pending is not None else []
+    await session.commit()
+    await flush_enqueued_deletions(session, storage, deletion_ids)
+
+
 @router.get("/quota", response_model=StorageQuotaResponse)
 async def get_storage_quota(
     response: Response,
@@ -74,6 +121,21 @@ async def get_storage_quota(
     return _storage_quota_response(
         await _used_storage_bytes(session),
         app_settings.r2_storage_quota_bytes,
+    )
+
+
+@router.get("/capabilities", response_model=UploadCapabilitiesResponse)
+async def get_upload_capabilities(
+    response: Response,
+    _: Annotated[CurrentAuth, Depends(get_current_auth)],
+    app_settings: Annotated[Settings, Depends(get_app_settings)],
+) -> UploadCapabilitiesResponse:
+    response.headers["Cache-Control"] = "no-store"
+    return UploadCapabilitiesResponse(
+        accepted_mime_types=_ACCEPTED_MIME_TYPES,
+        accepted_extensions=_ACCEPTED_EXTENSIONS,
+        maximum_file_bytes=app_settings.upload_max_bytes,
+        maximum_batch_files=app_settings.upload_max_files,
     )
 
 
@@ -133,20 +195,11 @@ async def cancel_upload(
         )
 
     object_key = document.r2_object_key
-    if object_key is not None:
-        try:
-            await run_in_threadpool(storage.delete_object, object_key)
-            if is_pending:
-                await run_in_threadpool(
-                    storage.delete_object,
-                    permanent_key_for_incoming(object_key),
-                )
-        except ObjectStorageError as exc:
-            await session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Object storage is temporarily unavailable",
-            ) from exc
+    pending_deletions = [enqueue_object_deletion(session, object_key)]
+    if is_pending and object_key is not None:
+        pending_deletions.append(
+            enqueue_object_deletion(session, permanent_key_for_incoming(object_key))
+        )
 
     session.add(
         AuditEvent(
@@ -159,7 +212,10 @@ async def cancel_upload(
         )
     )
     await session.delete(document)
+    await session.flush()
+    deletion_ids = [pending.id for pending in pending_deletions if pending is not None]
     await session.commit()
+    await flush_enqueued_deletions(session, storage, deletion_ids)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -197,9 +253,7 @@ async def create_upload(
     if used_bytes + payload.byte_size > app_settings.r2_storage_quota_bytes:
         raise HTTPException(
             status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
-            detail=(
-                "Shared document storage is full. Delete stored files before uploading more."
-            ),
+            detail=("Shared document storage is full. Delete stored files before uploading more."),
         )
 
     current_time = datetime.now(UTC)
@@ -298,6 +352,14 @@ async def complete_upload(
             detail="The uploaded object was not found",
         ) from exc
     except UploadValidationError as exc:
+        await _discard_invalid_upload(
+            session,
+            storage,
+            document_id,
+            user_id,
+            workspace_id,
+            incoming_key,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),

@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import (
     CHAR,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -138,6 +139,48 @@ class AuthSession(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class IdempotencyRecord(Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_token_hash",
+            "request_method",
+            "request_path",
+            "idempotency_key_hash",
+            name="idempotency_records_request_key",
+        ),
+        Index("idempotency_records_expires_idx", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    session_token_hash: Mapped[str] = mapped_column(CHAR(64))
+    request_method: Mapped[str] = mapped_column(Text)
+    request_path: Mapped[str] = mapped_column(Text)
+    idempotency_key_hash: Mapped[str] = mapped_column(CHAR(64))
+    request_hash: Mapped[str] = mapped_column(CHAR(64))
+    completed: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    response_status: Mapped[int | None]
+    response_headers: Mapped[dict[str, str] | None] = mapped_column(JSONB)
+    response_body: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PendingObjectDeletion(Base):
+    __tablename__ = "pending_object_deletions"
+    __table_args__ = (Index("pending_object_deletions_created_idx", "created_at"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    object_key: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    attempt_count: Mapped[int] = mapped_column(server_default="0")
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
@@ -264,9 +307,7 @@ class ProcessingRun(Base):
     error_message_safe: Mapped[str | None] = mapped_column(Text)
     worker_id: Mapped[str | None] = mapped_column(Text)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    cancellation_requested_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     classification_scope: Mapped[str | None] = mapped_column(Text)
     classification_document_type: Mapped[str | None] = mapped_column(Text)
     classification_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))

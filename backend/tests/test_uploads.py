@@ -287,6 +287,26 @@ async def test_shared_storage_quota_reserves_space_and_reopens_after_deletion(
 
 
 @pytest.mark.asyncio
+async def test_upload_capabilities_follow_backend_configuration(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, _, _, settings = authenticated_upload_client
+    settings.upload_max_bytes = 12_345
+    settings.upload_max_files = 7
+
+    response = await client.get("/api/v1/uploads/capabilities")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {
+        "accepted_mime_types": ["application/pdf", "image/jpeg", "image/png"],
+        "accepted_extensions": [".pdf", ".jpg", ".jpeg", ".png"],
+        "maximum_file_bytes": 12_345,
+        "maximum_batch_files": 7,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("filename", "mime_type"),
     [
@@ -596,16 +616,27 @@ async def test_complete_upload_rejects_missing_or_disguised_objects(
     storage.objects[incoming_key] = (b"%PDF-x", "application/pdf")
     wrong_size_response = await client.post(f"/api/v1/uploads/{document_id}/complete")
     assert wrong_size_response.status_code == 422
+    assert await session.get(Document, document_id) is None
+    assert incoming_key in storage.deleted_keys
 
-    storage.objects[incoming_key] = (content, "application/pdf")
-    disguised_response = await client.post(f"/api/v1/uploads/{document_id}/complete")
+    second_create = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "disguised-again.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": len(content),
+        },
+    )
+    second_id = second_create.json()["document_id"]
+    second_document = await session.get(Document, second_id)
+    assert second_document is not None and second_document.r2_object_key is not None
+    storage.objects[second_document.r2_object_key] = (content, "application/pdf")
+    disguised_response = await client.post(f"/api/v1/uploads/{second_id}/complete")
     assert disguised_response.status_code == 422
-    await session.refresh(document)
-    assert document.status == DocumentStatus.UPLOAD_PENDING
-    assert document.sha256 is None
+    assert await session.get(Document, second_id) is None
     assert (
         await session.scalar(
-            select(ProcessingRun.id).where(ProcessingRun.document_id == document.id)
+            select(ProcessingRun.id).where(ProcessingRun.document_id.in_([document_id, second_id]))
         )
         is None
     )

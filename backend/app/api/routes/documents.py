@@ -46,6 +46,7 @@ from app.schemas.documents import (
 )
 from app.services.auth import CurrentAuth
 from app.services.model_provider import ModelSelection, resolve_model_selection
+from app.services.object_deletion import enqueue_object_deletion, flush_enqueued_deletions
 from app.services.object_storage import ObjectStorage, ObjectStorageError
 from app.services.processing_runs import find_configured_run, queue_processing_run
 from app.services.run_status import run_summary
@@ -723,16 +724,8 @@ async def delete_original(
             detail="Original document is unavailable",
         )
 
-    try:
-        await run_in_threadpool(storage.delete_object, document.r2_object_key)
-    except ObjectStorageError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Object storage is temporarily unavailable",
-        ) from exc
-
     deleted_at = datetime.now(UTC)
+    pending_deletion = enqueue_object_deletion(session, document.r2_object_key)
     document.r2_object_key = None
     document.original_deleted_at = deleted_at
     document.original_deleted_by = current_auth.user.id
@@ -747,7 +740,10 @@ async def delete_original(
             metadata_={},
         )
     )
+    await session.flush()
+    deletion_ids = [pending_deletion.id] if pending_deletion is not None else []
     await session.commit()
+    await flush_enqueued_deletions(session, storage, deletion_ids)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -771,15 +767,7 @@ async def permanently_delete_document(
             detail="Workspace role does not permit this action",
         )
 
-    if document.r2_object_key is not None:
-        try:
-            await run_in_threadpool(storage.delete_object, document.r2_object_key)
-        except ObjectStorageError as exc:
-            await session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Object storage is temporarily unavailable",
-            ) from exc
+    pending_deletion = enqueue_object_deletion(session, document.r2_object_key)
 
     session.add(
         AuditEvent(
@@ -792,5 +780,8 @@ async def permanently_delete_document(
         )
     )
     await session.delete(document)
+    await session.flush()
+    deletion_ids = [pending_deletion.id] if pending_deletion is not None else []
     await session.commit()
+    await flush_enqueued_deletions(session, storage, deletion_ids)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
