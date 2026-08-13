@@ -69,6 +69,8 @@ def test_factory_uses_strands_responses_api_for_openai_and_gemini_only_outside_p
     )
     assert isinstance(production_provider.model, OpenAIResponsesModel)
     assert production_provider.model.get_config()["stateful"] is False
+    request = production_provider.model._format_request([])  # noqa: SLF001
+    assert request["store"] is False
 
     development = Settings(
         app_env="test",

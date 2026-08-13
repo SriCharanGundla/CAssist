@@ -947,8 +947,10 @@ applying expiry to finalized originals.
 The extraction adapter is implemented behind one provider-neutral protocol. Development and test
 may use Strands `GeminiModel` with the verified Google AI Studio model identifier
 `gemini-3.5-flash-lite`. Production is locked to Strands `OpenAIResponsesModel`, with stateless Responses
-API calls to the verified model identifier `gpt-5.6-luna`; production cannot select Gemini or supply
-a provider/model override. Credentials remain environment-only.
+API calls to the verified model identifier `gpt-5.6-luna`; `stateful=False` forces `store: false` on
+every OpenAI Responses API request so provider application-state logging is disabled. This does not
+replace OpenAI's separate abuse-monitoring retention controls. Production cannot select Gemini or
+supply a provider/model override. Credentials remain environment-only.
 
 ### Agentic document analysis
 
@@ -1193,6 +1195,17 @@ flowchart TD
 | Originals | Private Cloudflare R2 | Retained until user deletion |
 | Temporary derivatives | Ephemeral worker storage | Deleted after processing |
 | Database backups | Dedicated private R2 backup bucket | PostgreSQL custom dumps are encrypted client-side by Restic before upload; backup credentials are not shared with the originals bucket |
+
+### Automated deployment
+
+Pushes to `main` use path-filtered GitHub Actions workflows. Frontend changes test and deploy only
+the Pages project. Backend changes test, publish an immutable AMD64 image to GHCR, join Tailscale as
+an ephemeral `tag:ci` node, and invoke a forced-command NAS SSH identity. The tailnet permits that tag
+to reach only the NAS SSH port, and the NAS identity can run only the root-owned CAssist deploy and
+image-verification commands. Each backend deployment creates an encrypted database backup, applies
+forward-only migrations, health-checks the API through the production edge, and rolls back the API
+image on failure. The worker remains profile-gated and disabled until the OpenAI production-credit
+gate is satisfied.
 
 ### Network and access boundaries
 

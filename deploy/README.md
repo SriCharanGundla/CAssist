@@ -17,6 +17,29 @@ pnpm --dir frontend exec wrangler r2 bucket lifecycle add \
 
 Verify the rules with `wrangler r2 bucket lifecycle list <bucket>` during deployment audits.
 
+## Automated deployment
+
+Pushes to `main` are path-filtered. Frontend changes run tests and deploy only Cloudflare Pages.
+Backend changes run tests, publish one immutable AMD64 image to GHCR, join the tailnet using an
+ephemeral `tag:ci` node, and invoke the restricted NAS deployment command over SSH. The NAS creates
+an encrypted backup, applies forward-only migrations, deploys and health-checks the API, rolls the
+API image back on failure, and starts the worker only when `CASSIST_WORKER_ENABLED=true`.
+
+The NAS account `cassist-deploy` has no Docker-group membership. Its authorized key is bound to
+`cassist-deploy-dispatch`, which accepts only the two root-owned CAssist deployment commands; sudoers
+also permits only those commands. The deployment command accepts only an immutable digest from
+`ghcr.io/example-user/cassist-backend`, uses the workflow's short-lived registry token through a
+temporary Docker configuration, and never persists that token.
+
+Production GitHub environment secrets:
+
+- `CLOUDFLARE_ACCOUNT_ID` and a Pages-only `CLOUDFLARE_API_TOKEN`.
+- `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` for an ephemeral `tag:ci` identity.
+- `NAS_SSH_PRIVATE_KEY` and the pinned `NAS_SSH_HOST_KEY`.
+
+The worker stays disabled until an OpenAI production key and credits have both been confirmed. Set
+`CASSIST_WORKER_ENABLED=true` in the protected NAS environment file only after that gate.
+
 ## PostgreSQL backup
 
 The `backup` Compose service streams a PostgreSQL 17 custom-format dump directly into a

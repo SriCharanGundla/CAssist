@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+set -f
+
+fail() {
+  echo "This SSH key is restricted to CAssist deployment commands." >&2
+  exit 1
+}
+
+# The forced-command dispatcher intentionally tokenizes this value, then validates
+# the exact token count and every argument in the root-owned target script.
+# shellcheck disable=SC2086
+set -- ${SSH_ORIGINAL_COMMAND:-}
+
+[ "${1:-}" = sudo ] || fail
+shift
+
+case "${1:-}" in
+  /usr/local/sbin/cassist-deploy-backend)
+    [ "$#" -eq 3 ] || fail
+    exec sudo /usr/local/sbin/cassist-deploy-backend "$2" "$3"
+    ;;
+  /usr/local/sbin/cassist-current-backend-image)
+    [ "$#" -eq 1 ] || fail
+    exec sudo /usr/local/sbin/cassist-current-backend-image
+    ;;
+  *)
+    fail
+    ;;
+esac

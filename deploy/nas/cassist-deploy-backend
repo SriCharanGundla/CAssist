@@ -1,0 +1,126 @@
+#!/bin/sh
+set -eu
+
+compose_directory=/opt/cassist/deploy
+environment_file="$compose_directory/.env.production"
+compose_file="$compose_directory/compose.production.yaml"
+lock_file=/run/lock/cassist-deploy.lock
+expected_repository=ghcr.io/example-user/cassist-backend
+
+fail() {
+  echo "Deployment failed: $1" >&2
+  exit 1
+}
+
+image_reference="${1:-}"
+registry_username="${2:-}"
+
+case "$image_reference" in
+  "$expected_repository"@sha256:*) ;;
+  *) fail "image reference is outside the approved repository" ;;
+esac
+
+digest="${image_reference#*@sha256:}"
+case "$digest" in
+  *[!0-9a-f]*|"") fail "image digest is invalid" ;;
+esac
+[ "${#digest}" -eq 64 ] || fail "image digest must contain 64 hexadecimal characters"
+
+case "$registry_username" in
+  *[!A-Za-z0-9-]*|"") fail "registry username is invalid" ;;
+esac
+
+[ -r "$environment_file" ] || fail "production environment file is unavailable"
+[ -r "$compose_file" ] || fail "production Compose file is unavailable"
+
+exec 9>"$lock_file"
+flock -n 9 || fail "another CAssist deployment is running"
+
+registry_token="$(head -n 1)"
+[ -n "$registry_token" ] || fail "registry token is missing"
+
+docker_config="$(mktemp -d /tmp/cassist-docker-config.XXXXXX)"
+cleanup() {
+  rm -rf "$docker_config"
+}
+trap cleanup EXIT HUP INT TERM
+
+printf '%s' "$registry_token" | DOCKER_CONFIG="$docker_config" docker login ghcr.io \
+  --username "$registry_username" --password-stdin >/dev/null
+unset registry_token
+DOCKER_CONFIG="$docker_config" docker pull "$image_reference" >/dev/null
+
+current_image="$(sed -n 's/^CASSIST_BACKEND_IMAGE=//p' "$environment_file" | head -n 1)"
+[ -n "$current_image" ] || fail "current backend image is not configured"
+
+compose() {
+  docker compose --project-name cassist --env-file "$environment_file" \
+    --file "$compose_file" "$@"
+}
+
+set_backend_image() {
+  replacement="$1"
+  temporary_file="$(mktemp "$compose_directory/.env.production.XXXXXX")"
+  awk -v replacement="$replacement" '
+    BEGIN { replaced = 0 }
+    /^CASSIST_BACKEND_IMAGE=/ {
+      print "CASSIST_BACKEND_IMAGE=" replacement
+      replaced = 1
+      next
+    }
+    { print }
+    END {
+      if (!replaced) print "CASSIST_BACKEND_IMAGE=" replacement
+    }
+  ' "$environment_file" >"$temporary_file"
+  chmod 600 "$temporary_file"
+  chown root:root "$temporary_file"
+  mv "$temporary_file" "$environment_file"
+}
+
+wait_for_api() {
+  attempt=0
+  while [ "$attempt" -lt 30 ]; do
+    health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' cassist-api-1 2>/dev/null || true)"
+    if [ "$health" = healthy ]; then
+      if curl --fail --silent --show-error --max-time 15 \
+        https://cassist.pages.dev/api/v1/ready >/dev/null; then
+        return 0
+      fi
+    fi
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+  return 1
+}
+
+echo "Creating encrypted pre-deployment backup"
+compose --profile ops run --rm backup
+
+echo "Applying forward-only database migrations"
+CASSIST_BACKEND_IMAGE="$image_reference" compose --profile ops run --rm migrate
+
+set_backend_image "$image_reference"
+echo "Starting API image $image_reference"
+compose up -d --no-deps api
+
+if ! wait_for_api; then
+  echo "API health check failed; restoring previous image" >&2
+  set_backend_image "$current_image"
+  compose up -d --no-deps api
+  wait_for_api || fail "API rollback health check failed"
+  fail "new API image was rolled back"
+fi
+
+worker_enabled="$(sed -n 's/^CASSIST_WORKER_ENABLED=//p' "$environment_file" | head -n 1)"
+if [ "$worker_enabled" = true ]; then
+  compose --profile worker up -d --no-deps worker
+  sleep 3
+  [ "$(docker inspect --format '{{.State.Running}}' cassist-worker-1 2>/dev/null || true)" = true ] \
+    || fail "worker did not remain running"
+else
+  compose stop worker >/dev/null 2>&1 || true
+  echo "Worker remains disabled"
+fi
+
+echo "Deployment succeeded: $image_reference"

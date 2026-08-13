@@ -1,11 +1,11 @@
 name: cassist
 
 x-backend: &backend
-  image: cassist-backend:${CASSIST_IMAGE_TAG:-latest}
+  image: ${CASSIST_BACKEND_IMAGE:-cassist-backend:latest}
   build:
     context: ../backend
   env_file:
-    - .env.production
+    - ${CASSIST_ENV_FILE:-.env.production}
   networks:
     - cassist_internal
     - cassist_egress
@@ -82,6 +82,7 @@ services:
 
   worker:
     <<: *backend
+    profiles: ["worker"]
     restart: unless-stopped
     depends_on:
       postgres:
