@@ -10,11 +10,11 @@ Production model: `gpt-5.6-luna`
 
 ## 1. Locked boundaries
 
-- There are no client, vendor, ledger, inventory, or Tally master tables.
+- CAssist does not maintain accounting master data.
 - Original uploads remain in private R2 until the user deletes them.
 - Derived page images and other preprocessing files are temporary.
 - PostgreSQL stores file hashes, processing history, structured results, corrections, validations, and export events.
-- ZIP files and direct Tally integration are outside the MVP.
+- Direct Tally integration is outside the MVP.
 - Production always uses OpenAI; Gemini selection and dual-model comparison are non-production features.
 - Authentication uses Auth0 Universal Login through an Authlib-based OIDC adapter in FastAPI.
 - CAssist never stores passwords or sends OIDC tokens to frontend JavaScript.
@@ -64,7 +64,7 @@ CREATE TYPE run_status AS ENUM (
 );
 CREATE TYPE review_status AS ENUM ('unreviewed', 'in_review', 'approved');
 CREATE TYPE model_provider AS ENUM ('openai', 'gemini');
-CREATE TYPE export_format AS ENUM ('json', 'csv', 'xlsx', 'tally_json');
+CREATE TYPE export_format AS ENUM ('tally_json');
 
 CREATE TABLE users (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -478,9 +478,7 @@ contents, extracted financial values, hashes, or provider output.
 
 Creates a pending document and a short-lived presigned R2 upload URL.
 
-The MVP accepts PDF, JPEG, and PNG originals up to 25 MiB each. CSV/XLS/XLSX and ZIP are not
-accepted. Structured-data import may be designed later as a separate mapping workflow rather than
-using the AI extraction pipeline. The authenticated user's private
+The MVP accepts PDF, JPEG, and PNG originals up to 25 MiB each. The authenticated user's private
 workspace is selected server-side. The presigned upload targets `incoming/<random 128-bit value>`
 and never contains the original filename or identity data. It expires after five minutes and signs
 the exact `Content-Type`. The incoming key is not the permanent original key, so reusing an unexpired
@@ -857,23 +855,19 @@ Implemented now:
 
 - `tally_json` — CAssist Tally-oriented handoff JSON
 
-The TallyPrime 7.0 native JSON format can directly create vouchers, but it requires the target
-company and existing voucher, party-ledger, accounting-ledger or stock-item, and unit masters. The
-official format also requires Tally-specific request variables such as `svCurrentCompany` and
-`svVchImportFormat`. CAssist has no client/company or ledger/inventory masters in the MVP, so this
-export deliberately sets `native_import_ready` to `false` and lists the unresolved mappings instead
+The TallyPrime 7.0 native JSON format can directly create vouchers, but the user must select the
+destination company, voucher type, and accounting destinations for the reviewed values. The official
+format also requires Tally-specific request variables such as `svCurrentCompany` and
+`svVchImportFormat`. CAssist does not maintain accounting master data, so this export deliberately
+sets `native_import_ready` to `false` and lists only the decisions needed for a later import instead
 of inventing them. It preserves all approved original-label fields, dynamic tables, and text blocks
 as strings in presentation order. The reviewed document payload strips internal IDs, page numbers,
 and evidence regions so the handoff contains document data rather than UI provenance. It does not
 infer voucher numbers, dates, parties, totals, or ledger roles from labels.
-Direct native import is a later milestone after explicit human mapping exists. Official source:
+Direct native import is a later milestone after explicit human mapping exists. A future connector
+will read destination choices from the user's running Tally instance for that import session; it will
+not create or retain a parallel master database in CAssist. Official source:
 https://help.tallysolutions.com/tally-prime-integration-using-json-1/
-
-Reserved for later:
-
-- `json`
-- `csv`
-- `xlsx`
 
 ## 11. Development-only comparison endpoint
 

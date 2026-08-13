@@ -126,13 +126,21 @@ async def run() -> int:
             await session.commit()
             user_id = user.id
             workspace_id = workspace.id
-            smoke_auth = CurrentAuth(
-                session_id=auth_session.id,
-                user=user,
-                csrf_token_hash=auth_session.csrf_token_hash,
-            )
+            auth_session_id = auth_session.id
 
-        app.dependency_overrides[get_current_auth] = lambda: smoke_auth
+        async def current_smoke_auth() -> CurrentAuth:
+            async with async_session_factory() as session:
+                current_session = await session.get(AuthSession, auth_session_id)
+                current_user = await session.get(User, user_id)
+                if current_session is None or current_user is None:
+                    raise RuntimeError("Synthetic smoke identity disappeared")
+                return CurrentAuth(
+                    session_id=current_session.id,
+                    user=current_user,
+                    csrf_token_hash=current_session.csrf_token_hash,
+                )
+
+        app.dependency_overrides[get_current_auth] = current_smoke_auth
 
         with TemporaryDirectory(prefix="cassist-vertical-smoke-") as directory:
             stage = "fixture_generation"
@@ -270,6 +278,16 @@ async def run() -> int:
 
         print("PASS: authenticated synthetic upload-to-delete vertical smoke test")
         return 0
+    except httpx.HTTPStatusError as exc:
+        try:
+            error_code = exc.response.json().get("error", {}).get("code", "unknown")
+        except (TypeError, ValueError):
+            error_code = "unknown"
+        print(
+            f"FAILED: vertical smoke stage={stage}; "
+            f"http_status={exc.response.status_code}; error_code={error_code}"
+        )
+        return 1
     except Exception as exc:
         print(f"FAILED: vertical smoke stage={stage}; error_type={type(exc).__name__}")
         return 1

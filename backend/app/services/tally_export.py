@@ -90,10 +90,6 @@ def build_tally_handoff(
                 "code": "DOCUMENT_FIELDS",
                 "description": "Map reviewed source labels to Tally voucher fields",
             },
-            {
-                "code": "LEDGER_AND_ITEM_MASTERS",
-                "description": "Map applicable values and table rows to existing masters",
-            },
         ],
     }
     if include_quality_issues:

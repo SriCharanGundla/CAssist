@@ -128,7 +128,7 @@ EXPECTED_ENUMS = {
     ],
     "review_status": ["unreviewed", "in_review", "approved"],
     "model_provider": ["openai", "gemini"],
-    "export_format": ["json", "csv", "xlsx", "tally_json"],
+    "export_format": ["tally_json"],
 }
 
 EXPECTED_INDEXES = {

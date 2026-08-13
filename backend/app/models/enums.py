@@ -51,7 +51,4 @@ class ModelProvider(StrEnum):
 
 
 class ExportFormat(StrEnum):
-    JSON = "json"
-    CSV = "csv"
-    XLSX = "xlsx"
     TALLY_JSON = "tally_json"

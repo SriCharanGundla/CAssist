@@ -8,8 +8,7 @@ document-specific sections for review. Sections reference immutable observations
 their labels or values.
 
 Uploads support PDF, JPEG, and PNG files up to 25 MiB each. The upload screen accepts up to ten files
-at once. CSV/XLS/XLSX and ZIP files are not supported; structured-data import is a separate future
-workflow rather than part of AI document extraction.
+at once.
 
 ## Structure
 

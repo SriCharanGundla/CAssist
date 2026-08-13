@@ -599,7 +599,6 @@ async def test_tally_handoff_preserves_effective_strings_and_records_safe_events
         "TARGET_COMPANY",
         "VOUCHER_TYPE",
         "DOCUMENT_FIELDS",
-        "LEDGER_AND_ITEM_MASTERS",
     }
 
     export_event = await session.scalar(
