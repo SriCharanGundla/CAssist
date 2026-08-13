@@ -13,6 +13,7 @@ import { toast } from "sonner"
 
 import { SourcePreview } from "@/components/source-preview"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Popover,
   PopoverContent,
@@ -194,13 +195,12 @@ function EditableValue({
     >
       <div className="flex items-start justify-between gap-4">
         {onSelectionChange ? (
-          <input
+          <Checkbox
             aria-label={selectionLabel || `Include ${label} in Tally JSON`}
             checked={selected}
-            className="mt-1 size-4 shrink-0 accent-primary"
+            className="mt-1"
             disabled={selectionDisabled}
-            onChange={(event) => onSelectionChange(event.target.checked)}
-            type="checkbox"
+            onCheckedChange={onSelectionChange}
           />
         ) : null}
         <div className="min-w-0 flex-1">
@@ -350,22 +350,14 @@ function SectionSelectionCheckbox({
   targetCount,
   title,
 }) {
-  const checkboxRef = React.useRef(null)
   const partiallySelected = selectedCount > 0 && selectedCount < targetCount
-  React.useEffect(() => {
-    if (checkboxRef.current) {
-      checkboxRef.current.indeterminate = partiallySelected
-    }
-  }, [partiallySelected])
   return (
-    <input
+    <Checkbox
       aria-label={`Include ${title} section in Tally JSON`}
       checked={selectedCount === targetCount}
-      className="size-4 shrink-0 accent-primary"
       disabled={disabled}
-      onChange={(event) => onChange(event.target.checked)}
-      ref={checkboxRef}
-      type="checkbox"
+      indeterminate={partiallySelected}
+      onCheckedChange={onChange}
     />
   )
 }
@@ -420,13 +412,11 @@ function ReviewTable({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
           {onSelectionChange ? (
-            <input
+            <Checkbox
               aria-label={`Include ${table.title || sectionTitle} table in Tally JSON`}
               checked={selected}
-              className="size-4 shrink-0 accent-primary"
               disabled={selectionDisabled}
-              onChange={(event) => onSelectionChange(event.target.checked)}
-              type="checkbox"
+              onCheckedChange={onSelectionChange}
             />
           ) : null}
           {table.title && table.title !== sectionTitle ? (

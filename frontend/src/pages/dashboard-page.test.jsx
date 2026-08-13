@@ -184,7 +184,7 @@ describe("DashboardPage", () => {
 
     renderDashboard()
 
-    expect(await screen.findByText("Extraction complete")).toBeInTheDocument()
+    expect(await screen.findByText("Completed")).toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Review extraction" })
     ).toHaveAttribute("href", "/results/result-1/review")
@@ -196,6 +196,32 @@ describe("DashboardPage", () => {
       "run-1",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  it("uses concise completed and failed status labels", async () => {
+    api.listDocuments.mockResolvedValue({
+      items: [
+        {
+          id: "document-failed",
+          original_filename: "failed.pdf",
+          mime_type: "application/pdf",
+          original_available: true,
+          status: "failed",
+          created_at: "2026-08-12T12:00:00Z",
+          latest_run: {
+            id: "run-failed",
+            status: "failed",
+            result_id: null,
+          },
+        },
+      ],
+      next_cursor: null,
+    })
+    renderDashboard()
+
+    expect(await screen.findByText("Failed")).toBeInTheDocument()
+    expect(screen.queryByText(/extraction complete/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/processing failed/i)).not.toBeInTheDocument()
   })
 
   it("confirms only uncertain documents through a dialog", async () => {
@@ -539,8 +565,9 @@ describe("DashboardPage", () => {
         name: "Select all deletable documents",
       })
     )
-    expect(screen.getByText("2 selected")).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Delete selected" }))
+    await user.click(
+      screen.getByRole("button", { name: "Delete selected (2)" })
+    )
 
     expect(
       screen.getByRole("heading", {
@@ -607,7 +634,9 @@ describe("DashboardPage", () => {
     await user.click(
       screen.getByRole("checkbox", { name: "Select receipt.png" })
     )
-    await user.click(screen.getByRole("button", { name: "Delete selected" }))
+    await user.click(
+      screen.getByRole("button", { name: "Delete selected (2)" })
+    )
     await user.click(
       screen.getByRole("button", { name: "Delete Files and Data" })
     )

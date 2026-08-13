@@ -13,6 +13,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogClose,
@@ -80,8 +81,8 @@ const STATUS_LABELS = {
   upload_pending: "Upload pending",
   uploaded: "Queued",
   processing: "Processing",
-  ready: "Extraction complete",
-  failed: "Processing failed",
+  ready: "Completed",
+  failed: "Failed",
   queued: "Queued",
   preprocessing: "Preparing",
   preparing: "Preparing",
@@ -92,8 +93,8 @@ const STATUS_LABELS = {
   validating: "Saving",
   saving: "Saving",
   stopping: "Stopping",
-  complete: "Extraction complete",
-  succeeded: "Extraction complete",
+  complete: "Completed",
+  succeeded: "Completed",
   cancelled: "Cancelled",
   needs_confirmation: "Confirmation needed",
   unsupported: "Unsupported document",
@@ -254,13 +255,11 @@ function DocumentRow({
       className={`grid items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/50 ${selectionMode ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]"}`}
     >
       {selectionMode ? (
-        <input
+        <Checkbox
           aria-label={`Select ${document.original_filename}`}
           checked={selected}
-          className="size-4 rounded border-border accent-primary"
           disabled={deleteDisabled || bulkDeleting}
-          onChange={(event) => onSelectionChange(event.target.checked)}
-          type="checkbox"
+          onCheckedChange={onSelectionChange}
         />
       ) : null}
       <div className="min-w-0">
@@ -523,14 +522,6 @@ export function DashboardPage() {
   const anySelectedOriginal = selectedDocuments.some(
     (document) => document.original_available
   )
-  const selectAllRef = React.useRef(null)
-  React.useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate =
-        someEligibleSelected && !allEligibleSelected
-    }
-  }, [allEligibleSelected, someEligibleSelected])
-
   const bulkDeleteMutation = useMutation({
     mutationFn: async ({ documents: targets, mode }) => {
       const actionableTargets =
@@ -663,9 +654,6 @@ export function DashboardPage() {
               <h2 className="font-semibold">Recent documents</h2>
               {selectionMode ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {selectedDocuments.length} selected
-                  </span>
                   {selectedDocuments.length ? (
                     <Button
                       disabled={bulkDeleteMutation.isPending}
@@ -676,7 +664,8 @@ export function DashboardPage() {
                       size="sm"
                       variant="destructive"
                     >
-                      <RiDeleteBinLine /> Delete selected
+                      <RiDeleteBinLine /> Delete selected (
+                      {selectedDocuments.length})
                     </Button>
                   ) : null}
                   <Button
@@ -749,25 +738,23 @@ export function DashboardPage() {
             className={`grid items-center gap-4 border-b bg-muted/30 px-5 py-2 text-xs font-medium text-muted-foreground ${selectionMode ? "grid-cols-[auto_minmax(0,1fr)_auto]" : "grid-cols-[minmax(0,1fr)_auto]"}`}
           >
             {selectionMode ? (
-              <input
+              <Checkbox
                 aria-label="Select all deletable documents"
                 checked={allEligibleSelected}
-                className="size-4 rounded border-border accent-primary"
                 disabled={
                   !eligibleDocuments.length || bulkDeleteMutation.isPending
                 }
-                onChange={(event) => {
+                indeterminate={someEligibleSelected && !allEligibleSelected}
+                onCheckedChange={(checked) => {
                   setSelectedDocumentIds((current) => {
                     const next = new Set(current)
                     for (const document of eligibleDocuments) {
-                      if (event.target.checked) next.add(document.id)
+                      if (checked) next.add(document.id)
                       else next.delete(document.id)
                     }
                     return next
                   })
                 }}
-                ref={selectAllRef}
-                type="checkbox"
               />
             ) : null}
             <span>Document</span>
