@@ -21,6 +21,7 @@ def test_user_email_allowlist_is_exact_and_case_insensitive() -> None:
     settings = Settings(app_env="development", _env_file=None)
     assert is_allowed_user_email("owner@example.test", settings)
     assert is_allowed_user_email("REVIEWER@EXAMPLE.TEST", settings)
+    assert is_allowed_user_email("ACCOUNTANT@EXAMPLE.TEST", settings)
     assert not is_allowed_user_email("someone@example.test", settings)
     assert not is_allowed_user_email("owner+test@example.test", settings)
 

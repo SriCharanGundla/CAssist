@@ -307,8 +307,8 @@ header. Deleting a user cascades their application sessions.
 - Request only `openid profile email`. Every authorization request forces Auth0's
   `google-oauth2` connection, and a callback is accepted only when the ID token is valid, the
   subject is a Google identity, and `email_verified` is true.
-- Application access is locked to the verified addresses `owner@example.test` and
-  `reviewer@example.test`. FastAPI enforces this allowlist both when creating a session and on every
+- Application access is locked to the verified addresses `owner@example.test`,
+  `reviewer@example.test`, and `accountant@example.test`. FastAPI enforces this allowlist both when creating a session and on every
   session resolution; a previously issued session is revoked if its user is no longer allowed.
 - `external_auth_id` is derived from the verified issuer and subject claims. Email addresses are
   profile data and are never used as the authentication key or for automatic account linking.

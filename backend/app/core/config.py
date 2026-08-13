@@ -5,7 +5,7 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOCKED_ALLOWED_USER_EMAILS = frozenset(
-    {"owner@example.test", "reviewer@example.test"}
+    {"owner@example.test", "reviewer@example.test", "accountant@example.test"}
 )
 
 

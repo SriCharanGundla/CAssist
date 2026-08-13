@@ -125,8 +125,8 @@ uses `http://localhost:8000/api/v1` by default; override it with
 `VITE_API_BASE_URL` in `frontend/.env` when needed. Credentials and tokens must
 never be committed.
 
-FastAPI independently accepts only the verified Google accounts `owner@example.test` and
-`reviewer@example.test`. This server-side allowlist also blocks or revokes sessions even if another
+FastAPI independently accepts only the verified Google accounts `owner@example.test`,
+`reviewer@example.test`, and `accountant@example.test`. This server-side allowlist also blocks or revokes sessions even if another
 Auth0 connection is accidentally enabled later.
 
 To verify the development model adapter with generated synthetic data only:
