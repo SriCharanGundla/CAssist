@@ -622,7 +622,7 @@ export function DashboardPage() {
                   render={
                     <button
                       aria-label="Shared document storage details"
-                      className="w-full cursor-help text-left text-xs outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring/30"
+                      className="w-full text-left text-xs outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring/30"
                       type="button"
                     />
                   }
