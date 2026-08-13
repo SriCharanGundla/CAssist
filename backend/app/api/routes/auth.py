@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import select
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import (
@@ -14,8 +15,10 @@ from app.api.dependencies import (
     require_csrf,
 )
 from app.core.config import Settings
-from app.models import Workspace, WorkspaceMember
+from app.models import AuthSession, Workspace, WorkspaceMember
 from app.schemas.auth import (
+    AuthSessionPageResponse,
+    AuthSessionResponse,
     AuthUserResponse,
     CsrfTokenResponse,
     CurrentAuthResponse,
@@ -31,6 +34,7 @@ from app.services.auth import (
     establish_session,
     revoke_session,
     rotate_csrf_token,
+    session_device_label,
     validate_return_to,
     verify_request_origin,
 )
@@ -98,7 +102,12 @@ async def callback(
     try:
         identity = await provider.complete_login(request)
         return_to = validate_return_to(identity.return_to)
-        _, credentials = await establish_session(session, identity, app_settings)
+        _, credentials = await establish_session(
+            session,
+            identity,
+            app_settings,
+            user_agent=request.headers.get("user-agent"),
+        )
     except IdentityProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -174,6 +183,77 @@ async def csrf_token(
         CsrfTokenResponse(csrf_token=token).model_dump(),
         headers={"Cache-Control": "no-store"},
     )
+
+
+@router.get("/sessions", response_model=AuthSessionPageResponse)
+async def list_sessions(
+    current_auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=10)] = 5,
+) -> JSONResponse:
+    current_time = datetime.now(UTC)
+    active_filter = (
+        AuthSession.user_id == current_auth.user.id,
+        AuthSession.revoked_at.is_(None),
+        AuthSession.idle_expires_at > current_time,
+        AuthSession.absolute_expires_at > current_time,
+    )
+    total = int(
+        await session.scalar(select(func.count()).select_from(AuthSession).where(*active_filter))
+        or 0
+    )
+    rows = (
+        await session.scalars(
+            select(AuthSession)
+            .where(*active_filter)
+            .order_by(AuthSession.last_seen_at.desc(), AuthSession.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    total_pages = (total + page_size - 1) // page_size
+    payload = AuthSessionPageResponse(
+        items=[
+            AuthSessionResponse(
+                id=row.id,
+                device_label=session_device_label(row.user_agent),
+                created_at=row.created_at,
+                last_seen_at=row.last_seen_at,
+                expires_at=row.idle_expires_at,
+                is_current=row.id == current_auth.session_id,
+            )
+            for row in rows
+        ],
+        page=page,
+        page_size=page_size,
+        total=total,
+        total_pages=total_pages,
+    )
+    return JSONResponse(payload.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_other_session(
+    session_id: UUID,
+    current_auth: Annotated[CurrentAuth, Depends(require_csrf)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+) -> Response:
+    if session_id == current_auth.session_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use Sign out to end the current session",
+        )
+    target = await session.scalar(
+        select(AuthSession).where(
+            AuthSession.id == session_id,
+            AuthSession.user_id == current_auth.user.id,
+        )
+    )
+    if target is not None and target.revoked_at is None:
+        target.revoked_at = datetime.now(UTC)
+        await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/logout", response_model=LogoutResponse)

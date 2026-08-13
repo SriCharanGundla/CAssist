@@ -267,6 +267,7 @@ CREATE TABLE auth_sessions (
     user_id             uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash          char(64) NOT NULL UNIQUE,
     csrf_token_hash     char(64) NOT NULL,
+    user_agent          text,
     created_at          timestamptz NOT NULL DEFAULT now(),
     last_seen_at        timestamptz NOT NULL DEFAULT now(),
     idle_expires_at     timestamptz NOT NULL,
@@ -282,7 +283,8 @@ CREATE INDEX auth_sessions_user_active_idx
 
 Only SHA-256 hashes of the opaque session and CSRF tokens are stored. The raw session token exists
 only in the HttpOnly API cookie. The raw CSRF token exists only in frontend memory and its request
-header. Deleting a user cascades their application sessions.
+header. The optional, client-supplied user agent is retained only to derive an approximate browser
+and device label; IP addresses are not stored. Deleting a user cascades their application sessions.
 
 ### Storage invariants
 
@@ -339,8 +341,12 @@ the callback and are never stored in local storage, session storage, application
 - Default absolute lifetime: 14 days.
 - `last_seen_at` updates are throttled to at most once every five minutes.
 - Logout revokes the database session before clearing cookies and initiating Auth0 logout.
-- Reauthentication rotates the opaque token and revokes the user's previous active sessions in the
-  same transaction.
+- Each successful login creates an independent session so the same account can be used concurrently
+  on multiple devices. A user may have at most ten active sessions; creating an eleventh revokes
+  only the least recently active session. A per-user database row lock serializes concurrent logins.
+- Settings shows a five-row paginated active-session list with approximate device/browser, login
+  time, last activity, current idle expiry, and current-session status. A user may revoke any other
+  session; the current session uses the normal logout flow.
 - Each worker maintenance cycle deletes bounded batches of expired and revoked session rows.
 
 ### CSRF and browser boundary
@@ -406,6 +412,17 @@ hashes.
   ]
 }
 ```
+
+#### `GET /api/v1/auth/sessions`
+
+Returns only the current user's unexpired sessions, ordered by most recent activity. `page` starts
+at 1 and `page_size` is limited to 10. Responses use `Cache-Control: no-store`; raw user-agent
+strings, token hashes, and IP addresses are never returned.
+
+#### `DELETE /api/v1/auth/sessions/{session_id}`
+
+Requires CSRF validation and revokes another session belonging to the current user. Unknown or
+non-owned IDs return an idempotent empty response. The current session must use the logout endpoint.
 
 #### `POST /api/v1/auth/logout`
 
@@ -1061,7 +1078,7 @@ result correction, approval, Tally export, signed original retrieval, and perman
 /                         Dashboard and recent documents
 /upload                   Upload dropzone and queued files
 /results/:resultId/review Side-by-side preview, fields, warnings, corrections
-/settings                 Profile, workspace, and retention information
+/settings                 Profile, workspace, and paginated active sessions
 /dev/compare/:documentId  Non-production provider comparison
 ```
 

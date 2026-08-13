@@ -5,7 +5,9 @@ import {
   correctResult,
   deleteDocumentOriginal,
   getCurrentAuth,
+  listAuthSessions,
   permanentlyDeleteDocument,
+  revokeAuthSession,
   retryDocumentProcessing,
   uploadDocument,
   uploadMimeType,
@@ -283,12 +285,13 @@ describe("getCurrentAuth", () => {
 
   it("stops a stalled session check after ten seconds", async () => {
     vi.useFakeTimers()
-    vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) =>
-      new Promise((_resolve, reject) => {
-        options.signal.addEventListener("abort", () => {
-          reject(new DOMException("Aborted", "AbortError"))
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"))
+          })
         })
-      })
     )
 
     const rejection = expect(getCurrentAuth()).rejects.toThrow(
@@ -297,6 +300,51 @@ describe("getCurrentAuth", () => {
     await vi.advanceTimersByTimeAsync(10_000)
     await rejection
     vi.useRealTimers()
+  })
+})
+
+describe("auth sessions", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("loads a requested page without caching", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        jsonResponse({
+          items: [],
+          page: 2,
+          page_size: 5,
+          total: 6,
+          total_pages: 2,
+        })
+      )
+
+    await listAuthSessions({ page: 2, pageSize: 5 })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/sessions?page=2&page_size=5`,
+      expect.objectContaining({ credentials: "include" })
+    )
+  })
+
+  it("revokes another session with CSRF protection", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: "session-csrf" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    await revokeAuthSession("session-2")
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${API_BASE_URL}/auth/sessions/session-2`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "X-CSRF-Token": "session-csrf" }),
+      })
+    )
   })
 })
 

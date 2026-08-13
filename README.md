@@ -129,6 +129,9 @@ FastAPI independently accepts only the verified Google accounts `owner@example.t
 `reviewer@example.test`, and `accountant@example.test`. This server-side allowlist also blocks or revokes sessions even if another
 Auth0 connection is accidentally enabled later.
 
+Application sessions idle after 12 hours and expire absolutely after 14 days. Each account may keep
+up to ten devices signed in; Settings lists them five at a time and can sign out other devices.
+
 To verify the development model adapter with generated synthetic data only:
 
 ```bash

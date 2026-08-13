@@ -16,6 +16,7 @@ from app.models import AuthSession, MemberRole, User, Workspace, WorkspaceMember
 from app.services.identity_provider import VerifiedIdentity
 
 LAST_SEEN_UPDATE_INTERVAL = timedelta(minutes=5)
+MAX_USER_AGENT_LENGTH = 1000
 
 
 class AuthenticationRequired(Exception):
@@ -88,6 +89,7 @@ async def establish_session(
     session: AsyncSession,
     identity: VerifiedIdentity,
     settings: Settings,
+    user_agent: str | None = None,
     now: datetime | None = None,
 ) -> tuple[User, SessionCredentials]:
     if not is_allowed_user_email(identity.email, settings):
@@ -118,14 +120,48 @@ async def establish_session(
             user.display_name = identity.display_name
             user.last_seen_at = current_time
 
+        # Serialize logins for this user so concurrent callbacks cannot exceed
+        # the configured active-session limit.
+        await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+
         await session.execute(
             update(AuthSession)
             .where(
                 AuthSession.user_id == user.id,
                 AuthSession.revoked_at.is_(None),
+                (
+                    (AuthSession.idle_expires_at <= current_time)
+                    | (AuthSession.absolute_expires_at <= current_time)
+                ),
             )
             .values(revoked_at=current_time)
         )
+
+        active_session_ids = list(
+            (
+                await session.scalars(
+                    select(AuthSession.id)
+                    .where(
+                        AuthSession.user_id == user.id,
+                        AuthSession.revoked_at.is_(None),
+                        AuthSession.idle_expires_at > current_time,
+                        AuthSession.absolute_expires_at > current_time,
+                    )
+                    .order_by(
+                        AuthSession.last_seen_at.asc(),
+                        AuthSession.created_at.asc(),
+                        AuthSession.id.asc(),
+                    )
+                )
+            ).all()
+        )
+        sessions_to_revoke = len(active_session_ids) - settings.auth_max_active_sessions + 1
+        if sessions_to_revoke > 0:
+            await session.execute(
+                update(AuthSession)
+                .where(AuthSession.id.in_(active_session_ids[:sessions_to_revoke]))
+                .values(revoked_at=current_time)
+            )
 
         membership = await session.scalar(
             select(WorkspaceMember).where(WorkspaceMember.user_id == user.id).limit(1)
@@ -155,6 +191,7 @@ async def establish_session(
                 user_id=user.id,
                 token_hash=hash_token(session_token),
                 csrf_token_hash=hash_token(create_opaque_token()),
+                user_agent=(user_agent or "").strip()[:MAX_USER_AGENT_LENGTH] or None,
                 last_seen_at=current_time,
                 idle_expires_at=idle_expires_at,
                 absolute_expires_at=absolute_expires_at,
@@ -172,6 +209,39 @@ async def establish_session(
         session_token=session_token,
         absolute_expires_at=absolute_expires_at,
     )
+
+
+def session_device_label(user_agent: str | None) -> str:
+    value = user_agent or ""
+    if "Edg/" in value:
+        browser = "Edge"
+    elif "Firefox/" in value:
+        browser = "Firefox"
+    elif "Chrome/" in value or "CriOS/" in value:
+        browser = "Chrome"
+    elif "Safari/" in value and "Version/" in value:
+        browser = "Safari"
+    else:
+        browser = "Unknown browser"
+
+    if "iPhone" in value:
+        device = "iPhone"
+    elif "iPad" in value:
+        device = "iPad"
+    elif "Android" in value:
+        device = "Android"
+    elif "Windows" in value:
+        device = "Windows"
+    elif "Macintosh" in value or "Mac OS X" in value:
+        device = "macOS"
+    elif "Linux" in value:
+        device = "Linux"
+    else:
+        device = "Unknown device"
+
+    if browser == "Unknown browser" and device == "Unknown device":
+        return device
+    return f"{browser} on {device}"
 
 
 async def resolve_session(

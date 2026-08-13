@@ -19,6 +19,7 @@ EXPECTED_COLUMNS = {
         "user_id",
         "token_hash",
         "csrf_token_hash",
+        "user_agent",
         "created_at",
         "last_seen_at",
         "idle_expires_at",

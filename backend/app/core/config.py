@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     auth_state_secret: str | None = None
     auth_session_idle_seconds: int = 12 * 60 * 60
     auth_session_absolute_seconds: int = 14 * 24 * 60 * 60
+    auth_max_active_sessions: int = 10
     auth_session_cookie_name: str = "cassist_session"
     auth_allowed_emails: frozenset[str] = Field(
         default_factory=lambda: LOCKED_ALLOWED_USER_EMAILS
@@ -78,6 +79,8 @@ class Settings(BaseSettings):
             raise ValueError("AUTH_SESSION_IDLE_SECONDS must be positive")
         if self.auth_session_absolute_seconds < self.auth_session_idle_seconds:
             raise ValueError("AUTH_SESSION_ABSOLUTE_SECONDS must be at least the idle lifetime")
+        if not 1 <= self.auth_max_active_sessions <= 100:
+            raise ValueError("AUTH_MAX_ACTIVE_SESSIONS must be between 1 and 100")
         if not 60 <= self.r2_presigned_url_ttl_seconds <= 900:
             raise ValueError("R2_PRESIGNED_URL_TTL_SECONDS must be between 60 and 900")
         if self.upload_max_bytes <= 0:

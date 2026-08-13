@@ -1,9 +1,10 @@
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
@@ -17,7 +18,7 @@ from app.core.config import Settings
 from app.core.database import engine
 from app.main import app
 from app.models import AuthSession
-from app.services.auth import hash_token
+from app.services.auth import establish_session, hash_token
 from app.services.identity_provider import VerifiedIdentity
 from app.services.session_cleanup import cleanup_expired_sessions
 
@@ -103,13 +104,23 @@ async def test_callback_me_and_csrf_protected_logout(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            callback = await client.get("/api/v1/auth/callback")
+            callback = await client.get(
+                "/api/v1/auth/callback",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh) Firefox/141.0",
+                },
+            )
             assert callback.status_code == 303
             assert callback.headers["location"] == "http://localhost:5173/documents"
             first_session_token = client.cookies.get("cassist_session")
             assert first_session_token
 
-            reauthenticated = await client.get("/api/v1/auth/callback")
+            reauthenticated = await client.get(
+                "/api/v1/auth/callback",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh) Chrome/140.0 Safari/537.36",
+                },
+            )
             assert reauthenticated.status_code == 303
             assert client.cookies.get("cassist_session") != first_session_token
             first_session = await database_session.scalar(
@@ -118,16 +129,7 @@ async def test_callback_me_and_csrf_protected_logout(
                 )
             )
             assert first_session is not None
-            assert first_session.revoked_at is not None
-            assert await cleanup_expired_sessions(database_session) >= 1
-            assert (
-                await database_session.scalar(
-                    select(AuthSession).where(
-                        AuthSession.token_hash == hash_token(first_session_token)
-                    )
-                )
-                is None
-            )
+            assert first_session.revoked_at is None
 
             me = await client.get("/api/v1/auth/me")
             assert me.status_code == 200
@@ -157,6 +159,28 @@ async def test_callback_me_and_csrf_protected_logout(
             assert csrf.headers["cache-control"] == "no-store"
             csrf_token = csrf.json()["csrf_token"]
 
+            sessions = await client.get("/api/v1/auth/sessions?page=1&page_size=1")
+            assert sessions.status_code == 200
+            assert sessions.headers["cache-control"] == "no-store"
+            assert sessions.json()["total"] == 2
+            assert sessions.json()["total_pages"] == 2
+            assert len(sessions.json()["items"]) == 1
+
+            all_sessions = await client.get("/api/v1/auth/sessions?page_size=5")
+            other_session = next(
+                item for item in all_sessions.json()["items"] if not item["is_current"]
+            )
+            assert other_session["device_label"] == "Firefox on macOS"
+            revoked = await client.delete(
+                f"/api/v1/auth/sessions/{other_session['id']}",
+                headers={
+                    "Origin": "http://localhost:5173",
+                    "X-CSRF-Token": csrf_token,
+                },
+            )
+            assert revoked.status_code == 204
+            assert await cleanup_expired_sessions(database_session) == 1
+
             rejected_logout = await client.post("/api/v1/auth/logout")
             assert rejected_logout.status_code == 403
 
@@ -170,6 +194,56 @@ async def test_callback_me_and_csrf_protected_logout(
             assert logout.status_code == 200
             assert logout.json()["logout_url"].startswith("https://identity.example/logout")
             assert client.cookies.get("cassist_session") is None
+
+            capped_settings = Settings(
+                app_env="test",
+                _env_file=None,
+                auth_allowed_emails={"sessions@example.test"},
+                auth_max_active_sessions=10,
+            )
+            identity = VerifiedIdentity(
+                issuer="https://identity.example/",
+                subject="multi-device-user",
+                email="sessions@example.test",
+                display_name="Session Tester",
+                return_to="/",
+            )
+            start = datetime(2026, 8, 13, 8, tzinfo=UTC)
+            tokens: list[str] = []
+            capped_user_id = None
+            for offset in range(11):
+                capped_user, credentials = await establish_session(
+                    database_session,
+                    identity,
+                    capped_settings,
+                    user_agent=f"test-device-{offset}",
+                    now=start + timedelta(minutes=offset),
+                )
+                capped_user_id = capped_user.id
+                tokens.append(credentials.session_token)
+
+            active_count = await database_session.scalar(
+                select(func.count())
+                .select_from(AuthSession)
+                .where(
+                    AuthSession.user_id == capped_user_id,
+                    AuthSession.revoked_at.is_(None),
+                )
+            )
+            assert active_count == 10
+            oldest = await database_session.scalar(
+                select(AuthSession).where(
+                    AuthSession.token_hash == hash_token(tokens[0])
+                )
+            )
+            second = await database_session.scalar(
+                select(AuthSession).where(
+                    AuthSession.token_hash == hash_token(tokens[1])
+                )
+            )
+            assert oldest is not None
+            assert oldest.revoked_at == start + timedelta(minutes=10)
+            assert second is not None and second.revoked_at is None
     finally:
         app.dependency_overrides.clear()
 

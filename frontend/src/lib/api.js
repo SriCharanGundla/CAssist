@@ -18,8 +18,7 @@ async function apiRequest(path, options = {}) {
   let timedOut = false
   const abortFromCaller = () => controller.abort(callerSignal?.reason)
   if (callerSignal?.aborted) abortFromCaller()
-  else
-    callerSignal?.addEventListener("abort", abortFromCaller, { once: true })
+  else callerSignal?.addEventListener("abort", abortFromCaller, { once: true })
   const timeout = window.setTimeout(() => {
     timedOut = true
     controller.abort()
@@ -128,6 +127,34 @@ export async function logout() {
     throw await responseError(response, "Unable to sign out.")
   }
   return response.json()
+}
+
+export async function listAuthSessions({
+  page = 1,
+  pageSize = 5,
+  signal,
+} = {}) {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  })
+  const response = await apiRequest(`/auth/sessions?${query}`, {
+    signal,
+    timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to load active sessions.")
+  }
+  return response.json()
+}
+
+export async function revokeAuthSession(sessionId) {
+  const response = await csrfRequest(`/auth/sessions/${sessionId}`, {
+    method: "DELETE",
+  })
+  if (!response.ok) {
+    throw await responseError(response, "Unable to sign out that device.")
+  }
 }
 
 export const ACCEPTED_UPLOAD_TYPES = [
