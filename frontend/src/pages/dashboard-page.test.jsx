@@ -102,18 +102,17 @@ describe("DashboardPage", () => {
             original_filename: "invoice-two.png",
             mime_type: "image/png",
             original_available: true,
-            status: "processing",
+            status: "ready",
             created_at: "2026-08-11T12:00:00Z",
             latest_run: {
               id: "run-2",
-              status: "extracting",
-              result_id: null,
+              status: "succeeded",
+              result_id: "result-2",
             },
           },
         ],
         next_cursor: null,
       })
-    api.getRun.mockReturnValue(new Promise(() => {}))
     renderDashboard()
 
     expect(await screen.findByText("invoice-one.pdf")).toBeInTheDocument()
@@ -132,7 +131,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("1")).toHaveAttribute("aria-current", "page")
     await user.click(screen.getByRole("button", { name: "Go to next page" }))
     expect(
-      await screen.findByText("invoice-two.png", {}, { timeout: 5_000 })
+      await screen.findByText("invoice-two.png", {}, { timeout: 3_000 })
     ).toBeInTheDocument()
     expect(screen.queryByText("invoice-one.pdf")).not.toBeInTheDocument()
     expect(screen.getByText("2")).toHaveAttribute("aria-current", "page")
@@ -143,7 +142,7 @@ describe("DashboardPage", () => {
       screen.getByRole("button", { name: "Go to previous page" })
     )
     expect(
-      await screen.findByText("invoice-one.pdf", {}, { timeout: 5_000 })
+      await screen.findByText("invoice-one.pdf", {}, { timeout: 3_000 })
     ).toBeInTheDocument()
     expect(screen.queryByText("invoice-two.png")).not.toBeInTheDocument()
   })
