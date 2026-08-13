@@ -104,6 +104,18 @@ function formatStorageGb(bytes) {
   return `${(bytes / 1_000_000_000).toFixed(2)} GB`
 }
 
+function formatStorageAmount(bytes) {
+  if (bytes < 1_000_000) {
+    const kilobytes = Math.max(bytes ? 1 : 0, Math.round(bytes / 1_000))
+    if (kilobytes < 1_000) return `${kilobytes} KB`
+  }
+  if (bytes < 1_000_000_000) {
+    const megabytes = Math.round(bytes / 1_000_000)
+    if (megabytes < 1_000) return `${megabytes} MB`
+  }
+  return formatStorageGb(bytes)
+}
+
 function statusBadgeClass(status) {
   if (["ready", "succeeded", "complete"].includes(status)) {
     return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
@@ -605,28 +617,42 @@ export function DashboardPage() {
           </div>
           <div className="flex min-w-48 flex-col gap-2">
             {quota ? (
-              <div aria-label="Shared document storage" className="text-xs">
-                <div className="flex items-center justify-between gap-3 text-muted-foreground">
-                  <span>Shared storage</span>
-                  <span>
-                    {formatStorageGb(quota.used_bytes)} /{" "}
-                    {formatStorageGb(quota.limit_bytes)}
-                  </span>
-                </div>
-                <div
-                  aria-label="Shared storage usage"
-                  aria-valuemax="100"
-                  aria-valuemin="0"
-                  aria-valuenow={Math.round(quota.usage_percent)}
-                  className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
-                  role="progressbar"
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      aria-label="Shared document storage details"
+                      className="w-full cursor-help text-left text-xs outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring/30"
+                      type="button"
+                    />
+                  }
                 >
+                  <div className="flex items-center justify-between gap-3 text-muted-foreground">
+                    <span>Shared storage</span>
+                    <span>
+                      {formatStorageGb(quota.used_bytes)} /{" "}
+                      {formatStorageGb(quota.limit_bytes)}
+                    </span>
+                  </div>
                   <div
-                    className="h-full rounded-full bg-primary transition-[width]"
-                    style={{ width: `${quota.usage_percent}%` }}
-                  />
-                </div>
-              </div>
+                    aria-label="Shared storage usage"
+                    aria-valuemax="100"
+                    aria-valuemin="0"
+                    aria-valuenow={Math.round(quota.usage_percent)}
+                    className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"
+                    role="progressbar"
+                  >
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width]"
+                      style={{ width: `${quota.usage_percent}%` }}
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {formatStorageAmount(quota.used_bytes)} /{" "}
+                  {formatStorageGb(quota.limit_bytes)}
+                </TooltipContent>
+              </Tooltip>
             ) : null}
             {quota && !quota.upload_allowed ? (
               <Button

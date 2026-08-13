@@ -476,6 +476,32 @@ describe("DashboardPage", () => {
     ).not.toBeInTheDocument()
   })
 
+  it.each([
+    [4_096, "4 KB / 8.00 GB"],
+    [125_000_000, "125 MB / 8.00 GB"],
+    [1_250_000_000, "1.25 GB / 8.00 GB"],
+  ])(
+    "shows precise adaptive storage usage on hover",
+    async (usedBytes, label) => {
+      const user = userEvent.setup()
+      api.listDocuments.mockResolvedValue({ items: [], next_cursor: null })
+      api.getStorageQuota.mockResolvedValue({
+        used_bytes: usedBytes,
+        limit_bytes: 8_000_000_000,
+        available_bytes: 8_000_000_000 - usedBytes,
+        usage_percent: (usedBytes / 8_000_000_000) * 100,
+        upload_allowed: true,
+      })
+      renderDashboard()
+
+      const storage = await screen.findByRole("button", {
+        name: "Shared document storage details",
+      })
+      await user.hover(storage)
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(label)
+    }
+  )
+
   it("keeps extracted data actions but removes original-file actions after file deletion", async () => {
     const user = userEvent.setup()
     api.listDocuments.mockResolvedValue({
