@@ -335,8 +335,8 @@ cookie. Production uses a `__Host-` cookie name. The API stores only its SHA-256
 user from PostgreSQL on every authenticated request. Auth0 access and ID tokens are discarded after
 the callback and are never stored in local storage, session storage, application logs, or PostgreSQL.
 
-- Default idle lifetime: 8 hours.
-- Default absolute lifetime: 7 days.
+- Default idle lifetime: 12 hours.
+- Default absolute lifetime: 14 days.
 - `last_seen_at` updates are throttled to at most once every five minutes.
 - Logout revokes the database session before clearing cookies and initiating Auth0 logout.
 - Reauthentication rotates the opaque token and revokes the user's previous active sessions in the

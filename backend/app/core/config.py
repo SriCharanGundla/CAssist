@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     auth_callback_url: str = "http://localhost:8000/api/v1/auth/callback"
     auth_post_logout_redirect_url: str = "http://localhost:5173"
     auth_state_secret: str | None = None
-    auth_session_idle_seconds: int = 8 * 60 * 60
-    auth_session_absolute_seconds: int = 7 * 24 * 60 * 60
+    auth_session_idle_seconds: int = 12 * 60 * 60
+    auth_session_absolute_seconds: int = 14 * 24 * 60 * 60
     auth_session_cookie_name: str = "cassist_session"
     auth_allowed_emails: frozenset[str] = Field(
         default_factory=lambda: LOCKED_ALLOWED_USER_EMAILS
