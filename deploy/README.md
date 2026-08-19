@@ -36,12 +36,14 @@ Production GitHub environment secrets:
 
 - `CLOUDFLARE_ACCOUNT_ID` and a Pages-only `CLOUDFLARE_API_TOKEN`.
 - `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` for an ephemeral `tag:ci` identity.
-- `DEPLOY_SSH_PRIVATE_KEY` and the pinned `DEPLOY_SSH_HOST_KEY`.
+- `NAS_SSH_PRIVATE_KEY` and the pinned `NAS_SSH_HOST_KEY` (legacy names retained so existing
+  private deployments do not require secret rotation).
+- `DEPLOY_SSH_HOST`, kept secret to avoid publishing private network details.
 
 Production GitHub environment variables:
 
 - `BACKEND_IMAGE`, for example `ghcr.io/your-github-user/cassist-backend`.
-- `DEPLOY_SSH_HOST` and `DEPLOY_SSH_USER`.
+- `DEPLOY_SSH_USER`.
 - `PUBLIC_READY_URL`, for example `https://your-frontend.example/api/v1/ready`.
 
 The worker stays disabled until an OpenAI production key and credits have both been confirmed. Set

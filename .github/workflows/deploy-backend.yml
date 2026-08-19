@@ -71,8 +71,8 @@ jobs:
           tags: tag:ci
       - name: Configure pinned deployment SSH identity
         env:
-          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-          DEPLOY_SSH_HOST_KEY: ${{ secrets.DEPLOY_SSH_HOST_KEY }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.NAS_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_HOST_KEY: ${{ secrets.NAS_SSH_HOST_KEY }}
         run: |
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/cassist_deploy
@@ -84,7 +84,7 @@ jobs:
           REGISTRY_TOKEN: ${{ github.token }}
           DEPLOY_IMAGE: ${{ vars.BACKEND_IMAGE }}@${{ steps.build.outputs.digest }}
           REGISTRY_USERNAME: ${{ github.actor }}
-          DEPLOY_SSH_HOST: ${{ vars.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER }}
         run: |
           test -n "$DEPLOY_SSH_HOST"
@@ -98,7 +98,7 @@ jobs:
       - name: Verify deployed image and public readiness
         env:
           DEPLOY_IMAGE: ${{ vars.BACKEND_IMAGE }}@${{ steps.build.outputs.digest }}
-          DEPLOY_SSH_HOST: ${{ vars.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER }}
           PUBLIC_READY_URL: ${{ vars.PUBLIC_READY_URL }}
         run: |
