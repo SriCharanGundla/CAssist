@@ -284,7 +284,7 @@ describe("getCurrentAuth", () => {
     vi.restoreAllMocks()
   })
 
-  it("stops a stalled session check after ten seconds", async () => {
+  it("stops a stalled session check after thirty seconds", async () => {
     vi.useFakeTimers()
     vi.spyOn(globalThis, "fetch").mockImplementation(
       (_url, options) =>
@@ -298,7 +298,7 @@ describe("getCurrentAuth", () => {
     const rejection = expect(getCurrentAuth()).rejects.toThrow(
       "The request timed out. Try again."
     )
-    await vi.advanceTimersByTimeAsync(10_000)
+    await vi.advanceTimersByTimeAsync(30_000)
     await rejection
     vi.useRealTimers()
   })

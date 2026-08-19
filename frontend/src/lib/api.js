@@ -1,6 +1,6 @@
 const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL
 const API_REQUEST_TIMEOUT_MS = 30_000
-const AUTH_REQUEST_TIMEOUT_MS = 10_000
+const AUTH_REQUEST_TIMEOUT_MS = 30_000
 
 export const API_BASE_URL = (
   configuredApiBaseUrl ||
