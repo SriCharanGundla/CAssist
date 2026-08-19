@@ -6,6 +6,14 @@ export. Extraction is document-led: it does not require templates or invent miss
 A classification step rejects unrelated files and asks for confirmation when a document is
 ambiguous. CAssist accepts up to 10 PDF, JPEG, or PNG files per upload, with a 25 MiB limit per file.
 
+## Screenshots
+
+All displayed documents, names, account details, and values are synthetic.
+
+![Document workspace showing a completed synthetic bank statement](docs/screenshots/dashboard.png)
+
+![Review workspace showing fields extracted from a synthetic bank statement](docs/screenshots/review.png)
+
 ## Stack
 
 ```text
