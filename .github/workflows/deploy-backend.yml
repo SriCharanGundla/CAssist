@@ -16,9 +16,6 @@ concurrency:
   group: cassist-production-backend
   cancel-in-progress: false
 
-env:
-  IMAGE_NAME: ghcr.io/example-user/cassist-backend
-
 jobs:
   deploy:
     environment: production
@@ -63,7 +60,7 @@ jobs:
           context: backend
           platforms: linux/amd64
           push: true
-          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ vars.BACKEND_IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Join the private deployment network
@@ -72,35 +69,42 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
-      - name: Configure pinned NAS SSH identity
+      - name: Configure pinned deployment SSH identity
         env:
-          NAS_SSH_PRIVATE_KEY: ${{ secrets.NAS_SSH_PRIVATE_KEY }}
-          NAS_SSH_HOST_KEY: ${{ secrets.NAS_SSH_HOST_KEY }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_HOST_KEY: ${{ secrets.DEPLOY_SSH_HOST_KEY }}
         run: |
           install -d -m 700 ~/.ssh
-          printf '%s\n' "$NAS_SSH_PRIVATE_KEY" > ~/.ssh/cassist_deploy
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/cassist_deploy
           chmod 600 ~/.ssh/cassist_deploy
-          printf '%s\n' "$NAS_SSH_HOST_KEY" > ~/.ssh/known_hosts
+          printf '%s\n' "$DEPLOY_SSH_HOST_KEY" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
       - name: Deploy API and conditionally enabled worker
         env:
           REGISTRY_TOKEN: ${{ github.token }}
-          DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          DEPLOY_IMAGE: ${{ vars.BACKEND_IMAGE }}@${{ steps.build.outputs.digest }}
           REGISTRY_USERNAME: ${{ github.actor }}
+          DEPLOY_SSH_HOST: ${{ vars.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER }}
         run: |
+          test -n "$DEPLOY_SSH_HOST"
+          test -n "$DEPLOY_SSH_USER"
           printf '%s\n' "$REGISTRY_TOKEN" | ssh \
             -i ~/.ssh/cassist_deploy \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
-            cassist-deploy@deployment-host.example.internal \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             sudo /usr/local/sbin/cassist-deploy-backend "$DEPLOY_IMAGE" "$REGISTRY_USERNAME"
       - name: Verify deployed image and public readiness
         env:
-          DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          DEPLOY_IMAGE: ${{ vars.BACKEND_IMAGE }}@${{ steps.build.outputs.digest }}
+          DEPLOY_SSH_HOST: ${{ vars.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ vars.DEPLOY_SSH_USER }}
+          PUBLIC_READY_URL: ${{ vars.PUBLIC_READY_URL }}
         run: |
           actual_image="$(ssh -i ~/.ssh/cassist_deploy -o BatchMode=yes -o IdentitiesOnly=yes \
-            cassist-deploy@deployment-host.example.internal \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             sudo /usr/local/sbin/cassist-current-backend-image)"
           test "$actual_image" = "$DEPLOY_IMAGE"
           curl --fail --silent --show-error --retry 5 --retry-delay 3 \
-            https://cassist.pages.dev/api/v1/ready >/dev/null
+            "$PUBLIC_READY_URL" >/dev/null

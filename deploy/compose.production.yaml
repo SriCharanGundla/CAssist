@@ -145,4 +145,4 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${CASSIST_POSTGRES_DATA_PATH:?Set the NAS NVMe PostgreSQL path}
+      device: ${CASSIST_POSTGRES_DATA_PATH:?Set the host PostgreSQL data path}

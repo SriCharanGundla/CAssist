@@ -45,7 +45,7 @@ describe("authenticated app header", () => {
     api.getCurrentAuth.mockResolvedValue({
       user: {
         display_name: "Alex Morgan",
-        email: "owner@example.test",
+        email: "alex@example.test",
       },
     })
     api.listDocuments.mockResolvedValue({ items: [], next_cursor: null })
@@ -82,7 +82,7 @@ describe("authenticated app header", () => {
     accountButton.focus()
     fireEvent.keyDown(accountButton, { key: "ArrowDown" })
     expect(await screen.findByText("Alex Morgan")).toBeInTheDocument()
-    expect(screen.getByText("owner@example.test")).toBeInTheDocument()
+    expect(screen.getByText("alex@example.test")).toBeInTheDocument()
   })
 
   it("provides skip navigation and route-aware browser titles", async () => {
@@ -139,7 +139,7 @@ describe("authenticated app header", () => {
       .mockResolvedValueOnce({
         user: {
           display_name: "Alex Morgan",
-          email: "owner@example.test",
+          email: "alex@example.test",
         },
       })
     renderApp()

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { onRequest } from "./[[path]].js"
 
 const environment = {
-  CASSIST_ORIGIN: "https://cassist-nas.example.ts.net",
+  CASSIST_ORIGIN: "https://origin.example.test",
   CASSIST_PROXY_SECRET: "p".repeat(32),
 }
 
@@ -49,7 +49,7 @@ describe("Pages API proxy", () => {
     expect(upstream).toHaveBeenCalledOnce()
     const forwarded = upstream.mock.calls[0][0]
     expect(forwarded.url).toBe(
-      "https://cassist-nas.example.ts.net/api/v1/uploads/document-1/complete?source=test"
+      "https://origin.example.test/api/v1/uploads/document-1/complete?source=test"
     )
     expect(forwarded.headers.get("x-cassist-proxy-secret")).toBe(
       environment.CASSIST_PROXY_SECRET

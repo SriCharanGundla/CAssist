@@ -44,6 +44,7 @@ def _production_settings() -> Settings:
         cors_origins=["https://cassist.pages.dev"],
         auth_callback_url="https://cassist.pages.dev/api/v1/auth/callback",
         auth_post_logout_redirect_url="https://cassist.pages.dev",
+        auth_allowed_emails={"owner@example.test"},
     )
 
 

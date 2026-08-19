@@ -1,6 +1,7 @@
-# CAssist private deployment
+# CAssist self-hosted deployment
 
-These files prepare the NAS deployment but do not connect to or change the NAS.
+These files provide a portable Docker Compose deployment for a private Linux host. They contain no
+live hostname, SSH identity, storage path, registry owner, or secret.
 
 ## R2 temporary-upload lifecycle
 
@@ -20,25 +21,31 @@ Verify the rules with `wrangler r2 bucket lifecycle list <bucket>` during deploy
 ## Automated deployment
 
 Pushes to `main` are path-filtered. Frontend changes run tests and deploy only Cloudflare Pages.
-Backend changes run tests, publish one immutable AMD64 image to GHCR, join the tailnet using an
-ephemeral `tag:ci` node, and invoke the restricted NAS deployment command over SSH. The NAS creates
+Backend changes run tests, publish one immutable AMD64 image to GHCR, join a private network using an
+ephemeral CI node, and invoke the restricted deployment command over SSH. The host creates
 an encrypted backup, applies forward-only migrations, deploys and health-checks the API, rolls the
 API image back on failure, and starts the worker only when `CASSIST_WORKER_ENABLED=true`.
 
-The NAS account `cassist-deploy` has no Docker-group membership. Its authorized key is bound to
+The deployment account has no Docker-group membership. Its authorized key is bound to
 `cassist-deploy-dispatch`, which accepts only the two root-owned CAssist deployment commands; sudoers
-also permits only those commands. The deployment command accepts only an immutable digest from
-`ghcr.io/example-user/cassist-backend`, uses the workflow's short-lived registry token through a
+also permits only those commands. The deployment command accepts only an immutable digest from the
+`CASSIST_IMAGE_REPOSITORY` configured on the host, uses the workflow's short-lived registry token through a
 temporary Docker configuration, and never persists that token.
 
 Production GitHub environment secrets:
 
 - `CLOUDFLARE_ACCOUNT_ID` and a Pages-only `CLOUDFLARE_API_TOKEN`.
 - `TS_OAUTH_CLIENT_ID` and `TS_OAUTH_SECRET` for an ephemeral `tag:ci` identity.
-- `NAS_SSH_PRIVATE_KEY` and the pinned `NAS_SSH_HOST_KEY`.
+- `DEPLOY_SSH_PRIVATE_KEY` and the pinned `DEPLOY_SSH_HOST_KEY`.
+
+Production GitHub environment variables:
+
+- `BACKEND_IMAGE`, for example `ghcr.io/your-github-user/cassist-backend`.
+- `DEPLOY_SSH_HOST` and `DEPLOY_SSH_USER`.
+- `PUBLIC_READY_URL`, for example `https://your-frontend.example/api/v1/ready`.
 
 The worker stays disabled until an OpenAI production key and credits have both been confirmed. Set
-`CASSIST_WORKER_ENABLED=true` in the protected NAS environment file only after that gate.
+`CASSIST_WORKER_ENABLED=true` in the protected host environment file only after that gate.
 
 ## PostgreSQL backup
 
@@ -47,7 +54,7 @@ client-side-encrypted Restic repository. Production uses a dedicated private R2 
 bucket-scoped credentials that can read, write, list, and delete objects only in that bucket.
 The originals bucket credentials are not reused.
 
-Generate a separate random `RESTIC_PASSWORD`, store it outside both the NAS and R2, and keep a
+Generate a separate random `RESTIC_PASSWORD`, store it outside both the deployment host and R2, and keep a
 tested recovery copy. Losing it makes every backup unrecoverable. The retention policy keeps seven
 daily, four weekly, and six monthly snapshots; Restic may also retain the oldest snapshot as a
 safety floor. Pruning runs after retention.
@@ -60,7 +67,7 @@ docker compose --env-file .env.production \
 ```
 
 Install `systemd/cassist-backup.service` and `systemd/cassist-backup.timer` under
-`/etc/systemd/system/` only during the authorized NAS rollout. The checked-in unit assumes the
+`/etc/systemd/system/` only during an authorized rollout. The checked-in unit assumes the
 repository is located at `/opt/cassist`; it runs nightly at 02:15 with up to 15 minutes of jitter
 and catches up after downtime.
 

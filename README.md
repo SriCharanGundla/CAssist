@@ -69,8 +69,9 @@ Allowed Logout URL:   http://localhost:5173
 ```
 
 Set `AUTH_ISSUER_URL`, `AUTH_CLIENT_ID`, `AUTH_CLIENT_SECRET`, and a random 32-character-or-longer
-`AUTH_STATE_SECRET` in `backend/.env`. The backend also restricts access to its configured Google
-account allowlist.
+`AUTH_STATE_SECRET` in `backend/.env`. Set `AUTH_ALLOWED_EMAILS` to a JSON array of permitted
+accounts, such as `["owner@example.com"]`. The backend normalizes the addresses and rejects an empty
+production allowlist.
 
 Sessions idle after 12 hours, expire after 14 days, and allow up to 10 signed-in devices per account.
 The frontend uses `http://localhost:8000/api/v1` by default; set `VITE_API_BASE_URL` in
@@ -104,17 +105,20 @@ uv run --locked python scripts/local_vertical_smoke.py
 Both scripts refuse to run in production. The vertical smoke test exercises upload, private R2,
 extraction, review, correction, approval, export, viewing, and deletion, then removes its test data.
 
-## Private deployment
+Fabricated, visibly marked sample documents are available in [`examples/`](examples/). Only
+synthetic data may be used in repository demos and screenshots.
+
+## Self-hosted deployment
 
 Production serves the frontend and proxied API from `https://cassist.pages.dev`. Configure these
 Cloudflare Pages Function bindings:
 
 ```text
-CASSIST_ORIGIN=https://replace-with-nas-name.tailnet-name.ts.net
+CASSIST_ORIGIN=https://your-private-origin.example
 CASSIST_PROXY_SECRET=replace-with-at-least-32-random-characters
 ```
 
-Use the same secret as `EDGE_PROXY_SECRET` on the NAS. Leave `VITE_API_BASE_URL` unset for the
+Use the same secret as `EDGE_PROXY_SECRET` on the backend host. Leave `VITE_API_BASE_URL` unset for the
 production build so requests use same-origin `/api/v1`.
 
 Validate the production Compose configuration from the repository root:
@@ -131,5 +135,9 @@ pnpm build
 pnpm exec wrangler pages deploy dist --project-name cassist --branch main
 ```
 
-See [`deploy/README.md`](deploy/README.md) for NAS deployment, encrypted backups, retention, and
+See [`deploy/README.md`](deploy/README.md) for self-hosted deployment, encrypted backups, retention, and
 restore testing. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full rollout and security design.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

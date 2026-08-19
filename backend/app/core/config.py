@@ -4,10 +4,6 @@ from typing import Literal
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-LOCKED_ALLOWED_USER_EMAILS = frozenset(
-    {"owner@example.test", "reviewer@example.test", "accountant@example.test"}
-)
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -35,7 +31,7 @@ class Settings(BaseSettings):
     auth_session_absolute_seconds: int = 14 * 24 * 60 * 60
     auth_max_active_sessions: int = 10
     auth_session_cookie_name: str = "cassist_session"
-    auth_allowed_emails: frozenset[str] = Field(default_factory=lambda: LOCKED_ALLOWED_USER_EMAILS)
+    auth_allowed_emails: frozenset[str] = Field(default_factory=frozenset)
 
     model_provider: Literal["openai", "gemini"] = "gemini"
     model_id: str = "gemini-3.5-flash-lite"
@@ -75,8 +71,6 @@ class Settings(BaseSettings):
         self.auth_allowed_emails = frozenset(
             email.strip().casefold() for email in self.auth_allowed_emails
         )
-        if self.app_env != "test" and self.auth_allowed_emails != LOCKED_ALLOWED_USER_EMAILS:
-            raise ValueError("AUTH_ALLOWED_EMAILS is locked outside tests")
         if self.auth_session_idle_seconds <= 0:
             raise ValueError("AUTH_SESSION_IDLE_SECONDS must be positive")
         if self.auth_session_absolute_seconds < self.auth_session_idle_seconds:
@@ -144,6 +138,10 @@ class Settings(BaseSettings):
             if missing_auth_settings:
                 missing = ", ".join(missing_auth_settings)
                 raise ValueError(f"Production authentication settings are missing: {missing}")
+            if not self.auth_allowed_emails:
+                raise ValueError(
+                    "AUTH_ALLOWED_EMAILS must contain at least one address in production"
+                )
             if len(self.auth_state_secret or "") < 32:
                 raise ValueError("AUTH_STATE_SECRET must contain at least 32 characters")
             missing_runtime_settings = [

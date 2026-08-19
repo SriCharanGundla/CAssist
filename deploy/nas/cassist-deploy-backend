@@ -5,12 +5,25 @@ compose_directory=/opt/cassist/deploy
 environment_file="$compose_directory/.env.production"
 compose_file="$compose_directory/compose.production.yaml"
 lock_file=/run/lock/cassist-deploy.lock
-expected_repository=ghcr.io/example-user/cassist-backend
 
 fail() {
   echo "Deployment failed: $1" >&2
   exit 1
 }
+
+[ -r "$environment_file" ] || fail "production environment file is unavailable"
+[ -r "$compose_file" ] || fail "production Compose file is unavailable"
+
+expected_repository="$(sed -n 's/^CASSIST_IMAGE_REPOSITORY=//p' "$environment_file" | head -n 1)"
+public_ready_url="$(sed -n 's/^CASSIST_PUBLIC_READY_URL=//p' "$environment_file" | head -n 1)"
+case "$expected_repository" in
+  ghcr.io/*/*) ;;
+  *) fail "CASSIST_IMAGE_REPOSITORY must identify a GHCR repository" ;;
+esac
+case "$public_ready_url" in
+  https://*) ;;
+  *) fail "CASSIST_PUBLIC_READY_URL must use HTTPS" ;;
+esac
 
 image_reference="${1:-}"
 registry_username="${2:-}"
@@ -29,9 +42,6 @@ esac
 case "$registry_username" in
   *[!A-Za-z0-9-]*|"") fail "registry username is invalid" ;;
 esac
-
-[ -r "$environment_file" ] || fail "production environment file is unavailable"
-[ -r "$compose_file" ] || fail "production Compose file is unavailable"
 
 exec 9>"$lock_file"
 flock -n 9 || fail "another CAssist deployment is running"
@@ -84,7 +94,7 @@ wait_for_api() {
     health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' cassist-api-1 2>/dev/null || true)"
     if [ "$health" = healthy ]; then
       if curl --fail --silent --show-error --max-time 15 \
-        https://cassist.pages.dev/api/v1/ready >/dev/null; then
+        "$public_ready_url" >/dev/null; then
         return 0
       fi
     fi

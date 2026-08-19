@@ -18,19 +18,15 @@ from app.services.auth import (
 
 
 def test_user_email_allowlist_is_exact_and_case_insensitive() -> None:
-    settings = Settings(app_env="development", _env_file=None)
+    settings = Settings(
+        app_env="development",
+        _env_file=None,
+        auth_allowed_emails={"owner@example.test", " REVIEWER@EXAMPLE.TEST "},
+    )
     assert is_allowed_user_email("owner@example.test", settings)
-    assert is_allowed_user_email("REVIEWER@EXAMPLE.TEST", settings)
-    assert is_allowed_user_email("ACCOUNTANT@EXAMPLE.TEST", settings)
+    assert is_allowed_user_email("reviewer@example.test", settings)
     assert not is_allowed_user_email("someone@example.test", settings)
     assert not is_allowed_user_email("owner+test@example.test", settings)
-
-    with pytest.raises(ValueError, match="AUTH_ALLOWED_EMAILS"):
-        Settings(
-            app_env="development",
-            _env_file=None,
-            auth_allowed_emails={"someone@example.test"},
-        )
 
 
 def make_request(*, origin: str, csrf_header: str) -> Request:
@@ -131,6 +127,7 @@ def test_production_authentication_configuration_fails_closed() -> None:
         cors_origins=["https://cassist.pages.dev"],
         auth_callback_url="https://cassist.pages.dev/api/v1/auth/callback",
         auth_post_logout_redirect_url="https://cassist.pages.dev",
+        auth_allowed_emails={"owner@example.test"},
     )
     assert production.auth_session_cookie_name == "__Host-cassist_session"
     assert production.auth_cookie_secure is True
@@ -152,6 +149,7 @@ def test_production_runtime_and_pages_proxy_configuration_fails_closed() -> None
         "cors_origins": ["https://cassist.pages.dev"],
         "auth_callback_url": "https://cassist.pages.dev/api/v1/auth/callback",
         "auth_post_logout_redirect_url": "https://cassist.pages.dev",
+        "auth_allowed_emails": {"owner@example.test"},
     }
     with pytest.raises(ValueError, match="EDGE_PROXY_SECRET"):
         Settings(**common)
@@ -160,6 +158,27 @@ def test_production_runtime_and_pages_proxy_configuration_fails_closed() -> None
             **{
                 **common,
                 "edge_proxy_secret": "e" * 32,
-                "auth_callback_url": "https://nas.example.ts.net/api/v1/auth/callback",
+                "auth_callback_url": "https://origin.example.test/api/v1/auth/callback",
             }
+        )
+
+
+def test_production_email_allowlist_fails_closed() -> None:
+    with pytest.raises(ValueError, match="AUTH_ALLOWED_EMAILS"):
+        Settings(
+            app_env="production",
+            _env_file=None,
+            auth_issuer_url="https://tenant.example/",
+            auth_client_id="client-id",
+            auth_client_secret="client-secret",
+            auth_state_secret="x" * 32,
+            edge_proxy_secret="e" * 32,
+            openai_api_key="openai-key",
+            r2_endpoint_url="https://account.r2.cloudflarestorage.com",
+            r2_access_key_id="access-key",
+            r2_secret_access_key="secret-key",
+            frontend_url="https://cassist.pages.dev",
+            cors_origins=["https://cassist.pages.dev"],
+            auth_callback_url="https://cassist.pages.dev/api/v1/auth/callback",
+            auth_post_logout_redirect_url="https://cassist.pages.dev",
         )

@@ -15,7 +15,7 @@ vi.mock("@/lib/api", () => ({
 const auth = {
   user: {
     display_name: "Alex Morgan",
-    email: "owner@example.test",
+    email: "alex@example.test",
   },
   workspaces: [{ id: "workspace-1", name: "My workspace", role: "owner" }],
 }

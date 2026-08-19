@@ -331,9 +331,9 @@ and device label; IP addresses are not stored. Deleting a user cascades their ap
 - Request only `openid profile email`. Every authorization request forces Auth0's
   `google-oauth2` connection, and a callback is accepted only when the ID token is valid, the
   subject is a Google identity, and `email_verified` is true.
-- Application access is locked to the verified addresses `owner@example.test`,
-  `reviewer@example.test`, and `accountant@example.test`. FastAPI enforces this allowlist both when creating a session and on every
-  session resolution; a previously issued session is revoked if its user is no longer allowed.
+- Application access is restricted to the normalized addresses supplied through
+  `AUTH_ALLOWED_EMAILS`. FastAPI enforces this allowlist both when creating a session and on every
+  session resolution; production refuses to start with an empty allowlist.
 - `external_auth_id` is derived from the verified issuer and subject claims. Email addresses are
   profile data and are never used as the authentication key or for automatic account linking.
 - Provider credentials, the OIDC state-cookie signing secret, and callback URLs come only from
@@ -1248,11 +1248,10 @@ through a five-minute signed URL, and permanently delete the entire record.
 
 ## 15. Development and deployment topology
 
-### Locked rollout decision
+### Portable rollout decision
 
-- All development and testing take place on the developer Mac until the first usable version is ready.
-- Nothing is installed, reconfigured, or exposed on the NAS during initial development.
-- The first private deployment uses the existing NAS rather than a paid VPS.
+- Development and testing take place on a local workstation before deployment.
+- The initial private deployment targets a configurable Linux host.
 - Until a custom domain exists, the private pilot uses the permanent Cloudflare Pages
   `cassist.pages.dev` hostname and a Tailscale Funnel `*.ts.net` origin.
 - The `cassist` Pages project uses Wrangler Direct Upload from the repository. The production
@@ -1269,17 +1268,17 @@ flowchart TD
     USER --> AUTH0["Auth0 Universal Login"]
     AUTH0 --> PROXY
     PROXY --> FUNNEL["Tailscale Funnel<br/>stable *.ts.net HTTPS origin"]
-    FUNNEL --> API["FastAPI container<br/>NAS loopback"]
+    FUNNEL --> API["FastAPI container<br/>host loopback"]
     API --> QUEUE["PostgreSQL-backed job queue"]
-    QUEUE --> WORKER["Strands extraction worker<br/>NAS"]
-    API --> DB[("Dedicated CAssist PostgreSQL<br/>NAS NVMe")]
+    QUEUE --> WORKER["Strands extraction worker<br/>deployment host"]
+    API --> DB[("Dedicated CAssist PostgreSQL<br/>host storage")]
     WORKER --> DB
     API --> R2[("Private Cloudflare R2<br/>original documents")]
     WORKER --> R2
     WORKER --> MODELS["Gemini in development<br/>OpenAI in production"]
     DB -. "encrypted nightly pg_dump" .-> R2
     ADMIN["Administrator"] --> TAILSCALE["Private Tailscale network"]
-    TAILSCALE --> NASADMIN["NAS SSH and administration"]
+    TAILSCALE --> HOSTADMIN["Host SSH and administration"]
 ```
 
 ### Component placement
@@ -1287,9 +1286,9 @@ flowchart TD
 | Component | Initial location | Rule |
 |---|---|---|
 | React frontend and API proxy | Cloudflare Pages | Static production build plus `/api/*` Pages Function; encrypted proxy secret is a Function binding, never a frontend build variable |
-| FastAPI API | NAS container | Reached through Tailscale Funnel and requires the matching Pages proxy secret; image installs from the committed `uv.lock` without development dependencies |
-| Strands worker | NAS container | Same locked backend image; one worker initially; concurrency raised only after measurement |
-| PostgreSQL | Dedicated NAS container on NVMe | Never published to the LAN or internet |
+| FastAPI API | Host container | Reached through private ingress and requires the matching Pages proxy secret; image installs from the committed `uv.lock` without development dependencies |
+| Strands worker | Host container | Same locked backend image; one worker initially; concurrency raised only after measurement |
+| PostgreSQL | Dedicated host container | Never published to the LAN or internet |
 | Originals | Private Cloudflare R2 | Retained until user deletion |
 | Temporary derivatives | Ephemeral worker storage | Deleted after processing |
 | Database backups | Dedicated private R2 backup bucket | PostgreSQL custom dumps are encrypted client-side by Restic before upload; backup credentials are not shared with the originals bucket |
@@ -1298,8 +1297,8 @@ flowchart TD
 
 Pushes to `main` use path-filtered GitHub Actions workflows. Frontend changes test and deploy only
 the Pages project. Backend changes test, publish an immutable AMD64 image to GHCR, join Tailscale as
-an ephemeral `tag:ci` node, and invoke a forced-command NAS SSH identity. The tailnet permits that tag
-to reach only the NAS SSH port, and the NAS identity can run only the root-owned CAssist deploy and
+an ephemeral `tag:ci` node, and invoke a forced-command deployment SSH identity. The private network permits that identity
+to reach only the host SSH port, and the deployment account can run only the root-owned CAssist deploy and
 image-verification commands. Each backend deployment creates an encrypted database backup, applies
 forward-only migrations, health-checks the API through the production edge, and rolls back the API
 image on failure. The worker remains profile-gated and disabled until the OpenAI production-credit
@@ -1312,29 +1311,29 @@ gate is satisfied.
    secret. The Function overwrites any client-supplied proxy header.
 2. FastAPI requires `X-CAssist-Proxy-Secret` in production and returns a generic `404` before route
    handling when it is absent or incorrect. The same random value is stored only as an encrypted
-   Pages binding and a NAS container secret. This prevents use of the public Funnel URL as an API
+   Pages binding and a backend container secret. This prevents use of the public ingress URL as an API
    bypass; Auth0 and application authorization remain mandatory.
 3. The Funnel forwards only to the API's loopback-published port. CAssist does not require router
    port forwarding. Tailscale Serve remains reserved for private administration and is not the
    public ingress mechanism.
-4. SSH, Docker administration, PostgreSQL, metrics, and internal service ports are accessible only through the private Tailscale network or directly from the trusted LAN. Existing family access to other self-hosted services does not grant access to CAssist services.
+4. SSH, Docker administration, PostgreSQL, metrics, and internal service ports are accessible only through the private administration network.
 5. PostgreSQL and the worker have no published ports. R2 remains private; browser upload, preview,
    and download access uses narrowly scoped, short-lived signed URLs.
 
-### NAS operating envelope
+### Self-hosted operating envelope
 
-The deployment target is the existing Debian 13 x86-64 NAS with a x86-64 processor, 16 GB RAM, NVMe system storage, Docker, and Docker Compose. It has sufficient capacity for the private pilot alongside the existing workloads.
+The deployment target is an x86-64 Linux host with Docker and Docker Compose. Operators must size
+CPU, memory, and storage for their document volume and concurrent extraction workload.
 
 - Start with one extraction worker and at most one active document-processing job.
 - Apply CPU and memory limits to every CAssist container.
-- Keep PostgreSQL data and container layers on the NVMe, not the media HDD.
-- Preserve capacity for existing existing workloads.
-- The NAS is protected by an existing UPS; graceful shutdown integration and recovery behavior must be verified before public production.
+- Keep PostgreSQL data and container layers on reliable local storage.
+- Verify graceful shutdown, capacity headroom, and recovery behavior before production use.
 
 The committed production Compose baseline sets API limits to `0.75` CPU/768 MiB, the single worker
 to `2.5` CPU/3 GiB, and PostgreSQL to `1.5` CPU/2 GiB. API and worker run read-only as a non-root user
 with capability dropping, `no-new-privileges`, bounded temporary storage, health checks, and graceful
-stop windows. PostgreSQL data uses an explicit NVMe bind path. Only the API is published, on NAS
+stop windows. PostgreSQL data uses an explicit host bind path. Only the API is published, on host
 loopback port `18000`, for Funnel; the database and worker remain internal.
 
 ### Recovery and portability
@@ -1344,11 +1343,11 @@ loopback port `18000`, for Funnel; the database and worker remain internal.
 2. Keep seven daily, four weekly, and six monthly snapshots, plus any oldest safety snapshot retained
    by Restic. Apply retention and pruning after a successful backup.
 3. Use separate bucket-scoped R2 credentials for backups. Keep the Restic password outside both the
-   NAS and R2; loss of that password makes the backups unrecoverable.
+   deployment host and R2; loss of that password makes the backups unrecoverable.
 4. Test repository integrity and restoration into a clean PostgreSQL container before inviting
    external users and periodically afterward. Never make the only production database the first
    target of a restore test.
-5. Keep production Compose files, migrations, health checks, and configuration documentation in this repository. Treat the NAS as replaceable compute: a clean VPS must be able to run the same images using restored database data and the existing R2 objects.
+5. Keep production Compose files, migrations, health checks, and configuration documentation in this repository. Treat the host as replaceable compute: a clean server must be able to run the same images using restored database data and the existing R2 objects.
 
 ### Deployment order
 
@@ -1357,10 +1356,10 @@ loopback port `18000`, for Funnel; the database and worker remain internal.
 2. Validate encrypted nightly PostgreSQL backups, bounded retention, and a clean-container restore
    test locally.
 3. Create the `cassist.pages.dev` Pages project and production R2 buckets, then restrict originals
-   CORS to the Pages origin. When the NAS rollout is authorized, configure encrypted
+   CORS to the Pages origin. During the host rollout, configure encrypted
    `CASSIST_ORIGIN` and `CASSIST_PROXY_SECRET` Function bindings and update Auth0 callback/logout
    URLs; the deployed API proxy fails closed until those values exist.
-4. Only after explicit authorization, create the NAS directories/network, deploy PostgreSQL/API/one
+4. Create the host directories and network, deploy PostgreSQL/API/one
    worker, run migrations, and point Tailscale Funnel at `127.0.0.1:18000`.
 5. After an OpenAI key is available, run the production-only model and complete vertical promotion
    gates. Gemini and provider comparison must remain unavailable in production.
@@ -1372,4 +1371,6 @@ containers, database, R2 objects, and application routes do not change.
 
 ### Promotion gate
 
-The NAS deployment may serve demonstrations and a small invitation-only pilot after the tunnel, access controls, container limits, monitoring, backup, and restore test are complete. A move to a datacenter VPS is reconsidered when measured load, availability requirements, residential connectivity, or user count exceeds the NAS operating envelope.
+The self-hosted deployment may serve demonstrations and a small invitation-only pilot after ingress,
+access controls, container limits, monitoring, backup, and restore tests are complete. Move to managed
+infrastructure when measured load or availability requirements exceed the host operating envelope.

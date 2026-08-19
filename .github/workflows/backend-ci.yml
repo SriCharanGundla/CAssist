@@ -47,7 +47,7 @@ jobs:
         run: docker compose --env-file .env.production.example --file compose.production.yaml config --quiet
         env:
           CASSIST_ENV_FILE: .env.production.example
-      - name: Check NAS deployment scripts
+      - name: Check self-hosted deployment scripts
         working-directory: .
         run: |
           shellcheck deploy/nas/cassist-deploy-backend
