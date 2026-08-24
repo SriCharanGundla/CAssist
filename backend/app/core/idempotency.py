@@ -1,29 +1,74 @@
 import base64
 import hashlib
 import logging
+import secrets
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Protocol, cast
 
 from fastapi import Request
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.types import ASGIApp
 
 from app.core.config import Settings
 from app.core.database import idempotency_session_factory
-from app.models import IdempotencyRecord
+from app.core.safe_logging import safe_exception_context
+from app.models import AuthSession, IdempotencyRecord
+from app.services.auth import csrf_token_for_session
 
 _MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _REPLAYED_HEADERS = frozenset({"cache-control", "content-disposition", "content-type", "location"})
 logger = logging.getLogger("cassist.idempotency")
 
 
+class _BodyIteratorResponse(Protocol):
+    body_iterator: AsyncIterator[bytes]
+
+
 def _error(message: str, status_code: int) -> JSONResponse:
     return JSONResponse({"detail": message}, status_code=status_code)
 
 
+async def _read_bounded_body(request: Request, limit: int) -> bytes | None:
+    declared_length = request.headers.get("content-length")
+    if declared_length is not None:
+        try:
+            if int(declared_length) > limit:
+                return None
+        except ValueError:
+            return None
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > limit:
+            return None
+        body.extend(chunk)
+    bounded_body = bytes(body)
+    request._body = bounded_body  # Starlette replays this body to downstream handlers.
+    return bounded_body
+
+
+async def _active_session_hash(
+    session_hash: str,
+    now: datetime,
+) -> str | None:
+    async with idempotency_session_factory() as session:
+        active_session_hash = await session.scalar(
+            select(AuthSession.token_hash).where(
+                AuthSession.token_hash == session_hash,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.idle_expires_at > now,
+                AuthSession.absolute_expires_at > now,
+            )
+        )
+    return active_session_hash
+
+
 class IdempotencyMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, settings: Settings) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
         super().__init__(app)
         self.settings = settings
 
@@ -43,16 +88,27 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         session_token = request.cookies.get(self.settings.auth_session_cookie_name)
         if not session_token:
             return await call_next(request)
-        body = await request.body()
+        now = datetime.now(UTC)
+        session_hash = hashlib.sha256(session_token.encode()).hexdigest()
+        if await _active_session_hash(session_hash, now) is None:
+            return await call_next(request)
+        csrf_token = request.headers.get("x-csrf-token")
+        if (
+            request.headers.get("origin") not in self.settings.cors_origins
+            or csrf_token is None
+            or not secrets.compare_digest(csrf_token, csrf_token_for_session(session_token))
+        ):
+            return await call_next(request)
+        body = await _read_bounded_body(request, self.settings.idempotency_max_request_bytes)
+        if body is None:
+            return _error("Request body is too large for idempotent processing", 413)
         request_target = request.url.path
         if request.url.query:
             request_target = f"{request_target}?{request.url.query}"
-        session_hash = hashlib.sha256(session_token.encode()).hexdigest()
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         request_hash = hashlib.sha256(
             request.method.encode() + b"\0" + request_target.encode() + b"\0" + body
         ).hexdigest()
-        now = datetime.now(UTC)
 
         async with idempotency_session_factory() as session:
             await session.execute(
@@ -102,7 +158,6 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
-            response_body = b"".join([chunk async for chunk in response.body_iterator])
         except Exception:
             async with idempotency_session_factory() as session:
                 await session.execute(
@@ -111,31 +166,58 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 await session.commit()
             raise
 
-        if response.status_code >= 500:
-            async with idempotency_session_factory() as session:
-                await session.execute(
-                    delete(IdempotencyRecord).where(IdempotencyRecord.id == record.id)
-                )
-                await session.commit()
-        else:
-            replayed_headers = {
-                name: value
-                for name, value in response.headers.items()
-                if name.casefold() in _REPLAYED_HEADERS
-            }
+        replayed_headers = {
+            name: value
+            for name, value in response.headers.items()
+            if name.casefold() in _REPLAYED_HEADERS
+        }
+
+        async def bounded_response_body() -> AsyncIterator[bytes]:
+            response_body = bytearray()
+            replayable = response.status_code < 500
+            completed = False
             try:
-                async with idempotency_session_factory() as session:
-                    stored = await session.get(IdempotencyRecord, record.id, with_for_update=True)
-                    if stored is not None:
-                        stored.completed = True
-                        stored.response_status = response.status_code
-                        stored.response_headers = replayed_headers
-                        stored.response_body = base64.b64encode(response_body).decode()
-                        await session.commit()
-            except Exception:
-                logger.error("Idempotency response persistence failed")
-        return Response(
-            content=response_body,
+                body_iterator = cast(_BodyIteratorResponse, response).body_iterator
+                async for chunk in body_iterator:
+                    if replayable and (
+                        len(response_body) + len(chunk)
+                        <= self.settings.idempotency_max_response_bytes
+                    ):
+                        response_body.extend(chunk)
+                    else:
+                        replayable = False
+                    yield chunk
+                completed = True
+            finally:
+                try:
+                    async with idempotency_session_factory() as session:
+                        stored = await session.get(
+                            IdempotencyRecord,
+                            record.id,
+                            with_for_update=True,
+                        )
+                        if stored is not None:
+                            if not completed or not replayable:
+                                await session.delete(stored)
+                            else:
+                                stored.completed = True
+                                stored.response_status = response.status_code
+                                stored.response_headers = replayed_headers
+                                stored.response_body = base64.b64encode(response_body).decode()
+                            await session.commit()
+                except Exception as exc:
+                    logger.error(
+                        "Idempotency response finalization failed",
+                        extra={
+                            "idempotency_record_id": str(record.id),
+                            **safe_exception_context(exc),
+                        },
+                    )
+
+        streamed = StreamingResponse(
+            bounded_response_body(),
             status_code=response.status_code,
-            headers=dict(response.headers),
+            background=response.background,
         )
+        streamed.raw_headers = response.raw_headers
+        return streamed

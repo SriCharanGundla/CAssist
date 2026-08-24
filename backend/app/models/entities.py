@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -32,7 +33,7 @@ from app.models.enums import (
 )
 
 
-def enum_values(enum_class: type) -> list[str]:
+def enum_values(enum_class: type[Enum]) -> list[str]:
     return [member.value for member in enum_class]
 
 

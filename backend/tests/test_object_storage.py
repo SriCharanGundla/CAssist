@@ -49,3 +49,27 @@ def test_download_signing_failure_uses_safe_error() -> None:
 
     with pytest.raises(ObjectStorageError, match="Unable to create a download URL"):
         storage.create_download_url("originals/opaque-id", 300)
+
+
+def test_upload_url_signs_declared_content_length_and_type() -> None:
+    client = SigningClient()
+    storage = _storage(client)
+
+    signed = storage.create_upload_url("incoming/opaque-id", "application/pdf", 1234, 300)
+
+    assert signed.headers == {
+        "Content-Type": "application/pdf",
+        "Content-Length": "1234",
+    }
+    assert client.calls == [
+        (
+            "put_object",
+            {
+                "Bucket": "private-originals",
+                "Key": "incoming/opaque-id",
+                "ContentType": "application/pdf",
+                "ContentLength": 1234,
+            },
+            300,
+        )
+    ]

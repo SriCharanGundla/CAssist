@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import Settings, settings
 from app.core.database import async_session_factory, engine
+from app.core.safe_logging import safe_exception_context
 from app.services.object_deletion import process_one_object_deletion
 from app.services.object_storage import R2ObjectStorage
 from app.services.session_cleanup import cleanup_expired_sessions
@@ -51,8 +52,14 @@ async def run_worker(
         try:
             processed = await process()
             error_backoff_seconds = app_settings.worker_poll_seconds
-        except Exception:
-            logger.error("Worker iteration failed; retrying with bounded backoff")
+        except Exception as exc:
+            logger.error(
+                "Worker iteration failed; retrying with bounded backoff",
+                extra={
+                    "backoff_seconds": error_backoff_seconds,
+                    **safe_exception_context(exc),
+                },
+            )
             processed = False
             iteration_failed = True
         if processed or stopping.is_set():

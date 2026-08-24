@@ -15,7 +15,14 @@ from sqlalchemy.pool import NullPool
 from app.api.dependencies import get_app_settings, get_database_session, get_object_storage
 from app.core.config import Settings
 from app.main import app
-from app.models import Document, DocumentStatus, ProcessingRun, RunStatus, WorkspaceMember
+from app.models import (
+    Document,
+    DocumentStatus,
+    PendingObjectDeletion,
+    ProcessingRun,
+    RunStatus,
+    WorkspaceMember,
+)
 from app.services.auth import establish_session
 from app.services.identity_provider import VerifiedIdentity
 from app.services.object_storage import (
@@ -30,23 +37,28 @@ from app.services.upload_cleanup import cleanup_one_expired_upload
 class FakeObjectStorage:
     def __init__(self, *, should_fail: bool = False) -> None:
         self.should_fail = should_fail
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple[str, str, int, int]] = []
         self.objects: dict[str, tuple[bytes, str]] = {}
         self.opened_keys: list[str] = []
         self.deleted_keys: list[str] = []
+        self.failed_deletion_keys: set[str] = set()
 
     def create_upload_url(
         self,
         object_key: str,
         content_type: str,
+        content_length: int,
         expires_in: int,
     ) -> PresignedUpload:
-        self.calls.append((object_key, content_type, expires_in))
+        self.calls.append((object_key, content_type, content_length, expires_in))
         if self.should_fail:
             raise ObjectStorageError("simulated signing failure")
         return PresignedUpload(
             url="https://upload.invalid/signed-target",
-            headers={"Content-Type": content_type},
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(content_length),
+            },
         )
 
     def open_object(self, object_key: str) -> StoredObject:
@@ -74,6 +86,8 @@ class FakeObjectStorage:
 
     def delete_object(self, object_key: str) -> None:
         self.deleted_keys.append(object_key)
+        if object_key in self.failed_deletion_keys:
+            raise ObjectStorageError("simulated deletion failure")
         self.objects.pop(object_key, None)
 
 
@@ -172,7 +186,10 @@ async def test_create_upload_authorizes_workspace_and_uses_an_opaque_key(
     payload = response.json()
     assert payload["upload"]["method"] == "PUT"
     assert payload["upload"]["url"] == "https://upload.invalid/signed-target"
-    assert payload["upload"]["headers"] == {"Content-Type": "application/pdf"}
+    assert payload["upload"]["headers"] == {
+        "Content-Type": "application/pdf",
+        "Content-Length": "483921",
+    }
 
     document = await session.get(Document, payload["document_id"])
     assert document is not None
@@ -194,6 +211,7 @@ async def test_create_upload_authorizes_workspace_and_uses_an_opaque_key(
         (
             document.r2_object_key,
             "application/pdf",
+            483_921,
             settings.r2_presigned_url_ttl_seconds,
         )
     ]
@@ -585,6 +603,63 @@ async def test_complete_upload_is_idempotent_after_queueing(
     assert first.status_code == 202
     assert second.status_code == 202
     assert second.json()["status"] == "uploaded"
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    [DocumentStatus.NEEDS_CONFIRMATION, DocumentStatus.UNSUPPORTED],
+)
+@pytest.mark.asyncio
+async def test_complete_upload_retry_accepts_classification_terminal_statuses(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+    terminal_status: DocumentStatus,
+) -> None:
+    client, session, _, _ = authenticated_upload_client
+    document = Document(
+        workspace_id=(await session.scalar(select(WorkspaceMember.workspace_id))),
+        uploaded_by_user_id=(await session.scalar(select(WorkspaceMember.user_id))),
+        original_filename="classified.pdf",
+        mime_type="application/pdf",
+        byte_size=1,
+        status=terminal_status,
+    )
+    session.add(document)
+    await session.commit()
+
+    response = await client.post(f"/api/v1/uploads/{document.id}/complete")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == terminal_status.value
+
+
+@pytest.mark.asyncio
+async def test_completed_upload_tracks_failed_incoming_object_deletion(
+    authenticated_upload_client: tuple[AsyncClient, AsyncSession, FakeObjectStorage, Settings],
+) -> None:
+    client, session, storage, _ = authenticated_upload_client
+    content = b"%PDF-tracked-cleanup"
+    create_response = await client.post(
+        "/api/v1/uploads",
+        json={
+            "filename": "cleanup.pdf",
+            "mime_type": "application/pdf",
+            "byte_size": len(content),
+        },
+    )
+    document = await session.get(Document, create_response.json()["document_id"])
+    assert document is not None and document.r2_object_key is not None
+    incoming_key = document.r2_object_key
+    storage.objects[incoming_key] = (content, "application/pdf")
+    storage.failed_deletion_keys.add(incoming_key)
+
+    response = await client.post(f"/api/v1/uploads/{document.id}/complete")
+
+    assert response.status_code == 202
+    pending = await session.scalar(
+        select(PendingObjectDeletion).where(PendingObjectDeletion.object_key == incoming_key)
+    )
+    assert pending is not None
+    assert pending.attempt_count == 1
     runs = (
         await session.scalars(select(ProcessingRun).where(ProcessingRun.document_id == document.id))
     ).all()

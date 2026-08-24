@@ -64,10 +64,7 @@ export function SettingsPage({ auth }) {
       >
         <RiArrowLeftSLine /> Back
       </Button>
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        Account
-      </p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight">Settings</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
 
       <div className="mt-7 grid gap-5 md:grid-cols-2">
         <SettingCard title="Profile">

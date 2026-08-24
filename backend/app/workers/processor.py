@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings, settings
 from app.core.database import async_session_factory
+from app.core.safe_logging import safe_exception_context
 from app.models import (
     AuditEvent,
     Document,
@@ -21,6 +23,7 @@ from app.models import (
     RunStatus,
 )
 from app.schemas.extraction import DocumentClassification
+from app.services.model_costs import estimate_model_cost_usd
 from app.services.model_provider import (
     ExtractionProvider,
     ModelSelection,
@@ -45,6 +48,7 @@ from app.services.preprocessing import (
 )
 
 DEFAULT_WORKER_ID = f"worker-{uuid4().hex}"
+logger = logging.getLogger("cassist.worker.processor")
 _ACTIVE_STATUSES = (
     RunStatus.PREPROCESSING,
     RunStatus.EXTRACTING,
@@ -240,6 +244,7 @@ async def _complete_run(
     claim: ClaimedRun,
     worker_id: str,
     extraction: ProviderExtraction,
+    estimated_cost_usd: Decimal | None,
 ) -> bool:
     async with session_factory() as session:
         run_and_document = (
@@ -285,6 +290,7 @@ async def _complete_run(
         run.lease_expires_at = None
         run.input_tokens = extraction.input_tokens
         run.output_tokens = extraction.output_tokens
+        run.estimated_cost_usd = estimated_cost_usd
         run.completed_at = completed_at
         document.status = DocumentStatus.READY
         document.updated_at = completed_at
@@ -297,6 +303,7 @@ async def _block_run_for_scope(
     claim: ClaimedRun,
     worker_id: str,
     decision: ProviderScopeBlocked,
+    estimated_cost_usd: Decimal | None,
 ) -> bool:
     async with session_factory() as session:
         run_and_document = (
@@ -332,6 +339,7 @@ async def _block_run_for_scope(
         run.classification_reason_code = classification.reason_code
         run.input_tokens = decision.input_tokens
         run.output_tokens = decision.output_tokens
+        run.estimated_cost_usd = estimated_cost_usd
         run.worker_id = None
         run.lease_expires_at = None
         run.completed_at = completed_at
@@ -602,7 +610,19 @@ async def process_next_document(
         ):
             await _acknowledge_cancellation(session_factory, claim, worker_id)
             return False
-        completed = await _complete_run(session_factory, claim, worker_id, extraction)
+        estimated_cost_usd = estimate_model_cost_usd(
+            claim.model_selection,
+            extraction.input_tokens,
+            extraction.output_tokens,
+            app_settings,
+        )
+        completed = await _complete_run(
+            session_factory,
+            claim,
+            worker_id,
+            extraction,
+            estimated_cost_usd,
+        )
         if not completed:
             await _acknowledge_cancellation(session_factory, claim, worker_id)
         return completed
@@ -612,7 +632,19 @@ async def process_next_document(
     except ProviderScopeBlocked as decision:
         if await _acknowledge_cancellation(session_factory, claim, worker_id):
             return True
-        await _block_run_for_scope(session_factory, claim, worker_id, decision)
+        estimated_cost_usd = estimate_model_cost_usd(
+            claim.model_selection,
+            decision.input_tokens,
+            decision.output_tokens,
+            app_settings,
+        )
+        await _block_run_for_scope(
+            session_factory,
+            claim,
+            worker_id,
+            decision,
+            estimated_cost_usd,
+        )
         return True
     except ProviderConfigurationError:
         if await _acknowledge_cancellation(session_factory, claim, worker_id):
@@ -644,7 +676,15 @@ async def process_next_document(
                 "The model provider remained busy after automatic retries",
             )
         return True
-    except ProviderExtractionError:
+    except ProviderExtractionError as exc:
+        logger.error(
+            "Model extraction failed",
+            extra={
+                "run_id": str(claim.run_id),
+                "worker_id": worker_id,
+                **safe_exception_context(exc),
+            },
+        )
         if await _acknowledge_cancellation(session_factory, claim, worker_id):
             return True
         await _fail_run(
@@ -688,7 +728,15 @@ async def process_next_document(
             exc.safe_message,
         )
         return True
-    except Exception:
+    except Exception as exc:
+        logger.error(
+            "Unexpected document processing failure",
+            extra={
+                "run_id": str(claim.run_id),
+                "worker_id": worker_id,
+                **safe_exception_context(exc),
+            },
+        )
         if await _acknowledge_cancellation(session_factory, claim, worker_id):
             return True
         await _fail_run(

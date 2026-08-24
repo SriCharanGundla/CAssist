@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
@@ -136,7 +136,9 @@ async def require_workspace_member(
     )
 
 
-def require_workspace_roles(*allowed_roles: MemberRole):
+def require_workspace_roles(
+    *allowed_roles: MemberRole,
+) -> Callable[[WorkspaceAccess], Awaitable[WorkspaceAccess]]:
     async def dependency(
         access: Annotated[WorkspaceAccess, Depends(require_workspace_member)],
     ) -> WorkspaceAccess:

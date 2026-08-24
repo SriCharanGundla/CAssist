@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 class CanonicalModel(BaseModel):
@@ -59,7 +59,7 @@ class DraftTable(CanonicalModel):
 
     @field_validator("rows")
     @classmethod
-    def validate_rows(cls, rows: list[list[str]], info) -> list[list[str]]:
+    def validate_rows(cls, rows: list[list[str]], info: ValidationInfo) -> list[list[str]]:
         header_count = len(info.data.get("headers", []))
         if any(len(row) != header_count for row in rows):
             raise ValueError("Every table row must match the header count")

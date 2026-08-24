@@ -26,6 +26,7 @@ from app.models import (
     WorkspaceMember,
 )
 from app.schemas.uploads import (
+    AllowedUploadMimeType,
     CompleteUploadResponse,
     CreateUploadRequest,
     CreateUploadResponse,
@@ -41,7 +42,11 @@ from app.services.upload_verification import UploadValidationError, verify_uploa
 
 router = APIRouter(prefix="/uploads")
 _STORAGE_QUOTA_ADVISORY_LOCK_ID = 1_434_152_835
-_ACCEPTED_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png"]
+_ACCEPTED_MIME_TYPES: list[AllowedUploadMimeType] = [
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+]
 _ACCEPTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"]
 
 
@@ -280,6 +285,7 @@ async def create_upload(
         upload = storage.create_upload_url(
             object_key,
             payload.mime_type,
+            payload.byte_size,
             app_settings.r2_presigned_url_ttl_seconds,
         )
         await session.commit()
@@ -418,13 +424,13 @@ async def complete_upload(
                 existing_document.original_deleted_at = None
                 existing_document.original_deleted_by = None
                 existing_document.updated_at = datetime.now(UTC)
+            pending_deletion = enqueue_object_deletion(session, incoming_key)
             await session.delete(document)
+            await session.flush()
+            deletion_ids = [pending_deletion.id] if pending_deletion is not None else []
             await session.commit()
             committed = True
-            try:
-                await run_in_threadpool(storage.delete_object, incoming_key)
-            except ObjectStorageError:
-                pass
+            await flush_enqueued_deletions(session, storage, deletion_ids)
             return CompleteUploadResponse(
                 document_id=existing_id,
                 status=existing_status,
@@ -457,12 +463,12 @@ async def complete_upload(
                 attempt_count=0,
             )
         )
+        pending_deletion = enqueue_object_deletion(session, incoming_key)
+        await session.flush()
+        deletion_ids = [pending_deletion.id] if pending_deletion is not None else []
         await session.commit()
         committed = True
-        try:
-            await run_in_threadpool(storage.delete_object, incoming_key)
-        except ObjectStorageError:
-            pass
+        await flush_enqueued_deletions(session, storage, deletion_ids)
         return CompleteUploadResponse(document_id=document.id, status=document.status)
     except ObjectStorageError as exc:
         await session.rollback()

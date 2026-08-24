@@ -31,9 +31,9 @@ from app.services.auth import (
     CsrfValidationError,
     CurrentAuth,
     SessionCredentials,
+    csrf_token_for_session,
     establish_session,
     revoke_session,
-    rotate_csrf_token,
     session_device_label,
     validate_return_to,
     verify_request_origin,
@@ -49,18 +49,15 @@ def set_auth_cookies(
     settings: Settings,
 ) -> None:
     max_age = max(0, int((credentials.absolute_expires_at - datetime.now(UTC)).total_seconds()))
-    cookie_options = {
-        "max_age": max_age,
-        "expires": credentials.absolute_expires_at,
-        "secure": settings.auth_cookie_secure,
-        "samesite": "lax",
-        "path": "/",
-    }
     response.set_cookie(
         settings.auth_session_cookie_name,
         credentials.session_token,
         httponly=True,
-        **cookie_options,
+        max_age=max_age,
+        expires=credentials.absolute_expires_at,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
     )
 
 
@@ -80,7 +77,7 @@ async def login(
     provider: Annotated[IdentityProvider, Depends(get_identity_provider)],
     app_settings: Annotated[Settings, Depends(get_app_settings)],
     return_to: Annotated[str | None, Query()] = None,
-):
+) -> Response:
     try:
         safe_return_to = validate_return_to(return_to)
     except ValueError as exc:
@@ -98,7 +95,7 @@ async def callback(
     provider: Annotated[IdentityProvider, Depends(get_identity_provider)],
     app_settings: Annotated[Settings, Depends(get_app_settings)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
-):
+) -> RedirectResponse:
     try:
         identity = await provider.complete_login(request)
         return_to = validate_return_to(identity.return_to)
@@ -169,7 +166,6 @@ async def csrf_token(
     request: Request,
     current_auth: Annotated[CurrentAuth, Depends(get_current_auth)],
     app_settings: Annotated[Settings, Depends(get_app_settings)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
 ) -> JSONResponse:
     try:
         verify_request_origin(request, app_settings)
@@ -178,7 +174,13 @@ async def csrf_token(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CSRF validation failed",
         ) from exc
-    token = await rotate_csrf_token(session, current_auth.session_id)
+    raw_session_token = request.cookies.get(app_settings.auth_session_cookie_name)
+    if not raw_session_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication is required",
+        )
+    token = csrf_token_for_session(raw_session_token)
     return JSONResponse(
         CsrfTokenResponse(csrf_token=token).model_dump(),
         headers={"Cache-Control": "no-store"},

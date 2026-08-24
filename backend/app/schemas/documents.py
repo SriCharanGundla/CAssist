@@ -26,6 +26,9 @@ class RunSummaryResponse(BaseModel):
     review_status: ReviewStatus | None
     classification_scope: Literal["supported", "unrelated", "uncertain"] | None
     classification_reason_code: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    estimated_cost_usd: str | None
 
 
 class DocumentDetailResponse(BaseModel):

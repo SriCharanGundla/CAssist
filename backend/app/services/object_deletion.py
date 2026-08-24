@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,7 @@ async def process_one_object_deletion(
     session: AsyncSession,
     storage: ObjectStorage,
     *,
-    deletion_id=None,
+    deletion_id: UUID | None = None,
 ) -> bool:
     statement = select(PendingObjectDeletion).order_by(PendingObjectDeletion.created_at).limit(1)
     if deletion_id is not None:

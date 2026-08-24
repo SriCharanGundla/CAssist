@@ -41,7 +41,7 @@ async def _authorized_result_for_run(
     run_id: UUID,
     user_id: UUID,
 ) -> tuple[ExtractionResult, ProcessingRun, Document] | None:
-    return (
+    row = (
         await session.execute(
             select(ExtractionResult, ProcessingRun, Document)
             .join(ProcessingRun, ProcessingRun.id == ExtractionResult.processing_run_id)
@@ -53,6 +53,7 @@ async def _authorized_result_for_run(
             )
         )
     ).one_or_none()
+    return tuple(row) if row is not None else None
 
 
 async def _authorized_result_by_id(
@@ -74,7 +75,8 @@ async def _authorized_result_by_id(
     )
     if lock:
         statement = statement.with_for_update(of=ExtractionResult)
-    return (await session.execute(statement)).one_or_none()
+    row = (await session.execute(statement)).one_or_none()
+    return tuple(row) if row is not None else None
 
 
 async def _corrections_for_result(

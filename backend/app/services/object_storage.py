@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import BinaryIO, Protocol
+from typing import IO, BinaryIO, Protocol
 
 import boto3
 from botocore.exceptions import ClientError
@@ -38,6 +38,7 @@ class ObjectStorage(Protocol):
         self,
         object_key: str,
         content_type: str,
+        content_length: int,
         expires_in: int,
     ) -> PresignedUpload: ...
 
@@ -52,7 +53,7 @@ class ObjectStorage(Protocol):
     def put_object(
         self,
         object_key: str,
-        body: BinaryIO,
+        body: IO[bytes],
         content_type: str,
         content_length: int,
     ) -> None: ...
@@ -78,6 +79,7 @@ class R2ObjectStorage:
         self,
         object_key: str,
         content_type: str,
+        content_length: int,
         expires_in: int,
     ) -> PresignedUpload:
         try:
@@ -87,6 +89,7 @@ class R2ObjectStorage:
                     "Bucket": self.bucket_name,
                     "Key": object_key,
                     "ContentType": content_type,
+                    "ContentLength": content_length,
                 },
                 ExpiresIn=expires_in,
             )
@@ -94,7 +97,10 @@ class R2ObjectStorage:
             raise ObjectStorageError("Unable to create an upload URL") from exc
         return PresignedUpload(
             url=url,
-            headers={"Content-Type": content_type},
+            headers={
+                "Content-Type": content_type,
+                "Content-Length": str(content_length),
+            },
         )
 
     def create_download_url(
@@ -135,7 +141,7 @@ class R2ObjectStorage:
     def put_object(
         self,
         object_key: str,
-        body: BinaryIO,
+        body: IO[bytes],
         content_type: str,
         content_length: int,
     ) -> None:

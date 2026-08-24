@@ -1,11 +1,16 @@
+import logging
 import re
+from collections.abc import Mapping
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.safe_logging import safe_exception_context
+
 _SAFE_CODE = re.compile(r"[^A-Z0-9]+")
+logger = logging.getLogger("cassist.api")
 
 
 def new_request_id() -> str:
@@ -23,7 +28,7 @@ def _error_response(
     code: str,
     message: str,
     details: dict[str, object] | None = None,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     request_id = _request_id(request)
     return JSONResponse(
@@ -36,7 +41,7 @@ def _error_response(
                 "details": details or {},
             }
         },
-        headers={**(headers or {}), "X-Request-ID": request_id},
+        headers={**dict(headers or {}), "X-Request-ID": request_id},
     )
 
 
@@ -82,7 +87,16 @@ async def validation_exception_handler(
     )
 
 
-async def unhandled_exception_handler(request: Request, _: Exception) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "Unhandled API exception",
+        extra={
+            "request_id": _request_id(request),
+            "request_method": request.method,
+            "request_path": request.url.path,
+            **safe_exception_context(exc),
+        },
+    )
     return _error_response(
         request,
         status_code=500,

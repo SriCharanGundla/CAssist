@@ -1,3 +1,5 @@
+from typing import Literal, cast
+
 from app.models import Document, ExtractionResult, ProcessingRun, ProcessingStage, RunStatus
 from app.schemas.documents import (
     RunDetailResponse,
@@ -35,8 +37,16 @@ def run_summary(
         cancellation_requested_at=run.cancellation_requested_at,
         result_id=result.id if result is not None else None,
         review_status=result.review_status if result is not None else None,
-        classification_scope=run.classification_scope,
+        classification_scope=cast(
+            Literal["supported", "unrelated", "uncertain"] | None,
+            run.classification_scope,
+        ),
         classification_reason_code=run.classification_reason_code,
+        input_tokens=run.input_tokens,
+        output_tokens=run.output_tokens,
+        estimated_cost_usd=(
+            str(run.estimated_cost_usd) if run.estimated_cost_usd is not None else None
+        ),
     )
 
 

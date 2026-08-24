@@ -1,10 +1,13 @@
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from app.api.errors import (
     http_exception_handler,
@@ -23,7 +26,7 @@ configure_safe_access_logging()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     await engine.dispose()
     await idempotency_engine.dispose()
@@ -37,7 +40,10 @@ app = FastAPI(
 
 
 @app.middleware("http")
-async def attach_request_id(request: Request, call_next):
+async def attach_request_id(
+    request: Request,
+    call_next: RequestResponseEndpoint,
+) -> Response:
     request.state.request_id = new_request_id()
     if not edge_proxy_authorized(request.headers.get(EDGE_PROXY_HEADER), settings):
         return JSONResponse(
@@ -57,8 +63,8 @@ async def attach_request_id(request: Request, call_next):
     return response
 
 
-app.add_exception_handler(HTTPException, http_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(HTTPException, cast(Any, http_exception_handler))
+app.add_exception_handler(RequestValidationError, cast(Any, validation_exception_handler))
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.add_middleware(

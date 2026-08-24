@@ -39,6 +39,7 @@ async def test_worker_processes_sequentially_until_stopped() -> None:
 async def test_worker_recovers_from_safe_iteration_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level("ERROR", logger="cassist.worker")
     stop_event = asyncio.Event()
     calls = 0
 

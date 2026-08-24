@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.api.dependencies import get_app_settings, get_database_session, get_object_storage
-from app.api.routes.documents import _comparison_differences
+from app.api.routes.document_comparisons import _comparison_differences
 from app.core.config import Settings
 from app.main import app
 from app.models import (
@@ -97,6 +97,7 @@ class DocumentObjectStorage:
         self,
         object_key: str,
         content_type: str,
+        content_length: int,
         expires_in: int,
     ) -> PresignedUpload:
         raise NotImplementedError
@@ -538,14 +539,15 @@ async def test_run_detail_reports_safe_progress_and_result_link(
         "total_pages": 1,
     }
     assert payload["error"] is None
+    assert payload["input_tokens"] is None
+    assert payload["output_tokens"] is None
+    assert payload["estimated_cost_usd"] is None
     for private_field in (
         "worker_id",
         "lease_expires_at",
         "prompt_version",
         "schema_version",
         "preprocessing_version",
-        "input_tokens",
-        "output_tokens",
     ):
         assert private_field not in payload
 
@@ -961,7 +963,17 @@ async def test_idempotency_key_is_accepted_and_validated(
         UUID,
         UUID,
     ],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def active_test_session(session_hash: str, _: datetime) -> str:
+        # The fixture's outer rollback transaction intentionally hides its auth
+        # session from the middleware's independent idempotency connection.
+        return session_hash
+
+    monkeypatch.setattr(
+        "app.core.idempotency._active_session_hash",
+        active_test_session,
+    )
     client, _, storage, _, _, _, document_id, _ = document_client
     accepted = await client.post(
         f"/api/v1/documents/{document_id}/view-url",

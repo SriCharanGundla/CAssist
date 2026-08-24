@@ -63,6 +63,7 @@ class WorkerObjectStorage:
         self,
         object_key: str,
         content_type: str,
+        content_length: int,
         expires_in: int,
     ) -> PresignedUpload:
         raise NotImplementedError
@@ -272,27 +273,31 @@ async def worker_database() -> AsyncIterator[
     engine = create_async_engine(settings.database_url, poolclass=NullPool)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     identity = uuid4().hex
-    async with factory() as session:
-        user = User(
-            external_auth_id=f"worker|{identity}",
-            email=f"worker-{identity}@example.com",
-            display_name="Worker Test",
-        )
-        session.add(user)
-        await session.flush()
-        workspace = Workspace(name="Worker Test", created_by_user_id=user.id)
-        session.add(workspace)
-        await session.flush()
-        session.add(
-            WorkspaceMember(
-                workspace_id=workspace.id,
-                user_id=user.id,
-                role=MemberRole.OWNER,
+    try:
+        async with factory() as session:
+            user = User(
+                external_auth_id=f"worker|{identity}",
+                email=f"worker-{identity}@example.com",
+                display_name="Worker Test",
             )
-        )
-        await session.commit()
-        user_id = user.id
-        workspace_id = workspace.id
+            session.add(user)
+            await session.flush()
+            workspace = Workspace(name="Worker Test", created_by_user_id=user.id)
+            session.add(workspace)
+            await session.flush()
+            session.add(
+                WorkspaceMember(
+                    workspace_id=workspace.id,
+                    user_id=user.id,
+                    role=MemberRole.OWNER,
+                )
+            )
+            await session.commit()
+            user_id = user.id
+            workspace_id = workspace.id
+    except OSError:
+        await engine.dispose()
+        pytest.skip("Local PostgreSQL is unavailable")
 
     try:
         yield factory, user_id, workspace_id, settings

@@ -19,6 +19,7 @@ class MemoryObjectStorage:
         self,
         object_key: str,
         content_type: str,
+        content_length: int,
         expires_in: int,
     ) -> PresignedUpload:
         raise NotImplementedError

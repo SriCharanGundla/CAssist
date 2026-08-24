@@ -44,6 +44,14 @@ function RunCard({ run }) {
           </dd>
         </div>
         <div>
+          <dt className="text-muted-foreground">Estimated cost</dt>
+          <dd className="mt-1 font-medium">
+            {run.estimated_cost_usd === null
+              ? "—"
+              : `$${Number(run.estimated_cost_usd).toFixed(6)}`}
+          </dd>
+        </div>
+        <div>
           <dt className="text-muted-foreground">Quality flags</dt>
           <dd className="mt-1 font-medium">{run.quality_issue_count ?? "—"}</dd>
         </div>
@@ -152,12 +160,7 @@ export function ComparePage() {
       >
         <RiArrowLeftSLine /> Back
       </Button>
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        Development only
-      </p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-        Compare models
-      </h1>
+      <h1 className="text-3xl font-semibold tracking-tight">Compare models</h1>
       <p className="mt-2 truncate text-sm text-muted-foreground">
         {documentQuery.data?.original_filename || "Loading document…"}
       </p>

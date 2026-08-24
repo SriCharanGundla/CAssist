@@ -41,7 +41,8 @@ jobs:
       - run: uv sync --locked --dev
       - run: uv run alembic upgrade head
       - run: uv run ruff check .
-      - run: uv run pytest -q
+      - run: uv run mypy app
+      - run: uv run pytest -q --cov --cov-report=term-missing
       - name: Validate production Compose configuration
         working-directory: deploy
         run: docker compose --env-file .env.production.example --file compose.production.yaml config --quiet

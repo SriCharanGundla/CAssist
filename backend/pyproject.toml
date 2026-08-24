@@ -31,8 +31,10 @@ cassist-worker = "app.workers.main:main"
 
 [dependency-groups]
 dev = [
+  "mypy>=1.18",
   "pytest>=8.3",
   "pytest-asyncio>=0.25",
+  "pytest-cov>=7.0",
   "ruff>=0.9",
 ]
 
@@ -41,6 +43,25 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_incomplete_defs = true
+follow_imports = "silent"
+ignore_missing_imports = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = true
 
 [tool.ruff]
 line-length = 100

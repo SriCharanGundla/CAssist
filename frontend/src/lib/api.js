@@ -175,7 +175,11 @@ function uploadToPrivateStorage(file, upload, { onProgress, signal } = {}) {
     const abort = () => request.abort()
     request.open(upload.method, upload.url)
     for (const [name, value] of Object.entries(upload.headers)) {
-      request.setRequestHeader(name, value)
+      // Browsers set Content-Length from the immutable File body. R2 still
+      // verifies that automatically-generated value against the signed header.
+      if (name.toLowerCase() !== "content-length") {
+        request.setRequestHeader(name, value)
+      }
     }
     request.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {

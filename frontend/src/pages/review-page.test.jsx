@@ -175,6 +175,11 @@ describe("ReviewPage", () => {
     expect(screen.queryByAltText("Original document")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Show document" })).toBeEnabled()
     expect(localStorage.getItem("cassist-review-source-visible")).toBe("false")
+    const tableCard = screen.getByText("Items").closest("section")
+    expect(tableCard.parentElement).toHaveAttribute(
+      "data-review-layout",
+      "wide"
+    )
   })
 
   it("keeps extracted data visible without original controls after file deletion", async () => {

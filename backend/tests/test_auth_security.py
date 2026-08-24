@@ -9,6 +9,7 @@ from app.services.auth import (
     CsrfValidationError,
     CurrentAuth,
     create_opaque_token,
+    csrf_token_for_session,
     hash_token,
     is_allowed_user_email,
     validate_return_to,
@@ -29,10 +30,16 @@ def test_user_email_allowlist_is_exact_and_case_insensitive() -> None:
     assert not is_allowed_user_email("owner+test@example.test", settings)
 
 
-def make_request(*, origin: str, csrf_header: str) -> Request:
+def make_request(
+    *,
+    origin: str,
+    csrf_header: str,
+    session_token: str = "test-session-token",
+) -> Request:
     headers = [
         (b"origin", origin.encode()),
         (b"x-csrf-token", csrf_header.encode()),
+        (b"cookie", f"cassist_session={session_token}".encode()),
     ]
     return Request({"type": "http", "method": "POST", "path": "/", "headers": headers})
 
@@ -61,7 +68,8 @@ def test_opaque_tokens_are_random_and_hash_to_fixed_length() -> None:
 
 
 def test_csrf_requires_origin_header_and_stored_hash() -> None:
-    token = create_opaque_token()
+    session_token = create_opaque_token()
+    token = csrf_token_for_session(session_token)
     settings = Settings(app_env="test", _env_file=None)
     current_auth = CurrentAuth(
         session_id=uuid4(),
@@ -77,6 +85,7 @@ def test_csrf_requires_origin_header_and_stored_hash() -> None:
         make_request(
             origin="http://localhost:5173",
             csrf_header=token,
+            session_token=session_token,
         ),
         current_auth,
         settings,
@@ -87,10 +96,18 @@ def test_csrf_requires_origin_header_and_stored_hash() -> None:
             make_request(
                 origin="https://attacker.example",
                 csrf_header=token,
+                session_token=session_token,
             ),
             current_auth,
             settings,
         )
+
+
+def test_csrf_token_is_stable_for_parallel_tabs_in_one_session() -> None:
+    session_token = create_opaque_token()
+
+    assert csrf_token_for_session(session_token) == csrf_token_for_session(session_token)
+    assert csrf_token_for_session(session_token) != csrf_token_for_session(create_opaque_token())
 
 
 def test_csrf_bootstrap_requires_the_frontend_origin() -> None:

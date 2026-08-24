@@ -1,7 +1,7 @@
 import hashlib
 from dataclasses import dataclass
 from tempfile import SpooledTemporaryFile
-from typing import BinaryIO
+from typing import IO
 
 from app.services.object_storage import ObjectStorage
 
@@ -15,7 +15,7 @@ class UploadValidationError(Exception):
 
 @dataclass
 class VerifiedUpload:
-    body: BinaryIO
+    body: IO[bytes]
     byte_size: int
     mime_type: str
     sha256: str

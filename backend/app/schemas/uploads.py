@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.models.enums import DocumentStatus
+
 AllowedUploadMimeType = Literal[
     "application/pdf",
     "image/jpeg",
@@ -40,7 +42,7 @@ class CreateUploadResponse(BaseModel):
 
 class CompleteUploadResponse(BaseModel):
     document_id: UUID
-    status: Literal["uploaded", "processing", "ready", "failed"]
+    status: DocumentStatus
     deduplicated: bool = False
 
 

@@ -260,10 +260,7 @@ export function UploadPage() {
       >
         <RiArrowLeftSLine /> Back
       </Button>
-      <p className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
-        New document
-      </p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+      <h1 className="text-3xl font-semibold tracking-tight">
         Upload documents
       </h1>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">

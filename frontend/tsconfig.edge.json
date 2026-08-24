@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "lib": ["ES2023"],
+    "skipLibCheck": true,
+    "strict": true,
+    "types": []
+  },
+  "include": ["functions/api/[[path]].js", "worker-configuration.d.ts"],
+  "exclude": ["functions/**/*.test.js"]
+}

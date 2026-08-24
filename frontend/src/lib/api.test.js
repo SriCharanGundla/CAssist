@@ -86,7 +86,10 @@ describe("uploadDocument", () => {
             upload: {
               method: "PUT",
               url: "https://storage.example/upload",
-              headers: { "Content-Type": "application/pdf" },
+              headers: {
+                "Content-Type": "application/pdf",
+                "Content-Length": "8",
+              },
             },
           },
           { status: 201 }

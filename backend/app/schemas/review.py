@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.models.enums import ReviewStatus
 from app.schemas.extraction import DocumentPresentation, GenericDocumentExtraction, QualityIssue
 
 
@@ -62,7 +63,7 @@ class ResultResponse(BaseModel):
     original_available: bool
     document_type: str
     version: int
-    review_status: Literal["unreviewed", "in_review", "approved"]
+    review_status: ReviewStatus
     reviewed_by_user_id: UUID | None
     reviewed_at: datetime | None
     extracted_data: GenericDocumentExtraction

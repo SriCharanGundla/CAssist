@@ -1,3 +1,4 @@
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -57,6 +58,10 @@ class Settings(BaseSettings):
     session_cleanup_batch_size: int = 100
     idempotency_ttl_seconds: int = 5 * 60
     idempotency_in_progress_seconds: int = 2 * 60
+    idempotency_max_request_bytes: int = 1024 * 1024
+    idempotency_max_response_bytes: int = 2 * 1024 * 1024
+    openai_input_cost_per_million_usd: Decimal = Decimal("0.20")
+    openai_output_cost_per_million_usd: Decimal = Decimal("1.20")
     provider_rate_limit_retry_seconds: int = 60
     provider_rate_limit_max_attempts: int = 3
     preprocessing_max_pages: int = 50
@@ -97,6 +102,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "IDEMPOTENCY_IN_PROGRESS_SECONDS must be at least 30 and less than the TTL"
             )
+        if self.idempotency_max_request_bytes <= 0:
+            raise ValueError("IDEMPOTENCY_MAX_REQUEST_BYTES must be positive")
+        if self.idempotency_max_response_bytes <= 0:
+            raise ValueError("IDEMPOTENCY_MAX_RESPONSE_BYTES must be positive")
+        if self.openai_input_cost_per_million_usd < 0:
+            raise ValueError("OPENAI_INPUT_COST_PER_MILLION_USD must not be negative")
+        if self.openai_output_cost_per_million_usd < 0:
+            raise ValueError("OPENAI_OUTPUT_COST_PER_MILLION_USD must not be negative")
         if self.provider_rate_limit_retry_seconds <= 0:
             raise ValueError("PROVIDER_RATE_LIMIT_RETRY_SECONDS must be positive")
         if not 1 <= self.provider_rate_limit_max_attempts <= 5:

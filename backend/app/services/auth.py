@@ -56,6 +56,12 @@ def create_opaque_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def csrf_token_for_session(raw_session_token: str) -> str:
+    return hashlib.sha256(
+        b"cassist-csrf-v1\0" + raw_session_token.encode("utf-8")
+    ).hexdigest()
+
+
 def is_allowed_user_email(email: str, settings: Settings) -> bool:
     return email.strip().casefold() in settings.auth_allowed_emails
 
@@ -299,25 +305,17 @@ async def resolve_session(
 def verify_csrf(request: Request, current_auth: CurrentAuth, settings: Settings) -> None:
     verify_request_origin(request, settings)
     header_token = request.headers.get("x-csrf-token")
-    if not header_token:
+    raw_session_token = request.cookies.get(settings.auth_session_cookie_name)
+    if not header_token or not raw_session_token:
         raise CsrfValidationError("CSRF validation failed")
-    if not secrets.compare_digest(hash_token(header_token), current_auth.csrf_token_hash):
+    expected_token = csrf_token_for_session(raw_session_token)
+    if not secrets.compare_digest(header_token, expected_token):
         raise CsrfValidationError("CSRF validation failed")
 
 
 def verify_request_origin(request: Request, settings: Settings) -> None:
     if request.headers.get("origin") not in settings.cors_origins:
         raise CsrfValidationError("CSRF validation failed")
-
-
-async def rotate_csrf_token(session: AsyncSession, session_id: UUID) -> str:
-    auth_session = await session.get(AuthSession, session_id)
-    if auth_session is None or auth_session.revoked_at is not None:
-        raise AuthenticationRequired("Authentication is required")
-    csrf_token = create_opaque_token()
-    auth_session.csrf_token_hash = hash_token(csrf_token)
-    await session.commit()
-    return csrf_token
 
 
 async def revoke_session(

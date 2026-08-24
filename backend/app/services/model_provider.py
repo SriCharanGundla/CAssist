@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from PIL import Image
 from strands import Agent
@@ -167,7 +167,7 @@ class StrandsExtractionProvider:
             dependency_logger.propagate = False
             dependency_logger.setLevel(logging.CRITICAL + 1)
 
-    def _build_classification_graph(self):
+    def _build_classification_graph(self) -> tuple[Agent, Any]:
         classifier = Agent(
             model=self.model,
             name="document_classifier",
@@ -193,7 +193,7 @@ class StrandsExtractionProvider:
         self,
         text_tools: DocumentTextTools,
         on_stage: Callable[[ProcessingStage], None] | None = None,
-    ):
+    ) -> tuple[tuple[Agent, Agent, Agent], Any]:
         extractor = Agent(
             model=self.model,
             name="generic_document_extractor",
@@ -221,7 +221,7 @@ class StrandsExtractionProvider:
             tools=[text_tools.read_document_text, text_tools.search_document_text],
             retry_strategy=None,
         )
-        def should_review(state) -> bool:
+        def should_review(state: Any) -> bool:
             node = state.results.get("extract")
             draft = node.result.structured_output if node else None
             return isinstance(draft, GenericExtractionDraft) and needs_quality_review(draft)
