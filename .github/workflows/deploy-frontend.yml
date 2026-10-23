@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "frontend/**"
+      - ".nvmrc"
       - ".github/workflows/deploy-frontend.yml"
   workflow_dispatch:
 
