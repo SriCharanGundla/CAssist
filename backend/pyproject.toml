@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "CAssist document-processing API"
 requires-python = ">=3.12"
 dependencies = [
+  "certifi>=2026.10.19",
   "alembic>=1.14",
   "asyncpg>=0.30",
   "authlib>=1.7.2",
